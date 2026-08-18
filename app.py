@@ -101,6 +101,13 @@ TEAMS_GRUPOS_UNIDADE = [
     ("SEDE/PARANGABA X COMPRAS", "sede_parangaba", "PARANGABA"),
 ]
 
+LOCAL_BASE_ENDERECO = (
+    "Rua Professor Mário Rocha, 84 - Joaquim Távora, "
+    "Fortaleza - CE, 60120-200"
+)
+LOCAL_BASE_COORDS = (-3.752270016704, -38.51537298342)
+ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "DESCONHECIDO", "ESCRITÓRIO"}
+
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
@@ -121,7 +128,9 @@ ENDERECOS_PADRAO = [
     ("SESI MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE"),
     ("MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE"),
     ("SESI SOBRAL", "Av. Dr. José Arimathéa Monte e Silva, 1003 - Junco, Sobral - CE"),
-    ("ESCRITÓRIO", "R. Professor Mário Rocha, 84 - Joaquim Távora, Fortaleza - CE"),
+    ("ESCRITÓRIO", LOCAL_BASE_ENDERECO),
+    ("ALMOXARIFADO", LOCAL_BASE_ENDERECO),
+    ("DESCONHECIDO", LOCAL_BASE_ENDERECO),
     ("ALDEOTA", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"),
     ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"),
     ("FIEC", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
@@ -148,6 +157,18 @@ def inicializar_bd():
     
     for apelido, end in ENDERECOS_PADRAO:
         c.execute("INSERT OR IGNORE INTO locais (apelido, endereco) VALUES (?, ?)", (apelido, end))
+
+    for alias in ALIASES_LOCAL_BASE:
+        c.execute(
+            "INSERT OR REPLACE INTO locais "
+            "(apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)",
+            (
+                alias,
+                LOCAL_BASE_ENDERECO,
+                LOCAL_BASE_COORDS[0],
+                LOCAL_BASE_COORDS[1]
+            )
+        )
     conn.commit()
     conn.close()
 
@@ -290,6 +311,41 @@ def buscar_coordenadas(endereco):
                 if is_in_ceara(lat, lon): return lat, lon
     except: pass
     return None, None
+
+def canonicalizar_ponto_rota(nome):
+    """Limpa formatação do Trello e unifica os nomes do local-base."""
+    texto = normalizar_local(str(nome or ""))
+    texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
+    if texto in ALIASES_LOCAL_BASE:
+        return "ESCRITÓRIO"
+    return texto
+
+def garantir_gps_local_base(conn):
+    """Garante que os três aliases compartilhem o mesmo endereço e GPS."""
+    coordenadas = None
+    for alias in ("ESCRITÓRIO", "ALMOXARIFADO", "DESCONHECIDO"):
+        registro = conn.execute(
+            "SELECT lat, lon FROM locais WHERE apelido = ?",
+            (alias,)
+        ).fetchone()
+        if registro and registro[0] is not None and registro[1] is not None:
+            coordenadas = (float(registro[0]), float(registro[1]))
+            break
+
+    if coordenadas is None:
+        coordenadas = LOCAL_BASE_COORDS
+
+    if coordenadas is not None:
+        lat, lon = coordenadas
+        for alias in ALIASES_LOCAL_BASE:
+            conn.execute(
+                "INSERT OR REPLACE INTO locais "
+                "(apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)",
+                (alias, LOCAL_BASE_ENDERECO, lat, lon)
+            )
+        conn.commit()
+
+    return coordenadas
 
 def calcular_matriz_rotas(coords):
     try:
@@ -1252,7 +1308,14 @@ with tab_roteiro:
     ):
         st.session_state['rota_gerada'] = False
 
-    df_ativos = st.session_state.demandas
+    df_ativos = st.session_state.demandas.copy()
+    if not df_ativos.empty:
+        df_ativos["Origem"] = df_ativos["Origem"].apply(
+            canonicalizar_ponto_rota
+        )
+        df_ativos["Destino"] = df_ativos["Destino"].apply(
+            canonicalizar_ponto_rota
+        )
 
     if df_ativos.empty:
         st.info("Sincronize o Trello para carregar demandas antes de calcular a rota.")
@@ -1265,6 +1328,7 @@ with tab_roteiro:
         with st.spinner("Analisando grupamentos e traçando rota anti zigue-zague..."):
             
             conn = sqlite3.connect(DB_FILE)
+            garantir_gps_local_base(conn)
             pontos_necessarios = set([ponto_saida] + df_ativos["Origem"].tolist() + df_ativos["Destino"].tolist())
             locais_dict = {}
             for p in pontos_necessarios:
@@ -1273,7 +1337,9 @@ with tab_roteiro:
                     locais_dict[p] = (res[0], res[1])
             conn.close()
             
-            faltando = [p for p in pontos_necessarios if p not in locais_dict]
+            faltando = sorted(
+                p for p in pontos_necessarios if p not in locais_dict
+            )
             if faltando:
                 st.warning(f"⚠️ Os seguintes locais precisam de endereço/GPS na Aba 2: **{', '.join(faltando)}**")
                 st.stop()
@@ -1636,7 +1702,17 @@ with tab_roteiro:
                         continue
 
                     acoes = [a[0] for a in step.get('actions', [])]
-                    bg_color = "#16a34a"
+                    tem_coleta = "COLETAR" in acoes
+                    tem_entrega = "ENTREGAR" in acoes
+                    if tem_coleta and tem_entrega:
+                        fundo_marcador = (
+                            "linear-gradient(90deg, #f59e0b 0 50%, "
+                            "#16a34a 50% 100%)"
+                        )
+                    elif tem_coleta:
+                        fundo_marcador = "#f59e0b"
+                    else:
+                        fundo_marcador = "#16a34a"
                     num_str = str(p_num)
                     tt_text = f"Parada {p_num}: {step['destino']}"
                     acoes_texto = " e ".join(sorted(set(acoes))).title()
@@ -1652,7 +1728,7 @@ with tab_roteiro:
                         [lat, lon],
                         popup=folium.Popup(popup_html, max_width=280),
                         tooltip=tt_text,
-                        icon=folium.DivIcon(html=f'''<div style="background-color: {bg_color}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">{num_str}</div>''')
+                        icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">{num_str}</div>''')
                     ).add_to(m)
                     p_num += 1
 
@@ -1694,7 +1770,7 @@ with tab_roteiro:
                 )
             st.markdown(
                 "<div style='text-align: center; font-size: 14px; "
-                "margin-top: 10px;'><b>Legenda:</b> 🔵 Saída/Retorno | "
-                "🟢 Paradas numeradas</div>",
+                "margin-top: 10px;'><b>Legenda:</b> 🟡 Coleta | "
+                "🟢 Entrega | 🔵 Início/Retorno | 🟡🟢 Ambos</div>",
                 unsafe_allow_html=True
             )
