@@ -57,13 +57,6 @@ ENDERECOS_PADRAO = [
     ("FIEC", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("UNIFOR", "Av. Washington Soares, 1321 - Edson Queiroz, Fortaleza - CE"),
     ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE"),
-    
-    # --- MEMÓRIA ANTI-AMNÉSIA (Insira os links reais do Maps aqui) ---
-    ("DEPOSITO MAZIM", "COLE O LINK DO MAPS AQUI"),
-    ("ESTOQUE", "COLE O LINK DO MAPS AQUI"),
-    ("CLARUS EPI", "COLE O LINK DO MAPS AQUI"),
-    ("YHANNO FLORES", "COLE O LINK DO MAPS AQUI"),
-    ("ESCRITÓRIO PROVISÓRIO", "COLE O LINK DO MAPS AQUI"),
     ("LECI FERRAGENS", "Rua Gen. Clarindo de Queiroz, 1668 - Centro, Fortaleza - CE")
 ]
 
@@ -76,9 +69,8 @@ def inicializar_bd():
                     lat REAL, 
                     lon REAL)''')
     for apelido, end in ENDERECOS_PADRAO:
+        # Apenas insere se não existir. Não reescreve mais por cima das suas edições!
         c.execute("INSERT OR IGNORE INTO locais (apelido, endereco) VALUES (?, ?)", (apelido, end))
-        # Força a atualização se os fixos de cima forem alterados no código
-        c.execute("UPDATE locais SET endereco = ? WHERE apelido = ?", (end, apelido))
     conn.commit()
     conn.close()
 
@@ -91,7 +83,7 @@ def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
 def buscar_coordenadas(endereco):
-    if not endereco or endereco == "COLE O LINK DO MAPS AQUI": return None, None
+    if not endereco: return None, None
     endereco_limpo = endereco.strip()
     match_coords = re.search(r'^(-?\d+\.\d+)[\s,;]+(-?\d+\.\d+)$', endereco_limpo)
     if match_coords:
@@ -167,7 +159,7 @@ def calcular_matriz_rotas(coords):
     return distancias, duracoes
 
 # -------------------------------------------------------------
-# FILTRO ORTOGRÁFICO E DE SINÔNIMOS (Tratando acentos)
+# FILTRO ORTOGRÁFICO E DE SINÔNIMOS
 # -------------------------------------------------------------
 def normalizar_local(nome):
     if not nome: return "DESCONHECIDO"
@@ -382,8 +374,6 @@ with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
     st.info("💡 Como usar: Digite o nome do local igualzinho aparece na demanda e cole o link do Google Maps. O sistema nunca mais esquecerá!")
     col1, col2 = st.columns(2)
-    
-    # O STRIP AQUI É O HERÓI ANTI-ESPAÇO-INVISÍVEL
     with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper().strip()
     with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps").strip()
     
