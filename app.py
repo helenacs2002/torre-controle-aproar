@@ -76,13 +76,18 @@ inicializar_bd()
 # =====================================================================
 # MOTORES DE GEOLOCALIZAÇÃO E CÁLCULOS OSRM
 # =====================================================================
+def is_in_ceara(lat, lon):
+    """Cercadinho Virtual: Bloqueia qualquer coordenada fora do Ceará"""
+    return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
+
 def buscar_coordenadas(endereco):
     endereco_limpo = endereco.strip()
     
-    # 1. Checa se o texto já possui coordenadas diretas
+    # 1. Checa Coordenadas Diretas
     match_coords = re.search(r'^(-?\d+\.\d+)[\s,;]+(-?\d+\.\d+)$', endereco_limpo)
     if match_coords:
-        return float(match_coords.group(1)), float(match_coords.group(2))
+        lat, lon = float(match_coords.group(1)), float(match_coords.group(2))
+        if is_in_ceara(lat, lon): return lat, lon
         
     # 2. Extrai Coordenadas de Links do Google Maps
     if "http" in endereco_limpo or "google" in endereco_limpo.lower() or "goo.gl" in endereco_limpo.lower():
@@ -90,6 +95,7 @@ def buscar_coordenadas(endereco):
         if match_at: return float(match_at.group(1)), float(match_at.group(2))
         match_3d = re.search(r'3d(-?\d+\.\d+)!4d(-?\d+\.\d+)', endereco_limpo)
         if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
+            
         try:
             req = urllib.request.Request(endereco_limpo, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=5) as response:
@@ -100,25 +106,28 @@ def buscar_coordenadas(endereco):
             if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
         except: pass
 
-    # 3. ArcGIS Geocoding (O SEGREDO: Funciona muito bem para Lojas e Comércios)
+    # 3. ArcGIS para Lojas e Endereços formatados
     try:
         url_arcgis = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&singleLine=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&maxLocations=1"
         req = urllib.request.Request(url_arcgis, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read())
             if data.get('candidates'):
-                lat = data['candidates'][0]['location']['y']
-                lon = data['candidates'][0]['location']['x']
-                return float(lat), float(lon)
+                lat = float(data['candidates'][0]['location']['y'])
+                lon = float(data['candidates'][0]['location']['x'])
+                if is_in_ceara(lat, lon): return lat, lon
     except: pass
 
-    # 4. Fallback Nominatim (Para ruas e endereços postais)
+    # 4. Fallback Nominatim
     try:
         url = "https://nominatim.openstreetmap.org/search?q=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&format=json&limit=1"
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read())
-            if data: return float(data[0]['lat']), float(data[0]['lon'])
+            if data:
+                lat = float(data[0]['lat'])
+                lon = float(data[0]['lon'])
+                if is_in_ceara(lat, lon): return lat, lon
     except: pass
     
     return None, None
@@ -196,6 +205,24 @@ def extrair_dados_completos(texto, card_name):
 
     return short_name, origem, destino, materiais
 
+def encontrar_endereco_na_descricao(descricao):
+    """Procura por um endereço explícito ou link do Maps escrito no Card do Trello"""
+    if not descricao: return None
+    
+    # 1. Procura Link do Maps
+    mo_link = re.search(r'(https?://(?:www\.)?google\.[a-z\.]+/maps[^\s\n]+|https?://goo\.gl/maps/[^\s\n]+|https?://maps\.app\.goo\.gl/[^\s\n]+)', descricao)
+    if mo_link: return mo_link.group(1)
+    
+    # 2. Procura linha com "Endereço:" ou "Local:"
+    mo_end = re.search(r'(?i)(?:endere[çc]o|local)\s*(?:\:|-)\s*([^\n]+)', descricao)
+    if mo_end: return mo_end.group(1).strip()
+    
+    # 3. Procura linhas começando com Rua, Av, Avenida, Rodovia, BR
+    mo_rua = re.search(r'(?im)^(?:rua|av\.?|avenida|rodovia|br[- ]?\d+)\s+[^\n]+', descricao)
+    if mo_rua: return mo_rua.group(0).strip()
+    
+    return None
+
 def classificar_prioridade(due_str):
     if not due_str: return 1, "Sem Prazo"
     try:
@@ -224,7 +251,7 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
-        with st.spinner("Lendo Cartões e Extraindo Endereços... (Até 60s)"):
+        with st.spinner("Puxando demandas ao vivo... (Isso pode levar alguns segundos)"):
             try:
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
@@ -250,31 +277,27 @@ with st.sidebar:
                     # -------------------------------------------------------------
                     # INTELIGÊNCIA: Scanner de Endereço/Link Direto no Card do Trello
                     # -------------------------------------------------------------
-                    if origem and origem != "DESCONHECIDO":
-                        endereco_encontrado_no_card = None
-                        
-                        # Tenta achar um link do google maps na descrição
-                        mo_link = re.search(r'(https?://(?:www\.)?google\.[a-z\.]+/maps[^\s\n]+|https?://goo\.gl/maps/[^\s\n]+|https?://maps\.app\.goo\.gl/[^\s\n]+)', descricao)
-                        if mo_link: endereco_encontrado_no_card = mo_link.group(1)
-                        
-                        # Tenta achar "Endereço: Rua XYZ" na descrição
-                        if not endereco_encontrado_no_card:
-                            mo_end = re.search(r'(?i)(?:endere[çc]o|local)\s*(?:\:|-)\s*([^\n]+)', descricao)
-                            if mo_end: endereco_encontrado_no_card = mo_end.group(1).strip()
-                            
-                        # Se encontrou uma pista no card, guarda silenciosamente no Banco de Dados
-                        if endereco_encontrado_no_card:
+                    endereco_card = encontrar_endereco_na_descricao(descricao)
+                    if endereco_card:
+                        lat, lon = buscar_coordenadas(endereco_card)
+                        if lat:
                             conn = sqlite3.connect(DB_FILE)
-                            res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
-                            if not res or res[0] is None:
-                                lat, lon = buscar_coordenadas(endereco_encontrado_no_card)
-                                if lat:
-                                    conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (origem, endereco_encontrado_no_card, lat, lon))
-                                    conn.commit()
+                            # Se a origem for a loja desconhecida, salva o endereço nela
+                            if origem not in UNIDADES_PROPRIAS and origem != "DESCONHECIDO":
+                                res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
+                                if not res or res[0] is None:
+                                    conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (origem, endereco_card, lat, lon))
+                            
+                            # Se o destino for a loja desconhecida, salva o endereço nele
+                            if destino not in UNIDADES_PROPRIAS and destino != "DESCONHECIDO":
+                                res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (destino,)).fetchone()
+                                if not res or res[0] is None:
+                                    conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (destino, endereco_card, lat, lon))
+                            conn.commit()
                             conn.close()
                     # -------------------------------------------------------------
                     
-                    # Preservação Inteligente: Mantém edições de Tempos e Uber
+                    # Preservação Inteligente de Edições Antigas
                     uber_val = False
                     tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
                     te_val = 10
@@ -369,6 +392,26 @@ with tab_demandas:
 # =====================================================================
 with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
+    st.info("💡 Como usar: Digite o nome do local igualzinho aparece na demanda e cole o link do Google Maps. O sistema nunca mais esquecerá!")
+    
+    col1, col2 = st.columns(2)
+    with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper()
+    with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps")
+    
+    if st.button("Salvar Endereço Definitivo / Extrair GPS"):
+        if apelido_input and endereco_input:
+            lat, lon = buscar_coordenadas(endereco_input)
+            if lat:
+                conn = sqlite3.connect(DB_FILE)
+                conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (apelido_input, endereco_input, lat, lon))
+                conn.commit()
+                conn.close()
+                st.success(f"✅ GPS de '{apelido_input}' salvo com sucesso!")
+            else:
+                st.error("❌ Não consegui achar as coordenadas com esse texto. Cole o Link Direto do Google Maps!")
+        else:
+            st.warning("Preencha o nome e o endereço.")
+
     conn = sqlite3.connect(DB_FILE)
     df_locais = pd.read_sql_query("SELECT * FROM locais ORDER BY apelido", conn)
     conn.close()
@@ -381,12 +424,10 @@ with tab_roteiro:
     df_ativos = st.session_state.demandas[st.session_state.demandas["Uber"] == False]
     df_uber = st.session_state.demandas[st.session_state.demandas["Uber"] == True]
     
-    # -------------------------------------------------------------
-    # BOTÃO E LÓGICA DE CÁLCULO
-    # -------------------------------------------------------------
     if st.button("🚀 Calcular Rota Otimizada", type="primary"):
         with st.spinner("Traçando a melhor rota pelas ruas..."):
-            # Obter Coordenadas
+            
+            # Checagem Rigorosa de Coordenadas
             conn = sqlite3.connect(DB_FILE)
             pontos_necessarios = set([ponto_saida] + df_ativos["Origem"].tolist() + df_ativos["Destino"].tolist())
             locais_dict = {}
@@ -394,21 +435,15 @@ with tab_roteiro:
                 res = conn.execute("SELECT lat, lon FROM locais WHERE apelido = ?", (p,)).fetchone()
                 if res and res[0] is not None:
                     locais_dict[p] = (res[0], res[1])
-                else:
-                    lat, lon = buscar_coordenadas(p)
-                    if lat:
-                        conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (p, p, lat, lon))
-                        conn.commit()
-                        locais_dict[p] = (lat, lon)
             conn.close()
             
+            # Se não tem no banco, avisa imediatamente e interrompe! (FIM DO CHUTE CEGO)
             faltando = [p for p in pontos_necessarios if p not in locais_dict]
             if faltando:
-                st.error(f"⚠️ Os seguintes locais possuem nomes muito incomuns ou internos e o GPS automático não os encontrou: **{', '.join(faltando)}**.")
-                st.warning("👉 Vá até a Aba '📍 Base de Endereços' e insira o endereço ou um Link do Maps para eles, ou coloque na descrição do card lá no Trello.")
+                st.warning(f"⚠️ Os seguintes locais precisam de endereço/GPS na Aba 2: **{', '.join(faltando)}**")
+                st.info("💡 Solução rápida: Vá na Aba '📍 Base de Endereços', digite o nome do local igualzinho está acima e cole o link do Google Maps para ele aprender.")
                 st.stop()
 
-            # Matriz OSRM
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
             dist_matrix, dur_matrix = calcular_matriz_rotas(coords)
@@ -418,13 +453,12 @@ with tab_roteiro:
                 i, j = pontos_unicos.index(p1), pontos_unicos.index(p2)
                 return dist_matrix[i][j], dur_matrix[i][j]
 
-            # Algoritmo de Decisão
             unpicked = df_ativos.to_dict('records')
             carrying = []
             current = ponto_saida
             route_steps = []
             total_km = 0.0
-            current_time = 7.5 * 60  # 07:30
+            current_time = 7.5 * 60
             lunch_taken = False
 
             while unpicked or carrying:
@@ -502,7 +536,6 @@ with tab_roteiro:
                 })
                 current_time += dur
             
-            # SALVAR TUDO NA MEMÓRIA DA SESSÃO
             st.session_state['rota_gerada'] = True
             st.session_state['route_steps'] = route_steps
             st.session_state['total_km'] = total_km
@@ -510,9 +543,6 @@ with tab_roteiro:
             st.session_state['p_saida'] = ponto_saida
             st.session_state['df_uber_final'] = df_uber
 
-    # -------------------------------------------------------------
-    # RENDERIZAÇÃO DA ROTA E DO MAPA
-    # -------------------------------------------------------------
     if st.session_state.get('rota_gerada', False):
         route_steps = st.session_state['route_steps']
         total_km = st.session_state['total_km']
