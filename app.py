@@ -19,7 +19,53 @@ st.set_page_config(
     page_icon="🚚",
     layout="wide"
 )
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+    /* Força a fonte do HTML em tudo */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif !important;
+    }
+    
+    /* Fundo Escuro (bg) */
+    [data-testid="stAppViewContainer"] {
+        background-color: #080b1a;
+        color: #e4e8f4;
+    }
+    
+    /* Barra Lateral Escura (sur) */
+    [data-testid="stSidebar"] {
+        background-color: #0d1025;
+        border-right: 1px solid rgba(64,116,146,.2);
+    }
+
+    /* Títulos e Textos */
+    h1, h2, h3, h4, h5, h6, p {
+        color: #e4e8f4 !important;
+    }
+
+    /* Estilizando os Botões para ficarem iguais ao btn pri (Steel) */
+    [data-testid="baseButton-primary"] {
+        background-color: #407492 !important;
+        color: white !important;
+        border: 1px solid #407492 !important;
+        border-radius: 5px !important;
+        transition: all .15s;
+    }
+    
+    [data-testid="baseButton-primary"]:hover {
+        background-color: #4e8aaa !important;
+    }
+
+    /* Estilizando os Cards/Containers (sur2) */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background-color: #121530 !important;
+        border: 1px solid rgba(64,116,146,.2) !important;
+        border-radius: 7px;
+    }
+</style>
+""", unsafe_allow_html=True)
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 DB_FILE = "enderecos_logistica.db"
 CUSTO_KM_PADRAO = 1.50
