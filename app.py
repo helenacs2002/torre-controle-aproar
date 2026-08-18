@@ -20,7 +20,7 @@ from streamlit_folium import st_folium
 # CONFIGURAÇÕES DE TELA E BANCO DE DADOS
 # =====================================================================
 st.set_page_config(
-    page_title="Aproar - Torre de Controle Logística",
+    page_title="Aproar - Organizador de Rota",
     page_icon="🚚",
     layout="wide"
 )
@@ -861,16 +861,20 @@ def carregar_config_protege():
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
-col_logo, col_titulo = st.columns([1, 11])
+
+# Título customizado com Logo da APROAR gigante
+col_logo, col_titulo = st.columns([2.5, 9.5])
 
 with col_logo:
     try:
-        st.image("logo.png", width=65)
+        # Puxa o logo.png que você salvou no GitHub, ajustado para ser o grande destaque
+        st.image("logo.png", width=260)
     except:
         st.write("🚚") 
 
 with col_titulo:
-    st.title("LOGÍSTICA APROAR - Torre de Controle")
+    # Ajuste de margem negativa para alinhar perfeitamente com a logo grande
+    st.markdown("<h1 style='margin-top: -5px;'>ORGANIZADOR DE ROTA - SUPRIMENTOS</h1>", unsafe_allow_html=True)
 
 
 if "demandas" not in st.session_state:
