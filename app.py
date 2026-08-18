@@ -410,7 +410,6 @@ def disparar_teams(webhook_url, titulo, mensagem):
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
 def mover_cartao_trello(card_id):
-    """Envia requisição para a API do Trello para mover o cartão de lista."""
     conn = sqlite3.connect(DB_FILE)
     cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
     conn.close()
@@ -862,7 +861,17 @@ def carregar_config_protege():
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
-st.title("🚚 LOGÍSTICA APROAR - Torre de Controle")
+col_logo, col_titulo = st.columns([1, 11])
+
+with col_logo:
+    try:
+        st.image("logo.png", width=65)
+    except:
+        st.write("🚚") 
+
+with col_titulo:
+    st.title("LOGÍSTICA APROAR - Torre de Controle")
+
 
 if "demandas" not in st.session_state:
     st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
@@ -1260,7 +1269,6 @@ with tab_demandas:
                             mensagem
                         )
                     
-                    # Feedback Integrado
                     if trello_ok:
                         st.success("✅ Cartão movido para Concluídas no Trello com sucesso!")
                         if teams_ok:
@@ -1930,6 +1938,7 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
+            # FECHAMENTO REALISTA DE KM DA ROTA
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
