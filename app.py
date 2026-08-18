@@ -164,10 +164,11 @@ def inicializar_bd():
             (apelido, end, apelido)
         )
 
-    # Versões anteriores tratavam qualquer local não identificado como se fosse
-    # o escritório. Remove esse cadastro para que falhas de leitura fiquem
-    # visíveis, em vez de produzirem uma rota incorreta.
-    c.execute("DELETE FROM locais WHERE apelido = 'DESCONHECIDO'")
+    # "DESCONHECIDO" é apenas um marcador interno de leitura e nunca deve
+    # aparecer como local cadastrado.
+    c.execute(
+        "DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'"
+    )
 
     for alias in ALIASES_LOCAL_BASE:
         c.execute(
@@ -419,7 +420,7 @@ def buscar_geometria_rota(coords_ordenadas):
     return [[lat, lon] for lat, lon in coords_limpas], False
 
 def normalizar_local(nome):
-    if not nome: return "DESCONHECIDO"
+    if not nome: return ""
     n = nome.upper().strip()
     if "MARACANAU" in n: n = n.replace("MARACANAU", "MARACANAÚ")
     if "ESCRITORIO" in n: n = n.replace("ESCRITORIO", "ESCRITÓRIO")
@@ -439,7 +440,7 @@ def extrair_dados_completos(texto, card_name):
             
     short_name = f"{num} - {unidade}" if (num and unidade) else num if num else unidade if unidade else card_name[:25] + "..."
 
-    origem, destino = "DESCONHECIDO", "DESCONHECIDO"
+    origem, destino = "", ""
     materiais = "Ver Trello"
     
     if texto:
@@ -464,7 +465,7 @@ def extrair_dados_completos(texto, card_name):
                 if linhas_limpas: materiais = " | ".join(linhas_limpas)
 
     if "SEBRAE" in destino or "SEBRAE" in short_name:
-        if destino != "DESCONHECIDO" and destino not in ["ESCRITÓRIO"]:
+        if destino and destino not in ["ESCRITÓRIO"]:
             destino = "ESCRITÓRIO"
             materiais += " ⚠️[DEIXAR NO ESCRITÓRIO P/ SOARES]"
 
@@ -762,6 +763,7 @@ if "demandas" not in st.session_state:
 # Painel Lateral
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
+    st.caption("Versão 18.08.2026-r18")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
@@ -808,11 +810,11 @@ with st.sidebar:
                     if endereco_card:
                         lat, lon = buscar_coordenadas(endereco_card)
                         if lat:
-                            if origem not in UNIDADES_PROPRIAS and origem != "DESCONHECIDO":
+                            if origem and origem not in UNIDADES_PROPRIAS:
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
                                 if not res or res[0] is None:
                                     conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (origem, endereco_card, lat, lon))
-                            if destino not in UNIDADES_PROPRIAS and destino != "DESCONHECIDO":
+                            if destino and destino not in UNIDADES_PROPRIAS:
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (destino,)).fetchone()
                                 if not res or res[0] is None:
                                     conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (destino, endereco_card, lat, lon))
@@ -1150,6 +1152,10 @@ with tab_enderecos:
             st.warning("Preencha o nome e o endereço.")
 
     conn = sqlite3.connect(DB_FILE)
+    conn.execute(
+        "DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'"
+    )
+    conn.commit()
     df_locais = pd.read_sql_query("SELECT * FROM locais ORDER BY apelido", conn)
     conn.close()
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
@@ -1382,6 +1388,25 @@ with tab_roteiro:
             canonicalizar_ponto_rota
         )
 
+        # Demandas incompletas não viram um ponto fictício chamado
+        # "DESCONHECIDO" no mapa. Elas são separadas para correção no Trello.
+        origem_invalida = df_ativos["Origem"].fillna("").isin(
+            ["", "DESCONHECIDO"]
+        )
+        destino_invalido = df_ativos["Destino"].fillna("").isin(
+            ["", "DESCONHECIDO"]
+        )
+        demandas_incompletas = df_ativos[origem_invalida | destino_invalido]
+        if not demandas_incompletas.empty:
+            obras_incompletas = ", ".join(
+                demandas_incompletas["Obra"].astype(str).tolist()
+            )
+            st.warning(
+                "⚠️ Estas demandas estão sem origem ou destino legível no "
+                f"Trello e ficaram fora da rota: **{obras_incompletas}**."
+            )
+            df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
+
     if df_ativos.empty:
         st.info("Sincronize o Trello para carregar demandas antes de calcular a rota.")
     
@@ -1394,7 +1419,20 @@ with tab_roteiro:
             
             conn = sqlite3.connect(DB_FILE)
             garantir_gps_local_base(conn)
-            pontos_necessarios = set([ponto_saida] + df_ativos["Origem"].tolist() + df_ativos["Destino"].tolist())
+            # Última barreira contra dados antigos da sessão: o marcador
+            # DESCONHECIDO jamais pode chegar à busca de GPS.
+            pontos_brutos = (
+                [ponto_saida]
+                + df_ativos["Origem"].tolist()
+                + df_ativos["Destino"].tolist()
+            )
+            pontos_necessarios = {
+                canonicalizar_ponto_rota(p)
+                for p in pontos_brutos
+                if canonicalizar_ponto_rota(p) not in {
+                    "", "DESCONHECIDO", "NAN", "NONE"
+                }
+            }
             locais_dict = {}
             for p in pontos_necessarios:
                 res = conn.execute(
@@ -1419,7 +1457,9 @@ with tab_roteiro:
             conn.close()
             
             faltando = sorted(
-                p for p in pontos_necessarios if p not in locais_dict
+                p for p in pontos_necessarios
+                if p not in locais_dict
+                and p not in {"", "DESCONHECIDO", "NAN", "NONE"}
             )
             if faltando:
                 st.warning(f"⚠️ Os seguintes locais precisam de endereço/GPS na Aba 2: **{', '.join(faltando)}**")
