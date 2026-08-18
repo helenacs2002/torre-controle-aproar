@@ -78,16 +78,18 @@ inicializar_bd()
 # =====================================================================
 def buscar_coordenadas(endereco):
     endereco_limpo = endereco.strip()
+    
+    # 1. Checa se o texto já possui coordenadas diretas
     match_coords = re.search(r'^(-?\d+\.\d+)[\s,;]+(-?\d+\.\d+)$', endereco_limpo)
     if match_coords:
         return float(match_coords.group(1)), float(match_coords.group(2))
         
+    # 2. Extrai Coordenadas de Links do Google Maps
     if "http" in endereco_limpo or "google" in endereco_limpo.lower() or "goo.gl" in endereco_limpo.lower():
         match_at = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', endereco_limpo)
         if match_at: return float(match_at.group(1)), float(match_at.group(2))
         match_3d = re.search(r'3d(-?\d+\.\d+)!4d(-?\d+\.\d+)', endereco_limpo)
         if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
-            
         try:
             req = urllib.request.Request(endereco_limpo, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=5) as response:
@@ -98,6 +100,19 @@ def buscar_coordenadas(endereco):
             if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
         except: pass
 
+    # 3. ArcGIS Geocoding (O SEGREDO: Funciona muito bem para Lojas e Comércios)
+    try:
+        url_arcgis = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&singleLine=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&maxLocations=1"
+        req = urllib.request.Request(url_arcgis, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read())
+            if data.get('candidates'):
+                lat = data['candidates'][0]['location']['y']
+                lon = data['candidates'][0]['location']['x']
+                return float(lat), float(lon)
+    except: pass
+
+    # 4. Fallback Nominatim (Para ruas e endereços postais)
     try:
         url = "https://nominatim.openstreetmap.org/search?q=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&format=json&limit=1"
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
@@ -105,6 +120,7 @@ def buscar_coordenadas(endereco):
             data = json.loads(response.read())
             if data: return float(data[0]['lat']), float(data[0]['lon'])
     except: pass
+    
     return None, None
 
 def calcular_matriz_rotas(coords):
@@ -208,10 +224,9 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
-        with st.spinner("Puxando demandas ao vivo... (Isso pode levar alguns segundos)"):
+        with st.spinner("Lendo Cartões e Extraindo Endereços... (Até 60s)"):
             try:
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
-                # AUMENTAMOS O TIMEOUT PARA 60 SEGUNDOS AQUI
                 with urllib.request.urlopen(req, timeout=60) as response:
                     data = json.loads(response.read())
                 
@@ -228,10 +243,38 @@ with st.sidebar:
                     nome_lista = trello_lists.get(c.get('idList', ''), '').upper()
                     if any(t in nome_lista for t in excluir_termos) or not nome_lista: continue
                     
-                    short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
+                    descricao = c.get('desc', '')
+                    short_name, origem, destino, materiais = extrair_dados_completos(descricao, c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     
-                    # Preservação Inteligente
+                    # -------------------------------------------------------------
+                    # INTELIGÊNCIA: Scanner de Endereço/Link Direto no Card do Trello
+                    # -------------------------------------------------------------
+                    if origem and origem != "DESCONHECIDO":
+                        endereco_encontrado_no_card = None
+                        
+                        # Tenta achar um link do google maps na descrição
+                        mo_link = re.search(r'(https?://(?:www\.)?google\.[a-z\.]+/maps[^\s\n]+|https?://goo\.gl/maps/[^\s\n]+|https?://maps\.app\.goo\.gl/[^\s\n]+)', descricao)
+                        if mo_link: endereco_encontrado_no_card = mo_link.group(1)
+                        
+                        # Tenta achar "Endereço: Rua XYZ" na descrição
+                        if not endereco_encontrado_no_card:
+                            mo_end = re.search(r'(?i)(?:endere[çc]o|local)\s*(?:\:|-)\s*([^\n]+)', descricao)
+                            if mo_end: endereco_encontrado_no_card = mo_end.group(1).strip()
+                            
+                        # Se encontrou uma pista no card, guarda silenciosamente no Banco de Dados
+                        if endereco_encontrado_no_card:
+                            conn = sqlite3.connect(DB_FILE)
+                            res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
+                            if not res or res[0] is None:
+                                lat, lon = buscar_coordenadas(endereco_encontrado_no_card)
+                                if lat:
+                                    conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (origem, endereco_encontrado_no_card, lat, lon))
+                                    conn.commit()
+                            conn.close()
+                    # -------------------------------------------------------------
+                    
+                    # Preservação Inteligente: Mantém edições de Tempos e Uber
                     uber_val = False
                     tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
                     te_val = 10
@@ -361,9 +404,11 @@ with tab_roteiro:
             
             faltando = [p for p in pontos_necessarios if p not in locais_dict]
             if faltando:
-                st.error(f"⚠️ Os seguintes locais precisam de endereço/GPS na Aba 2: {', '.join(faltando)}")
+                st.error(f"⚠️ Os seguintes locais possuem nomes muito incomuns ou internos e o GPS automático não os encontrou: **{', '.join(faltando)}**.")
+                st.warning("👉 Vá até a Aba '📍 Base de Endereços' e insira o endereço ou um Link do Maps para eles, ou coloque na descrição do card lá no Trello.")
                 st.stop()
 
+            # Matriz OSRM
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
             dist_matrix, dur_matrix = calcular_matriz_rotas(coords)
