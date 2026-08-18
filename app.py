@@ -763,7 +763,7 @@ if "demandas" not in st.session_state:
 # Painel Lateral
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
-    st.caption("Versão 18.08.2026-r18")
+    st.caption("Versão 18.08.2026-r19")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
@@ -1051,24 +1051,84 @@ with tab_demandas:
     st.session_state.demandas = df_editado
     
     st.divider()
-    st.subheader("✅ Confirmar entregas no Teams")
-    if not st.session_state.demandas.empty:
-        for idx, row in st.session_state.demandas.iterrows():
-            sup = row['Supervisor']
-            dest = row['Destino']
-            mat = row['Materiais']
-            
-            c1, c2 = st.columns([3, 1])
-            c1.markdown(f"📦 **{dest}** (Resp: {sup}) <br> <span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
+    st.subheader("📣 Informar entregas")
+    st.caption(
+        "Após concluir uma demanda no Trello, clique em “Sincronizar com "
+        "Trello”. As concluídas ficarão marcadas como 🟢 Entregue."
+    )
+
+    data_hoje_entregas = datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y")
+    conn = sqlite3.connect(DB_FILE)
+    df_entregues_hoje = pd.read_sql_query(
+        "SELECT id, obra AS Obra, origem AS Origem, destino AS Destino, "
+        "materiais AS Materiais FROM historico_concluidos "
+        "WHERE data_conclusao = ? ORDER BY rowid DESC",
+        conn,
+        params=(data_hoje_entregas,)
+    )
+    conn.close()
+
+    ids_entregues_hoje = set(
+        df_entregues_hoje.get("id", pd.Series(dtype=str)).astype(str)
+    )
+    df_abertas_hoje = st.session_state.demandas.copy()
+    if not df_abertas_hoje.empty:
+        df_abertas_hoje = df_abertas_hoje[
+            df_abertas_hoje["Urgência"].isin(["HOJE", "VENCIDA"])
+        ].copy()
+
+    linhas_entregas = []
+    if not df_abertas_hoje.empty:
+        linhas_entregas.extend(df_abertas_hoje.to_dict("records"))
+
+    for _, entregue in df_entregues_hoje.iterrows():
+        card_id = str(entregue["id"])
+        if any(str(item.get("id", "")) == card_id for item in linhas_entregas):
+            continue
+        destino_entregue = entregue["Destino"]
+        linhas_entregas.append({
+            "id": card_id,
+            "Obra": entregue["Obra"],
+            "Origem": entregue["Origem"],
+            "Destino": destino_entregue,
+            "Materiais": entregue["Materiais"],
+            "Supervisor": SUPERVISORES_MAP.get(
+                destino_entregue, "Sede / Logística"
+            )
+        })
+
+    if not linhas_entregas:
+        st.info("Nenhuma entrega atrasada ou prevista para hoje.")
+    else:
+        for row in linhas_entregas:
+            card_id = str(row.get("id", ""))
+            entregue_no_trello = card_id in ids_entregues_hoje
+            sup = row.get("Supervisor", "Sede / Logística")
+            dest = row.get("Destino", "")
+            mat = row.get("Materiais", "Ver Trello")
+
+            c1, c_status, c2 = st.columns([3.2, 1.1, 1.25])
+            c1.markdown(
+                f"📦 **{row.get('Obra', '')} — {dest}** "
+                f"(Resp: {sup}) <br>"
+                f"<span style='font-size:12px; color:gray;'>{mat}</span>",
+                unsafe_allow_html=True
+            )
+            if entregue_no_trello:
+                c_status.markdown("🟢 **Entregue**")
+            else:
+                c_status.caption("Aguardando Trello")
+
             if c2.button(
-                "✅ Informar entrega",
-                key=f"btn_tms_{row['id']}",
-                use_container_width=True
+                "📣 Informar entrega",
+                key=f"btn_tms_{card_id}",
+                use_container_width=True,
+                disabled=not entregue_no_trello
             ):
                 url_webhook, _ = obter_webhook_teams(
                     dest,
                     supervisor=sup,
-                    obra=row['Obra']
+                    obra=row.get("Obra", "")
                 )
                 if url_webhook:
                     concluida_em = datetime.now(FUSO_LOCAL).strftime(
@@ -1077,10 +1137,10 @@ with tab_demandas:
                     mensagem = (
                         "✅ **Os materiais foram entregues na obra e a demanda "
                         "foi concluída.**\n\n"
-                        f"**Obra:** {row['Obra']}\n\n"
+                        f"**Obra:** {row.get('Obra', '')}\n\n"
                         f"**Unidade / local da entrega:** {dest}\n\n"
                         f"**Materiais entregues:** {mat}\n\n"
-                        f"**Origem da coleta:** {row['Origem']}\n\n"
+                        f"**Origem da coleta:** {row.get('Origem', '')}\n\n"
                         f"**Conclusão informada em:** {concluida_em}"
                     )
                     enviado, detalhe = disparar_teams(
