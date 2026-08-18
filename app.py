@@ -1214,55 +1214,6 @@ with tab_roteiro:
 
     df_ativos = st.session_state.demandas
 
-    conn = sqlite3.connect(DB_FILE)
-    df_concluidas_hoje = pd.read_sql_query(
-        "SELECT id, obra, origem, destino, materiais "
-        "FROM historico_concluidos WHERE data_conclusao = ? "
-        "ORDER BY rowid DESC",
-        conn,
-        params=(data_hoje_roteiro,)
-    )
-    conn.close()
-
-    st.subheader("📌 Andamento de cada demanda")
-    st.caption(
-        "✅ Concluída no Trello hoje  •  círculo amarelo com − = faltou concluir. "
-        "Clique em Sincronizar com Trello para atualizar."
-    )
-
-    if df_ativos.empty and df_concluidas_hoje.empty:
-        st.info("Ainda não há demandas sincronizadas para acompanhar.")
-    else:
-        for _, demanda in df_concluidas_hoje.iterrows():
-            with st.container(border=True):
-                col_icone, col_demanda, col_estado = st.columns([0.35, 4.65, 1.4])
-                col_icone.markdown(
-                    '<div style="font-size:24px;line-height:1.2;">✅</div>',
-                    unsafe_allow_html=True
-                )
-                col_demanda.markdown(f"**{demanda['obra']}**")
-                col_demanda.caption(
-                    f"{demanda['origem']} → {demanda['destino']} | "
-                    f"{demanda['materiais']}"
-                )
-                col_estado.markdown("**CONCLUÍDA**")
-
-        ids_ja_concluidos = set(df_concluidas_hoje["id"].astype(str))
-        for _, demanda in df_ativos.iterrows():
-            if str(demanda.get("id", "")) in ids_ja_concluidos:
-                continue
-            with st.container(border=True):
-                col_icone, col_demanda, col_estado = st.columns([0.35, 4.65, 1.4])
-                col_icone.markdown(ICONE_FALTOU_HTML, unsafe_allow_html=True)
-                col_demanda.markdown(f"**{demanda['Obra']}**")
-                col_demanda.caption(
-                    f"{demanda['Origem']} → {demanda['Destino']} | "
-                    f"{demanda['Materiais']}"
-                )
-                col_estado.markdown("**FALTOU CONCLUIR**")
-
-    st.divider()
-
     if df_ativos.empty:
         st.info("Sincronize o Trello para carregar demandas antes de calcular a rota.")
     
@@ -1468,11 +1419,12 @@ with tab_roteiro:
                         concluida = str(t.get('id', '')) in ids_concluidos_hoje
                         status_html = "✅" if concluida else ICONE_FALTOU_HTML
                         status_texto = "✅" if concluida else "🟡 −"
-                        st.markdown(
-                            f"{status_html} :{cor}[**{icone}**] "
-                            f"{t['Materiais']} *(Obra: {t['Obra']})*",
-                            unsafe_allow_html=True
+                        col_demanda, col_status = st.columns([9, 1])
+                        col_demanda.markdown(
+                            f":{cor}[**{icone}**] {t['Materiais']} "
+                            f"*(Obra: {t['Obra']})*"
                         )
+                        col_status.markdown(status_html, unsafe_allow_html=True)
                         texto_whatsapp += (
                             f" - {status_texto} {acao.capitalize()}: "
                             f"{t['Materiais']} (Obra: {t['Obra']})\n"
