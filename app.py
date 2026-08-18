@@ -152,8 +152,8 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
     
     c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90)")
-    c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '')")
     c.execute("INSERT OR IGNORE INTO config_trello (id, api_key, token, id_lista_concluida) VALUES (1, '', '', '')")
+    c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '')")
     
     for sup in set(SUPERVISORES_MAP.values()):
         c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES (?, '')", (sup,))
@@ -208,7 +208,6 @@ def identificar_grupo_teams(destino, obra=""):
             return chave
     return ""
 
-
 def obter_webhook_teams(setor, supervisor=None, obra=""):
     chave_unidade = identificar_grupo_teams(setor, obra)
     if chave_unidade:
@@ -245,7 +244,6 @@ def obter_webhook_teams(setor, supervisor=None, obra=""):
         pass
 
     return "", "Não configurado"
-
 
 def disparar_teams(webhook_url, titulo, mensagem):
     if not webhook_url or not webhook_url.lower().startswith("https://"):
@@ -300,7 +298,6 @@ def disparar_teams(webhook_url, titulo, mensagem):
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
 def mover_cartao_trello(card_id):
-    """Envia requisição para a API do Trello para mover o cartão de lista."""
     conn = sqlite3.connect(DB_FILE)
     cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
     conn.close()
@@ -340,7 +337,6 @@ def buscar_coordenadas(endereco):
     return None, None
 
 def canonicalizar_ponto_rota(nome):
-    """Limpa formatação do Trello e unifica os nomes do local-base."""
     texto = normalizar_local(str(nome or ""))
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
     if texto in ALIASES_LOCAL_BASE:
@@ -348,7 +344,6 @@ def canonicalizar_ponto_rota(nome):
     return texto
 
 def garantir_gps_local_base(conn):
-    """Garante que Escritório e Almoxarifado compartilhem endereço e GPS."""
     coordenadas = None
     for alias in ("ESCRITÓRIO", "ALMOXARIFADO"):
         registro = conn.execute(
@@ -403,7 +398,6 @@ def calcular_matriz_rotas(coords):
     return distancias, duracoes
 
 def buscar_geometria_rota(coords_ordenadas):
-    """Retorna o traçado viário da rota na ordem informada."""
     coords_limpas = []
     for coord in coords_ordenadas:
         if not coords_limpas or coord != coords_limpas[-1]:
@@ -503,7 +497,6 @@ def classificar_prioridade(due_str):
     except: return 1, "Sem Prazo"
 
 def converter_data_trello(valor):
-    """Converte uma data ISO do Trello para o horário local de Fortaleza."""
     if not valor:
         return None
     data = datetime.fromisoformat(valor.replace("Z", "+00:00"))
@@ -567,7 +560,6 @@ def formatar_duracao(minutes):
         return f"{horas}h"
     return f"{minutos}min"
 
-
 # =====================================================================
 # INTEGRAÇÃO COM O RASTREADOR PROTEGE EXPRESS
 # =====================================================================
@@ -584,7 +576,6 @@ class FormularioLoginParser(HTMLParser):
         elif tag.lower() == "input":
             self.inputs.append(atributos)
 
-
 def _escolher_campo(campos, palavras):
     if not campos:
         return None
@@ -593,7 +584,6 @@ def _escolher_campo(campos, palavras):
         if any(palavra in identificador for palavra in palavras):
             return campo
     return campos[0]
-
 
 def _montar_formulario_login(html, usuario, senha):
     parser = FormularioLoginParser()
@@ -642,7 +632,6 @@ def _montar_formulario_login(html, usuario, senha):
 
     return parser.action, dados
 
-
 def _parsear_resposta_rastreador(texto):
     posicoes = []
     for registro in texto.replace("\r", "").split(";"):
@@ -684,7 +673,6 @@ def _parsear_resposta_rastreador(texto):
 
     return posicoes
 
-
 def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
     url = urllib.parse.urljoin(pagina_atual, "consultaajax_all.aspx")
     resposta = sessao.post(
@@ -701,7 +689,6 @@ def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
     if not posicoes:
         raise RuntimeError("O portal não devolveu posições. A sessão pode ter expirado.")
     return posicoes
-
 
 def autenticar_protege(usuario, senha, veiculos):
     ultimo_erro = None
@@ -745,7 +732,6 @@ def autenticar_protege(usuario, senha, veiculos):
         "Confira usuário, senha e identificadores dos veículos."
     ) from ultimo_erro
 
-
 def carregar_config_protege():
     try:
         config = st.secrets["protege"]
@@ -771,7 +757,7 @@ if "demandas" not in st.session_state:
 # Painel Lateral
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
-    st.caption("Versão 18.08.2026-r20 (Auto-Sync)")
+    st.caption("Versão 18.08.2026-r21 (Auto-Sync & Timing)")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
@@ -780,7 +766,6 @@ with st.sidebar:
                 with urllib.request.urlopen(req, timeout=60) as response:
                     data = json.loads(response.read())
                 
-                # Guarda as listas brutas para uso nas integrações
                 st.session_state['trello_lists_raw'] = data.get('lists', [])
                 
                 trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
@@ -883,12 +868,11 @@ with st.sidebar:
     ponto_saida = st.selectbox("🏁 Ponto de Saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
     estrategia = st.selectbox("🎯 Estratégia da Rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"])
     
-    # Adicionando explicações das estratégias no painel
     descricoes_estrategia = {
-        "⚖️ Equilibrada": "Mescla a urgência do prazo com a proximidade geográfica para fazer a rota mais lógica e eficiente.",
+        "⚖️ Equilibrada": "Mescla urgência com proximidade para fazer a rota mais lógica e eficiente.",
         "🏢 Foco em Descarregar": "Prioriza entregar os materiais o quanto antes para esvaziar a caçamba do carro.",
-        "⛽ Menor Distância": "Foca 100% no menor KM percorrido (Economia máxima de combustível), não importando muito se o prazo for curto.",
-        "🚨 Priorizar Urgências": "Foca 100% nas demandas Vencidas ou programadas para Hoje, mesmo que ele tenha que rodar mais KMs pra isso."
+        "⛽ Menor Distância": "Foca 100% no menor KM percorrido (Economia de combustível).",
+        "🚨 Priorizar Urgências": "Foca 100% nas demandas Vencidas ou programadas para Hoje, rodando mais se necessário."
     }
     st.caption(f"ℹ️ *{descricoes_estrategia[estrategia]}*")
     
@@ -926,17 +910,6 @@ with tab_rastreador:
         st.warning(
             "Configure o usuário e a senha da Protege Express nos Secrets do "
             "aplicativo para ativar o login automático."
-        )
-        st.code(
-            '[protege]\n'
-            'usuario = "SEU_USUARIO"\n'
-            'senha = "SUA_SENHA"\n'
-            'veiculos = "007046861,807289138"',
-            language="toml"
-        )
-        st.info(
-            "No Streamlit, abra Settings → Secrets, cole o modelo acima, "
-            "substitua apenas usuário e senha e salve."
         )
     else:
         def exibir_painel_rastreador():
@@ -1039,8 +1012,7 @@ with tab_rastreador:
                 st.session_state.pop("protege_pagina", None)
                 st.error(
                     "Não consegui entrar automaticamente no rastreador. "
-                    "Confira as credenciais e os identificadores cadastrados "
-                    "nos Secrets."
+                    "Confira as credenciais e os identificadores cadastrados."
                 )
 
         if hasattr(st, "fragment"):
@@ -1049,7 +1021,7 @@ with tab_rastreador:
             exibir_painel_rastreador()
 
 # -------------------------------------------------------------
-# ABA: DEMANDAS ATIVAS (AGORA COM COMUNICAÇÃO DE MÃO DUPLA)
+# ABA: DEMANDAS ATIVAS
 # -------------------------------------------------------------
 with tab_demandas:
     st.subheader("Gerenciamento de Cargas e Minutos")
@@ -1069,7 +1041,7 @@ with tab_demandas:
     st.subheader("📣 Concluir Entregas (Trello + Teams)")
     st.caption(
         "Ao clicar em 'Concluir e Avisar', o sistema notifica o supervisor no Teams e já move o cartão "
-        "para 'Concluídas' lá no Trello instantaneamente."
+        "para a coluna 'Concluídas' lá no Trello instantaneamente."
     )
 
     data_hoje_entregas = datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y")
@@ -1113,7 +1085,7 @@ with tab_demandas:
         })
 
     if not linhas_entregas:
-        st.info("Nenhuma entrega atrasada ou prevista para hoje.")
+        st.info("Nenhuma entrega atrasada ou prevista para hoje na fila.")
     else:
         for row in linhas_entregas:
             card_id = str(row.get("id", ""))
@@ -1175,7 +1147,6 @@ with tab_demandas:
                             mensagem
                         )
                     
-                    # Feedback Integrado
                     if trello_ok:
                         st.success("✅ Cartão movido para Concluídas no Trello com sucesso!")
                         if teams_ok:
@@ -1290,11 +1261,6 @@ with tab_enderecos:
     else:
         st.info("Não há locais disponíveis para remoção.")
 
-    st.caption(
-        "O Escritório e o Almoxarifado são protegidos porque são usados como "
-        "ponto-base das rotas. Um local removido pode ser cadastrado novamente acima."
-    )
-
 # -------------------------------------------------------------
 # ABA: FECHAMENTO MENSAL E CUSTOS
 # -------------------------------------------------------------
@@ -1382,12 +1348,12 @@ with tab_custos:
     conn.close()
 
 # -------------------------------------------------------------
-# ABA: INTEGRAÇÕES (TEAMS & TRELLO)
+# ABA: INTEGRAÇÕES (TEAMS E TRELLO)
 # -------------------------------------------------------------
 with tab_integ:
     st.subheader("⚙️ Configurações de API e Automações")
     
-    # --- BLOCO TRELLO ---
+    # --- TRELLO ---
     st.markdown("### 1. Automação do Trello (Concluir Cartão)")
     st.write("Siga os passos abaixo para permitir que a Torre de Controle arraste os cartões no Trello automaticamente:")
     st.markdown(
@@ -1418,83 +1384,26 @@ with tab_integ:
     if st.button("Salvar Chaves do Trello", type="primary"):
         conn.execute("UPDATE config_trello SET api_key=?, token=?, id_lista_concluida=? WHERE id=1", (nova_api, novo_token, nova_lista_id))
         conn.commit()
-        st.success("Integração com Trello configurada com sucesso!")
+        st.success("Integração com Trello salva com sucesso!")
         
     st.divider()
 
-    # --- BLOCO TEAMS ---
-    st.markdown("### 2. Integração dos Grupos de Unidade no Teams")
+    # --- TEAMS ---
+    st.markdown("### 2. Integração dos Grupos no Teams")
     st.write(
-        "Cada demanda será enviada ao grupo da unidade correspondente. "
-        "As URLs ficam protegidas nos Secrets do aplicativo."
+        "Caso os Secrets não estejam configurados, o aplicativo olhará para estes links salvos localmente."
     )
 
-    with st.expander("📘 Como criar cada link", expanded=False):
-        st.markdown(
-            "1. Abra o grupo da unidade no Teams.\n"
-            "2. Entre em **Fluxos de trabalho** e selecione a opção de webhook.\n"
-            "3. Salve e copie a URL fornecida.\n"
-            "4. Cole a URL na chave da mesma unidade nos Secrets."
-        )
-
-    st.code(
-        '[teams_unidades]\n'
-        'geral_logistica = ""\n'
-        'maracanau = ""\n'
-        'horizonte = ""\n'
-        'barra = ""\n'
-        'casa_industria = ""\n'
-        'centro = ""\n'
-        'sebrae = ""\n'
-        'museu = ""\n'
-        'unifor = ""\n'
-        'sede_parangaba = ""',
-        language="toml"
-    )
-
-    configurados = sum(
-        1
-        for _, _, destino_teste in TEAMS_GRUPOS_UNIDADE
-        if obter_webhook_teams(destino_teste, obra=destino_teste)[0]
-    )
-    st.progress(
-        configurados / max(len(TEAMS_GRUPOS_UNIDADE), 1),
-        text=(
-            f"{configurados} de {len(TEAMS_GRUPOS_UNIDADE)} "
-            "grupos configurados"
-        )
-    )
-
-    for nome_grupo, chave, destino_teste in TEAMS_GRUPOS_UNIDADE:
-        url_ativa, fonte = obter_webhook_teams(
-            destino_teste,
-            obra=destino_teste
-        )
-
-        with st.container(border=True):
-            c_nome, c_teste = st.columns([4, 1])
-            if url_ativa:
-                c_nome.markdown(
-                    f"**✅ {nome_grupo}**  \nConfigurado via {fonte} (`{chave}`)"
-                )
-                if c_teste.button(
-                    "🧪 Testar",
-                    key=f"teste_teams_{chave}",
-                    use_container_width=True
-                ):
-                    ok, detalhe = disparar_teams(
-                        url_ativa,
-                        "✅ Teste da Torre de Controle",
-                        f"Integração com **{nome_grupo}** configurada com sucesso."
-                    )
-                    if ok:
-                        st.success(f"Teste enviado para {nome_grupo}!")
-                    else:
-                        st.error(detalhe)
-            else:
-                c_nome.markdown(
-                    f"**⚠️ {nome_grupo}**  \nAinda não configurado (`{chave}`)"
-                )
+    df_teams = pd.read_sql_query("SELECT * FROM webhooks_teams ORDER BY setor", conn)
+    for index, row in df_teams.iterrows():
+        setor = row['setor']
+        nova_url = st.text_input(f"👤 {setor}", value=row['url'], key=f"tms_db_{setor}")
+        if st.button(f"Salvar {setor}"):
+            conn.execute("UPDATE webhooks_teams SET url=? WHERE setor=?", (nova_url, setor))
+            conn.commit()
+            st.success(f"Link de '{setor}' salvo no banco local!")
+            
+    conn.close()
 
 # -------------------------------------------------------------
 # ABA: ROTEIRO E MAPA
@@ -1516,8 +1425,6 @@ with tab_roteiro:
             canonicalizar_ponto_rota
         )
 
-        # Demandas incompletas não viram um ponto fictício chamado
-        # "DESCONHECIDO" no mapa. Elas são separadas para correção no Trello.
         origem_invalida = df_ativos["Origem"].fillna("").isin(
             ["", "DESCONHECIDO"]
         )
@@ -1547,8 +1454,6 @@ with tab_roteiro:
             
             conn = sqlite3.connect(DB_FILE)
             garantir_gps_local_base(conn)
-            # Última barreira contra dados antigos da sessão: o marcador
-            # DESCONHECIDO jamais pode chegar à busca de GPS.
             pontos_brutos = (
                 [ponto_saida]
                 + df_ativos["Origem"].tolist()
@@ -1571,8 +1476,6 @@ with tab_roteiro:
                     locais_dict[p] = (res[1], res[2])
                     continue
 
-                # Os endereços padrão passam a ter o GPS resolvido na primeira
-                # rota, evitando exigir cadastro manual na Aba 2.
                 if res and res[0]:
                     lat, lon = buscar_coordenadas(res[0])
                     if lat is not None and lon is not None:
@@ -1628,8 +1531,6 @@ with tab_roteiro:
                     
                     pendentes_para_p = sum(1 for t in unpicked if t['Destino'] == p)
                     if "Menor Distância" in estrategia:
-                        # Nesta estratégia vence sempre o próximo ponto viável
-                        # mais próximo, sem os pesos das demais estratégias.
                         score = d + (dur * 0.1)
                     else:
                         prio = 1.0
@@ -1698,14 +1599,29 @@ with tab_roteiro:
                     carrying.append(t)
                     service_mins += t['Tempo_Coleta']
 
+                # --- AJUSTE CARREGAMENTO MATINAL NO PONTO DE SAÍDA ---
+                # Se estamos na primeira parada, e ela é o Ponto de Saída (o escritório),
+                # então as coletas já foram separadas pelo Almoxarife das 07:00 às 07:30.
+                is_start_load = (best_point == ponto_saida and current_time == INICIO_ROTA_MIN and not any(a[0] == "ENTREGAR" for a in actions_here))
+                
+                if is_start_load:
+                    chegada_str = "07:00"
+                    saida_str = "07:30"
+                    tempo_local_exibicao = 30
+                    service_mins = 0 # O carregamento absorveu os minutos antes de 07:30
+                else:
+                    chegada_str = format_time(current_time)
+                    saida_str = format_time(current_time + service_mins)
+                    tempo_local_exibicao = service_mins
+
                 route_steps.append({
                     "type": "stop",
                     "destino": best_point,
                     "dist": best_dist,
                     "travel_mins": best_dur,
-                    "tempo_local": service_mins,
-                    "chegada": format_time(current_time),
-                    "saida": format_time(current_time + service_mins),
+                    "tempo_local": tempo_local_exibicao,
+                    "chegada": chegada_str,
+                    "saida": saida_str,
                     "actions": actions_here
                 })
                 current_time += service_mins
@@ -1895,33 +1811,45 @@ with tab_roteiro:
                     f"{formatar_duracao(excedente)}"
                 )
 
-            st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
-            texto_whatsapp += f"🛣️ Total: {total_km:.1f} km\n"
+            st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
+            texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
-            # FECHAMENTO REALISTA DE KM DA ROTA
+            # --- PAINEL INTELIGENTE DE FECHAMENTO DE KM ---
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
                 
                 total_acoes = sum(len(step.get('actions', [])) for step in route_steps)
-                acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in ids_concluidos_hoje)
+                acoes_concluidas = sum(
+                    1 for step in route_steps 
+                    for acao, t in step.get('actions', []) 
+                    if str(t.get('id', '')) in ids_concluidos_hoje
+                )
                 
                 if acoes_concluidas < total_acoes:
-                    st.warning(f"⚠️ Atenção: Apenas **{acoes_concluidas} de {total_acoes}** demandas da rota foram marcadas como concluídas no sistema. Se o Davi não tiver feito a rota completa, altere a quilometragem abaixo para a quilometragem real lida no painel do carro.")
+                    st.warning(
+                        f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** demandas "
+                        "planejadas nesta rota foram marcadas como concluídas no Trello hoje. "
+                        "Se a rota não foi 100% finalizada, altere a quilometragem abaixo "
+                        "para o que foi efetivamente lido no painel do veículo."
+                    )
                 else:
-                    st.success("✅ Todas as demandas planejadas na rota foram entregues e concluídas hoje!")
+                    st.success("✅ Todas as demandas desta rota foram devidamente concluídas hoje!")
                     
-                km_real = st.number_input("KM Efetivamente Rodado no Dia", value=float(total_km), step=1.0)
+                km_real = st.number_input("KM Efetivamente Rodado na Rota", value=float(total_km), step=1.0)
                 
                 if st.form_submit_button("Gravar KM no Painel de Custos"):
                     conn = sqlite3.connect(DB_FILE)
-                    conn.execute("INSERT INTO registro_km (data, km, obs) VALUES (?, ?, ?)", (data_hoje_roteiro, km_real, f"Fechamento da Rota de Hoje ({acoes_concluidas}/{total_acoes} entregas)"))
+                    conn.execute(
+                        "INSERT INTO registro_km (data, km, obs) VALUES (?, ?, ?)", 
+                        (data_hoje_roteiro, km_real, f"Fechamento da Rota Automática ({acoes_concluidas}/{total_acoes} entregas)")
+                    )
                     conn.commit()
                     conn.close()
-                    st.success(f"✅ {km_real:.1f} km registrados para o fechamento mensal!")
+                    st.success(f"✅ {km_real:.1f} km registrados para o fechamento de custos!")
 
+            # --- BOTÃO TEAMS ---
             url_geral, _ = obter_webhook_teams("Geral / Logística")
-            
             if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
                     resumo = (
@@ -1931,7 +1859,7 @@ with tab_roteiro:
                         f"**Previsão de conclusão:** {horario_conclusao}\n\n"
                         f"**Situação após a rota:** {status_expediente}\n\n"
                         f"**Total de paradas:** {num_parada-1}\n\n"
-                        f"**Quilometragem:** {total_km:.1f} km"
+                        f"**Quilometragem Planejada:** {total_km:.1f} km"
                     )
                     enviado, detalhe = disparar_teams(
                         url_geral,
@@ -1950,14 +1878,14 @@ with tab_roteiro:
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12)
             path_points = []
             
-            # Sistema anti-sobreposição de marcadores
+            # Ajuste de dispersão para pinos que caem na mesma coordenada exata
             offsets_dict = {}
             def apply_offset(lat, lon):
                 key = (round(lat, 4), round(lon, 4))
                 offsets_dict[key] = offsets_dict.get(key, 0) + 1
                 cnt = offsets_dict[key]
                 if cnt > 1:
-                    # Desloca a bolinha sutilmente para não ficar uma sobre a outra
+                    # Desloca a bolinha sutilmente para enxergar o número abaixo
                     return lat - 0.00035 * (cnt - 1), lon + 0.00035 * (cnt - 1)
                 return lat, lon
 
@@ -2019,9 +1947,9 @@ with tab_roteiro:
             if len(path_points) > 1:
                 m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
 
-            # Início da rota no mapa fica por cima de tudo
+            # Início da rota no mapa sempre fica no topo do index visual
             if p_saida in locais_dict:
-                lat_s, lon_s = path_points[0] # Pega já com o offset inicial aplicado
+                lat_s, lon_s = path_points[0]
                 folium.Marker(
                     [lat_s, lon_s],
                     popup=folium.Popup(
