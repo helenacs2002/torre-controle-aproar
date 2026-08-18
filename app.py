@@ -12,63 +12,16 @@ import folium
 from streamlit_folium import st_folium
 
 # =====================================================================
-# CONFIGURAÇÕES DE TELA E BANCO DE DADOS
+# CONFIGURAÇÕES DE TELA, EQUIPE E BANCO DE DADOS
 # =====================================================================
 st.set_page_config(
     page_title="Aproar - Torre de Controle Logística",
     page_icon="🚚",
     layout="wide"
 )
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    /* Força a fonte do HTML em tudo */
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif !important;
-    }
-    
-    /* Fundo Escuro (bg) */
-    [data-testid="stAppViewContainer"] {
-        background-color: #080b1a;
-        color: #e4e8f4;
-    }
-    
-    /* Barra Lateral Escura (sur) */
-    [data-testid="stSidebar"] {
-        background-color: #0d1025;
-        border-right: 1px solid rgba(64,116,146,.2);
-    }
-
-    /* Títulos e Textos */
-    h1, h2, h3, h4, h5, h6, p {
-        color: #e4e8f4 !important;
-    }
-
-    /* Estilizando os Botões para ficarem iguais ao btn pri (Steel) */
-    [data-testid="baseButton-primary"] {
-        background-color: #407492 !important;
-        color: white !important;
-        border: 1px solid #407492 !important;
-        border-radius: 5px !important;
-        transition: all .15s;
-    }
-    
-    [data-testid="baseButton-primary"]:hover {
-        background-color: #4e8aaa !important;
-    }
-
-    /* Estilizando os Cards/Containers (sur2) */
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #121530 !important;
-        border: 1px solid rgba(64,116,146,.2) !important;
-        border-radius: 7px;
-    }
-</style>
-""", unsafe_allow_html=True)
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 DB_FILE = "enderecos_logistica.db"
-CUSTO_KM_PADRAO = 1.50
 VELOCIDADE_MEDIA_KMH = 25.0
 
 UNIDADES_PROPRIAS = [
@@ -76,6 +29,32 @@ UNIDADES_PROPRIAS = [
     "UNIFOR", "PARANGABA", "HORIZONTE", "MUSEU", "BARRA", 
     "ESCRITÓRIO", "CASA DA INDÚSTRIA"
 ]
+
+SUPERVISORES_MAP = {
+    "BARRA": "Luis Eduardo Rodrigues",
+    "SESI BARRA DO CEARÁ": "Luis Eduardo Rodrigues",
+    "SENAI BARRA DO CEARÁ": "Luis Eduardo Rodrigues",
+    "CENTRO": "Victor Bezerra",
+    "SENAI CENTRO": "Victor Bezerra",
+    "ESCOLA CENTRO": "Victor Bezerra",
+    "NR SAÚDE": "Victor Bezerra",
+    "MUSEU": "Victor Bezerra",
+    "SESI MUSEU": "Victor Bezerra",
+    "CASA DA INDÚSTRIA": "Gustavo Souza",
+    "FIEC": "Gustavo Souza",
+    "MARACANAÚ": "Neto Porto",
+    "SESI ALBANO FRANCO": "Neto Porto",
+    "SESI CLUBE DA PARCERIA": "Neto Porto",
+    "SENAI ISTEMM": "Neto Porto",
+    "SENAI CETAFR": "Neto Porto",
+    "HORIZONTE": "Soares Junior",
+    "SESI HORIZONTE": "Soares Junior",
+    "SENAI HORIZONTE": "Soares Junior",
+    "SEBRAE": "Soares Junior",
+    "UNIFOR": "Joel Lima",
+    "ESCRITÓRIO": "Sede / Logística",
+    "PARANGABA": "Sede / Logística"
+}
 
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
@@ -109,13 +88,19 @@ ENDERECOS_PADRAO = [
 def inicializar_bd():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS locais (
-                    apelido TEXT PRIMARY KEY, 
-                    endereco TEXT, 
-                    lat REAL, 
-                    lon REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL, custo_fixo REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
+    
+    c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina, custo_fixo) VALUES (1, 11.5, 5.90, 23.0)")
+    c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '')")
+    
+    # Adiciona todos os supervisores na tabela do Teams
+    for sup in set(SUPERVISORES_MAP.values()):
+        c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES (?, '')", (sup,))
+    
     for apelido, end in ENDERECOS_PADRAO:
-        # Apenas insere se não existir. Não reescreve mais por cima das suas edições!
         c.execute("INSERT OR IGNORE INTO locais (apelido, endereco) VALUES (?, ?)", (apelido, end))
     conn.commit()
     conn.close()
@@ -123,8 +108,27 @@ def inicializar_bd():
 inicializar_bd()
 
 # =====================================================================
-# MOTORES DE GEOLOCALIZAÇÃO E CÁLCULOS OSRM
+# FUNÇÕES DE INTEGRAÇÃO (TEAMS E MAPAS)
 # =====================================================================
+def disparar_teams(webhook_url, titulo, mensagem, cor="22c55e"):
+    if not webhook_url or "http" not in webhook_url: return False
+    payload = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": cor,
+        "summary": titulo,
+        "sections": [{
+            "activityTitle": titulo,
+            "text": mensagem
+        }]
+    }
+    try:
+        req = urllib.request.Request(webhook_url, json.dumps(payload).encode('utf-8'), {'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except:
+        return False
+
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
@@ -136,22 +140,6 @@ def buscar_coordenadas(endereco):
         lat, lon = float(match_coords.group(1)), float(match_coords.group(2))
         if is_in_ceara(lat, lon): return lat, lon
         
-    if "http" in endereco_limpo or "google" in endereco_limpo.lower() or "goo.gl" in endereco_limpo.lower():
-        match_at = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', endereco_limpo)
-        if match_at: return float(match_at.group(1)), float(match_at.group(2))
-        match_3d = re.search(r'3d(-?\d+\.\d+)!4d(-?\d+\.\d+)', endereco_limpo)
-        if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
-            
-        try:
-            req = urllib.request.Request(endereco_limpo, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
-                final_url = response.geturl()
-            match_at = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', final_url)
-            if match_at: return float(match_at.group(1)), float(match_at.group(2))
-            match_3d = re.search(r'3d(-?\d+\.\d+)!4d(-?\d+\.\d+)', final_url)
-            if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
-        except: pass
-
     try:
         url_arcgis = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&singleLine=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&maxLocations=1"
         req = urllib.request.Request(url_arcgis, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
@@ -162,18 +150,6 @@ def buscar_coordenadas(endereco):
                 lon = float(data['candidates'][0]['location']['x'])
                 if is_in_ceara(lat, lon): return lat, lon
     except: pass
-
-    try:
-        url = "https://nominatim.openstreetmap.org/search?q=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&format=json&limit=1"
-        req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read())
-            if data:
-                lat = float(data[0]['lat'])
-                lon = float(data[0]['lon'])
-                if is_in_ceara(lat, lon): return lat, lon
-    except: pass
-    
     return None, None
 
 def calcular_matriz_rotas(coords):
@@ -204,9 +180,6 @@ def calcular_matriz_rotas(coords):
         duracoes.append(row_t)
     return distancias, duracoes
 
-# -------------------------------------------------------------
-# FILTRO ORTOGRÁFICO E DE SINÔNIMOS
-# -------------------------------------------------------------
 def normalizar_local(nome):
     if not nome: return "DESCONHECIDO"
     n = nome.upper().strip()
@@ -226,10 +199,7 @@ def extrair_dados_completos(texto, card_name):
             unidade = normalizar_local(u)
             break
             
-    if num and unidade: short_name = f"{num} - {unidade}"
-    elif num: short_name = f"Obra {num}"
-    elif unidade: short_name = unidade
-    else: short_name = card_name[:25] + "..."
+    short_name = f"{num} - {unidade}" if (num and unidade) else num if num else unidade if unidade else card_name[:25] + "..."
 
     origem, destino = "DESCONHECIDO", "DESCONHECIDO"
     materiais = "Ver Trello"
@@ -247,11 +217,7 @@ def extrair_dados_completos(texto, card_name):
             if start_idx < end_idx:
                 mat_text = texto[start_idx:end_idx].strip()
                 mat_text = re.sub(r'\*+', '', mat_text)
-                linhas_limpas = [
-                    l.strip().lstrip('-').strip() 
-                    for l in mat_text.split('\n') 
-                    if len(l.strip()) >= 2 and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para'] and not l.startswith(('![', '➡️', '→'))
-                ]
+                linhas_limpas = [l.strip().lstrip('-').strip() for l in mat_text.split('\n') if len(l.strip()) >= 2 and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para'] and not l.startswith(('![', '➡️', '→'))]
                 if linhas_limpas: materiais = " | ".join(linhas_limpas)
 
     if "SEBRAE" in destino or "SEBRAE" in short_name:
@@ -267,8 +233,6 @@ def encontrar_endereco_na_descricao(descricao):
     if mo_link: return mo_link.group(1)
     mo_end = re.search(r'(?i)(?:endere[çc]o|local)\s*(?:\:|-)\s*([^\n]+)', descricao)
     if mo_end: return mo_end.group(1).strip()
-    mo_rua = re.search(r'(?im)^(?:rua|av\.?|avenida|rodovia|br[- ]?\d+)\s+[^\n]+', descricao)
-    if mo_rua: return mo_rua.group(0).strip()
     return None
 
 def classificar_prioridade(due_str):
@@ -299,7 +263,7 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
-        with st.spinner("Puxando demandas ao vivo... (Até 60s)"):
+        with st.spinner("Puxando demandas ao vivo..."):
             try:
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
@@ -310,7 +274,6 @@ with st.sidebar:
                 
                 demandas_extraidas = []
                 excluir_termos = ["CONCLUÍDAS", "CONCLUIDAS", "ENTREGUE"]
-                
                 df_antigo = st.session_state.demandas
                 
                 for c in cards:
@@ -322,6 +285,9 @@ with st.sidebar:
                     short_name, origem, destino, materiais = extrair_dados_completos(descricao, c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     
+                    # Define quem é o supervisor dessa entrega
+                    supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
+                    
                     endereco_card = encontrar_endereco_na_descricao(descricao)
                     if endereco_card:
                         lat, lon = buscar_coordenadas(endereco_card)
@@ -331,7 +297,6 @@ with st.sidebar:
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
                                 if not res or res[0] is None:
                                     conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (origem, endereco_card, lat, lon))
-                            
                             if destino not in UNIDADES_PROPRIAS and destino != "DESCONHECIDO":
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (destino,)).fetchone()
                                 if not res or res[0] is None:
@@ -350,16 +315,10 @@ with st.sidebar:
                         te_val = linha_antiga['Tempo_Entrega']
                     
                     demandas_extraidas.append({
-                        "id": c['id'],
-                        "Obra": short_name,
-                        "Origem": origem,
-                        "Destino": destino,
-                        "Materiais": materiais,
-                        "Urgência": status_prazo,
-                        "Peso": peso,
-                        "Tempo_Coleta": tc_val,
-                        "Tempo_Entrega": te_val,
-                        "Uber": uber_val
+                        "id": c['id'], "Obra": short_name, "Origem": origem, "Destino": destino,
+                        "Materiais": materiais, "Urgência": status_prazo, "Peso": peso,
+                        "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val, "Uber": uber_val,
+                        "Supervisor": supervisor
                     })
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas)
@@ -370,55 +329,81 @@ with st.sidebar:
                 st.error(f"⚠️ Erro ao acessar o Trello: {e}")
     
     st.divider()
-    ponto_saida = st.selectbox("🏁 Ponto de Saída (07:30)", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
-    estrategia = st.selectbox(
-        "🎯 Estratégia da Rota",
-        [
-            "⚖️ Equilibrada (Padrão Aproar)", 
-            "🏢 Foco em Descarregar (Agrupar)", 
-            "⛽ Menor Distância (Economia)", 
-            "🚨 Priorizar Urgências"
-        ]
-    )
-    
-    descricoes_estrategia = {
-        "⚖️ Equilibrada (Padrão Aproar)": "Equilibra urgência, tempo de trânsito e paradas próximas.",
-        "🏢 Foco em Descarregar (Agrupar)": "Prioriza descarregar materiais já coletados e limpar a caçamba.",
-        "⛽ Menor Distância (Economia)": "Minimiza os km rodados, ignorando prazos curtos (Menor consumo).",
-        "🚨 Priorizar Urgências": "Atende demandas vencidas ou de hoje primeiro, mesmo aumentando o percurso."
-    }
-    st.caption(f"ℹ️ *{descricoes_estrategia[estrategia]}*")
-    retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
+    veiculo_selecionado = st.radio("🚗 Veículo da Rota", ["Carro da Empresa (Apenas Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"])
     st.divider()
-    tracker_url = st.text_input("🛰️ Link do Rastreador Online", value="https://rastreamento.exemplo.com")
-    if st.button("Abrir Rastreador ao Vivo"):
-        st.markdown(f'<a href="{tracker_url}" target="_blank">Clique aqui para abrir o rastreamento em tempo real</a>', unsafe_allow_html=True)
+    
+    ponto_saida = st.selectbox("🏁 Ponto de Saída (07:30)", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
+    estrategia = st.selectbox("🎯 Estratégia da Rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"])
+    retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
 
 if st.session_state.demandas.empty:
     st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão vermelho **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
     st.stop()
 
-tab_roteiro, tab_demandas, tab_enderecos = st.tabs(["🗺️ Roteiro do Davi & Mapa", "📦 Gestão de Demandas & Uber", "📍 Base de Endereços"])
+# =====================================================================
+# ABAS PRINCIPAIS
+# =====================================================================
+tab_roteiro, tab_demandas, tab_enderecos, tab_custos, tab_teams = st.tabs([
+    "🗺️ Roteiro do Davi", 
+    "📦 Demandas & Entregas", 
+    "📍 Endereços",
+    "💰 Dashboard & Custos",
+    "💬 Integração Teams"
+])
 
+# -------------------------------------------------------------
+# ABA: DEMANDAS E ALERTAS TEAMS
+# -------------------------------------------------------------
 with tab_demandas:
     st.subheader("Gerenciamento de Cargas e Minutos")
-    st.write("Marque as caixas para enviar itens via **Uber** ou altere manualmente os minutos de coleta e entrega:")
     df_editado = st.data_editor(
         st.session_state.demandas,
         column_config={
             "Uber": st.column_config.CheckboxColumn("Enviar via Uber?", default=False),
             "Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120),
             "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120),
-            "Peso": None, "id": None
+            "Peso": None, "id": None, "Supervisor": None
         },
         disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"],
         hide_index=True, use_container_width=True
     )
     st.session_state.demandas = df_editado
+    
+    st.divider()
+    st.subheader("🔔 Baixa de Entregas (Avisar Supervisor)")
+    st.write("Clique no botão correspondente para avisar o supervisor no Teams de que o material da obra dele foi entregue.")
+    
+    conn = sqlite3.connect(DB_FILE)
+    df_pendentes = st.session_state.demandas[st.session_state.demandas["Uber"] == False]
+    
+    if df_pendentes.empty:
+        st.info("Nenhuma demanda pendente para o carro.")
+    else:
+        for idx, row in df_pendentes.iterrows():
+            sup = row['Supervisor']
+            dest = row['Destino']
+            mat = row['Materiais']
+            
+            c1, c2 = st.columns([3, 1])
+            c1.markdown(f"📦 **{dest}** (Resp: {sup}) <br> <span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
+            if c2.button(f"✅ Avisar {sup.split()[0]}", key=f"btn_concluir_{row['id']}", use_container_width=True):
+                url_webhook = conn.execute("SELECT url FROM webhooks_teams WHERE setor=?", (sup,)).fetchone()
+                if url_webhook and url_webhook[0]:
+                    mensagem = f"O material foi entregue com sucesso pela logística.\n\n**Local:** {dest}\n**Itens:** {mat}"
+                    if disparar_teams(url_webhook[0], f"✅ Entrega Concluída: {dest}", mensagem):
+                        st.success(f"Notificação enviada para {sup} no Teams!")
+                    else:
+                        st.error("Erro ao enviar mensagem para o Teams.")
+                else:
+                    st.warning(f"O supervisor {sup} ainda não tem um link do Teams cadastrado na aba de Configurações.")
+            st.write("---")
+    conn.close()
 
+# -------------------------------------------------------------
+# ABA: ENDEREÇOS
+# -------------------------------------------------------------
 with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
-    st.info("💡 Como usar: Digite o nome do local igualzinho aparece na demanda e cole o link do Google Maps. O sistema nunca mais esquecerá!")
     col1, col2 = st.columns(2)
     with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper().strip()
     with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps").strip()
@@ -442,6 +427,92 @@ with tab_enderecos:
     conn.close()
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
 
+# -------------------------------------------------------------
+# ABA: DASHBOARD & CUSTOS
+# -------------------------------------------------------------
+with tab_custos:
+    st.subheader("💰 Análise de Custos e Combustível")
+    conn = sqlite3.connect(DB_FILE)
+    
+    cfg = pd.read_sql_query("SELECT * FROM config_frota WHERE id=1", conn).iloc[0]
+    
+    st.markdown("#### ⚙️ Parâmetros do Carro da Empresa")
+    cc1, cc2, cc3 = st.columns(3)
+    novo_consumo = cc1.number_input("Consumo (km/L)", value=float(cfg['consumo']), step=0.1)
+    novo_preco = cc2.number_input("Gasolina (R$/L)", value=float(cfg['preco_gasolina']), step=0.01)
+    novo_fixo = cc3.number_input("Custo Fixo Diário (R$)", value=float(cfg['custo_fixo']), step=1.0)
+    
+    if st.button("Salvar Parâmetros"):
+        conn.execute("UPDATE config_frota SET consumo=?, preco_gasolina=?, custo_fixo=? WHERE id=1", (novo_consumo, novo_preco, novo_fixo))
+        conn.commit()
+        st.success("✅ Parâmetros atualizados!")
+    
+    st.divider()
+    
+    if st.session_state.get('rota_gerada', False):
+        km_total = st.session_state['total_km']
+        custo_strada = (km_total / novo_consumo) * novo_preco + novo_fixo
+        custo_uber = (km_total * 2.20) + 8.00  # Estimativa Uber
+        custo_proprio = km_total * 1.50 # Terceirizado
+        
+        st.markdown(f"#### 📊 Comparativo da Rota Atual ({km_total:.1f} km)")
+        met1, met2, met3 = st.columns(3)
+        met1.metric("Carro da Empresa (Combustível)", f"R$ {custo_strada:.2f}", f"R$ {novo_preco/novo_consumo:.2f} / km", delta_color="off")
+        met2.metric("Veículo Próprio (R$ 1,50/km)", f"R$ {custo_proprio:.2f}", "R$ 1.50 / km", delta_color="off")
+        met3.metric("Terceirizar tudo no Uber", f"R$ {custo_uber:.2f}", "R$ 2.20 / km", delta_color="inverse")
+        st.divider()
+        
+    st.markdown("#### ⛽ Diário de Bordo da Empresa")
+    with st.expander("➕ Adicionar Novo Recibo (Gasolina / Manutenção)", expanded=False):
+        f_data = st.date_input("Data do Recibo")
+        fc1, fc2, fc3 = st.columns(3)
+        f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
+        f_valor = fc2.number_input("Preço da Gasolina (R$/L)", value=novo_preco, step=0.01)
+        f_manut = fc3.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
+        f_obs = st.text_input("Observação (Ex: Troca de óleo, pneu furado)")
+        
+        if st.button("Lançar Despesa"):
+            conn.execute("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs) VALUES (?, ?, ?, ?, ?)", 
+                         (f_data.strftime("%d/%m/%Y"), f_litros, f_valor, f_manut, f_obs))
+            conn.commit()
+            st.success("Lançamento salvo com sucesso!")
+
+    df_abastec = pd.read_sql_query("SELECT * FROM abastecimentos ORDER BY id DESC", conn)
+    if not df_abastec.empty:
+        df_abastec['Custo Gasolina'] = df_abastec['litros'] * df_abastec['valor_litro']
+        df_abastec['Custo Total'] = df_abastec['Custo Gasolina'] + df_abastec['manutencao']
+        st.dataframe(df_abastec[['data', 'litros', 'valor_litro', 'Custo Gasolina', 'manutencao', 'Custo Total', 'obs']], use_container_width=True)
+        
+        tot_litros = df_abastec['litros'].sum()
+        tot_gas = df_abastec['Custo Gasolina'].sum()
+        tot_man = df_abastec['manutencao'].sum()
+        st.info(f"**Acumulado Histórico:** ⛽ {tot_litros:.1f}L abastecidos | 💰 R$ {tot_gas:.2f} em Gasolina | 🔧 R$ {tot_man:.2f} em Manutenção | **Custo Total: R$ {tot_gas + tot_man:.2f}**")
+
+    conn.close()
+
+# -------------------------------------------------------------
+# ABA: TEAMS
+# -------------------------------------------------------------
+with tab_teams:
+    st.subheader("💬 Configuração dos Supervisores no Teams")
+    st.write("Cole aqui o link do Webhook gerado no Microsoft Teams para cada supervisor. Quando uma entrega for concluída, o alerta vai direto para ele!")
+    
+    conn = sqlite3.connect(DB_FILE)
+    df_teams = pd.read_sql_query("SELECT * FROM webhooks_teams ORDER BY setor", conn)
+    
+    for index, row in df_teams.iterrows():
+        setor = row['setor']
+        nova_url = st.text_input(f"👤 {setor}", value=row['url'], key=f"tms_{setor}")
+        if st.button(f"Salvar URL de {setor}"):
+            conn.execute("UPDATE webhooks_teams SET url=? WHERE setor=?", (nova_url, setor))
+            conn.commit()
+            st.success(f"Link de '{setor}' atualizado!")
+            
+    conn.close()
+
+# -------------------------------------------------------------
+# ABA: ROTEIRO E MAPA
+# -------------------------------------------------------------
 with tab_roteiro:
     df_ativos = st.session_state.demandas[st.session_state.demandas["Uber"] == False]
     df_uber = st.session_state.demandas[st.session_state.demandas["Uber"] == True]
@@ -589,13 +660,23 @@ with tab_roteiro:
         locais_dict = st.session_state['locais_dict']
         p_saida = st.session_state['p_saida']
         df_uber_final = st.session_state['df_uber_final']
+        
+        # CÁLCULO DINÂMICO DE CUSTO BASEADO NO VEÍCULO SELECIONADO
+        if "Empresa" in veiculo_selecionado:
+            conn = sqlite3.connect(DB_FILE)
+            cfg = pd.read_sql_query("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", conn).iloc[0]
+            conn.close()
+            custo_rota = (total_km / float(cfg['consumo'])) * float(cfg['preco_gasolina'])
+            desc_custo = "Custo Aprox. (Combustível Empresa)"
+        else:
+            custo_rota = total_km * 1.50
+            desc_custo = "Custo (R$ 1,50/km)"
 
         col_esq, col_dir = st.columns([1.2, 0.8])
 
         with col_esq:
             st.subheader("📋 Roteiro de Viagem do Davi")
-            
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n🏁 Saída: {p_saida} (07:30)\n\n"
+            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n🏁 Saída: {p_saida} (07:30)\n🚗 Veículo: {veiculo_selecionado}\n\n"
             
             num_parada = 1
             for step in route_steps:
@@ -612,7 +693,6 @@ with tab_roteiro:
                 with st.container(border=True):
                     st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
                     st.caption(f"🚘 Trecho: {step['dist']:.1f} km (~{step['travel_mins']:.0f} min) | Pátio: {step['tempo_local']} min")
-                    
                     texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     
                     for acao, t in step['actions']:
@@ -624,8 +704,19 @@ with tab_roteiro:
                     texto_whatsapp += "\n"
                     num_parada += 1
 
-            st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **Custo Estimado (R$ 1,50/km):** R$ {total_km * CUSTO_KM_PADRAO:.2f}")
-            texto_whatsapp += f"🛣️ Total: {total_km:.1f} km | Custo: R$ {total_km * CUSTO_KM_PADRAO:.2f}\n"
+            # Botão de Envio Geral (Opcional)
+            conn = sqlite3.connect(DB_FILE)
+            url_geral = conn.execute("SELECT url FROM webhooks_teams WHERE setor='Geral / Logística'").fetchone()
+            conn.close()
+            
+            if url_geral and url_geral[0]:
+                if st.button("📢 Mandar Roteiro Completo no Grupo Geral (Teams)", use_container_width=True):
+                    resumo = f"O roteiro do Davi já está pronto.\n\n**Total Paradas:** {num_parada-1}\n**Quilometragem Estimada:** {total_km:.1f} km"
+                    if disparar_teams(url_geral[0], "🚚 Roteiro Diário Liberado!", resumo):
+                        st.success("✅ Roteiro enviado para o grupo Geral!")
+
+            st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
+            texto_whatsapp += f"🛣️ Total: {total_km:.1f} km | {desc_custo}: R$ {custo_rota:.2f}\n"
 
             if not df_uber_final.empty:
                 st.divider()
@@ -640,7 +731,6 @@ with tab_roteiro:
         with col_dir:
             st.subheader("🗺️ Mapa da Rota")
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12)
-            
             path_points = []
             p_num = 1
             
@@ -648,13 +738,8 @@ with tab_roteiro:
                 lat_s, lon_s = locais_dict[p_saida]
                 path_points.append([lat_s, lon_s])
                 folium.Marker(
-                    [lat_s, lon_s],
-                    popup=f"Saída: {p_saida}",
-                    tooltip="Ponto de Saída",
-                    icon=folium.DivIcon(html=f'''
-                        <div style="background-color: #3b82f6; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">
-                            0
-                        </div>''')
+                    [lat_s, lon_s], popup=f"Saída: {p_saida}", tooltip="Ponto de Saída",
+                    icon=folium.DivIcon(html=f'''<div style="background-color: #3b82f6; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">0</div>''')
                 ).add_to(m)
 
             for step in route_steps:
@@ -662,42 +747,23 @@ with tab_roteiro:
                     lat, lon = locais_dict[step['destino']]
                     path_points.append([lat, lon])
                     
-                    if step['type'] == 'lunch':
-                        continue
-                        
+                    if step['type'] == 'lunch': continue
                     if step['type'] == 'return':
-                        bg_color = "#3b82f6" 
-                        num_str = "🏁"
-                        tt_text = f"Retorno: {step['destino']}"
+                        bg_color, num_str, tt_text = "#3b82f6", "🏁", f"Retorno: {step['destino']}"
                     else:
                         acoes = [a[0] for a in step.get('actions', [])]
-                        if "COLETAR" in acoes and "ENTREGAR" in acoes:
-                            bg_color = "#a855f7" 
-                        elif "COLETAR" in acoes:
-                            bg_color = "#f59e0b" 
-                        else:
-                            bg_color = "#22c55e" 
-                            
-                        num_str = str(p_num)
-                        tt_text = f"Parada {p_num}: {step['destino']}"
+                        bg_color = "#a855f7" if "COLETAR" in acoes and "ENTREGAR" in acoes else "#f59e0b" if "COLETAR" in acoes else "#22c55e"
+                        num_str, tt_text = str(p_num), f"Parada {p_num}: {step['destino']}"
                     
                     folium.Marker(
-                        [lat, lon],
-                        popup=f"{step['destino']}",
-                        tooltip=tt_text,
-                        icon=folium.DivIcon(html=f'''
-                            <div style="background-color: {bg_color}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">
-                                {num_str}
-                            </div>''')
+                        [lat, lon], popup=f"{step['destino']}", tooltip=tt_text,
+                        icon=folium.DivIcon(html=f'''<div style="background-color: {bg_color}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">{num_str}</div>''')
                     ).add_to(m)
-                    
-                    if step['type'] != "return": 
-                        p_num += 1
+                    if step['type'] != "return": p_num += 1
 
             if len(path_points) > 1:
                 folium.PolyLine(path_points, color="#2563eb", weight=4, opacity=0.8).add_to(m)
                 m.fit_bounds(path_points)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            
             st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px;'><b>Legenda:</b> 🔵 Saída/Retorno | 🟡 Coleta | 🟢 Entrega | 🟣 Ambos</div>", unsafe_allow_html=True)
