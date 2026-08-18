@@ -3,6 +3,7 @@ import re
 import json
 import math
 import sqlite3
+import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
@@ -70,6 +71,30 @@ SUPERVISORES_MAP = {
     "PARANGABA": "Sede / Logística"
 }
 
+TEAMS_SECRET_KEYS = {
+    "Luis Eduardo Rodrigues": "luis_eduardo",
+    "Victor Bezerra": "victor_bezerra",
+    "Gustavo Souza": "gustavo_souza",
+    "Neto Porto": "neto_porto",
+    "Soares Junior": "soares_junior",
+    "Joel Lima": "joel_lima",
+    "Sede / Logística": "sede_logistica",
+    "Geral / Logística": "geral_logistica",
+}
+
+TEAMS_GRUPOS_UNIDADE = [
+    ("COMPRAS X ORÇAMENTOS", "geral_logistica", "Geral / Logística"),
+    ("MARACANAÚ X COMPRAS", "maracanau", "MARACANAÚ"),
+    ("HORIZONTE X COMPRAS", "horizonte", "HORIZONTE"),
+    ("BARRA X COMPRAS", "barra", "BARRA"),
+    ("CASA DA INDÚSTRIA X COMPRAS", "casa_industria", "CASA DA INDÚSTRIA"),
+    ("CENTRO X COMPRAS", "centro", "CENTRO"),
+    ("SEBRAE X COMPRAS", "sebrae", "SEBRAE"),
+    ("MUSEU DA IND X COMPRAS", "museu", "MUSEU"),
+    ("UNIFOR X COMPRAS", "unifor", "UNIFOR"),
+    ("SEDE/PARANGABA X COMPRAS", "sede_parangaba", "PARANGABA"),
+]
+
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
@@ -125,14 +150,89 @@ inicializar_bd()
 # =====================================================================
 # FUNÇÕES DE INTEGRAÇÃO (TEAMS E MAPAS)
 # =====================================================================
-def disparar_teams(webhook_url, titulo, mensagem, cor="22c55e"):
-    if not webhook_url or "http" not in webhook_url: return False
-    payload = {"@type": "MessageCard", "themeColor": cor, "summary": titulo, "sections": [{"activityTitle": titulo, "text": mensagem}]}
+def identificar_grupo_teams(destino, obra=""):
+    texto = normalizar_local(f"{obra} {destino}")
+    regras = [
+        (("GERAL / LOGÍSTICA",), "geral_logistica"),
+        (("CASA DA INDÚSTRIA", "FIEC"), "casa_industria"),
+        (("MARACANAÚ",), "maracanau"),
+        (("HORIZONTE",), "horizonte"),
+        (("SEBRAE",), "sebrae"),
+        (("MUSEU",), "museu"),
+        (("BARRA",), "barra"),
+        (("CENTRO", "NR SAÚDE"), "centro"),
+        (("UNIFOR",), "unifor"),
+        (("PARANGABA", "ESCRITÓRIO"), "sede_parangaba"),
+    ]
+    for termos, chave in regras:
+        if any(termo in texto for termo in termos):
+            return chave
+    return ""
+
+
+def obter_webhook_teams(setor, supervisor=None, obra=""):
+    """Procura primeiro o grupo da unidade e mantém o cadastro antigo como fallback."""
+    chave_unidade = identificar_grupo_teams(setor, obra)
+    if chave_unidade:
+        try:
+            url_secret = str(
+                st.secrets["teams_unidades"].get(chave_unidade, "")
+            ).strip()
+            if url_secret:
+                return url_secret, "Secrets — grupo da unidade"
+        except Exception:
+            pass
+
+    nome_supervisor = supervisor or setor
+    chave_supervisor = TEAMS_SECRET_KEYS.get(nome_supervisor)
+    if chave_supervisor:
+        try:
+            url_secret = str(
+                st.secrets["teams"].get(chave_supervisor, "")
+            ).strip()
+            if url_secret:
+                return url_secret, "Secrets — cadastro anterior"
+        except Exception:
+            pass
+
     try:
-        req = urllib.request.Request(webhook_url, json.dumps(payload).encode('utf-8'), {'Content-Type': 'application/json'})
-        urllib.request.urlopen(req, timeout=5)
-        return True
-    except: return False
+        conn = sqlite3.connect(DB_FILE)
+        registro = conn.execute(
+            "SELECT url FROM webhooks_teams WHERE setor = ?", (nome_supervisor,)
+        ).fetchone()
+        conn.close()
+        if registro and registro[0]:
+            return registro[0].strip(), "Banco local"
+    except Exception:
+        pass
+
+    return "", "Não configurado"
+
+
+def disparar_teams(webhook_url, titulo, mensagem):
+    """Envia texto para um webhook moderno do Teams Workflows."""
+    if not webhook_url or not webhook_url.lower().startswith("https://"):
+        return False, "O link precisa ser um webhook HTTPS do Teams Workflows."
+
+    payload = {"text": f"**{titulo}**\n\n{mensagem}"}
+    ultimo_erro = ""
+
+    for tentativa in range(3):
+        try:
+            resposta = requests.post(webhook_url, json=payload, timeout=15)
+            if 200 <= resposta.status_code < 300:
+                return True, "Mensagem aceita pelo Teams."
+
+            ultimo_erro = f"Teams respondeu com o código {resposta.status_code}."
+            if resposta.status_code != 429 and resposta.status_code < 500:
+                break
+        except requests.RequestException:
+            ultimo_erro = "Não foi possível alcançar o Teams."
+
+        if tentativa < 2:
+            time.sleep(1 + tentativa)
+
+    return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -800,7 +900,6 @@ with tab_demandas:
     
     st.divider()
     st.subheader("🔔 Notificar Supervisor no Teams")
-    conn = sqlite3.connect(DB_FILE)
     if not st.session_state.demandas.empty:
         for idx, row in st.session_state.demandas.iterrows():
             sup = row['Supervisor']
@@ -810,17 +909,31 @@ with tab_demandas:
             c1, c2 = st.columns([3, 1])
             c1.markdown(f"📦 **{dest}** (Resp: {sup}) <br> <span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
             if c2.button(f"💬 Avisar {sup.split()[0]}", key=f"btn_tms_{row['id']}", use_container_width=True):
-                url_webhook = conn.execute("SELECT url FROM webhooks_teams WHERE setor=?", (sup,)).fetchone()
-                if url_webhook and url_webhook[0]:
-                    mensagem = f"Atualização de rota:\n\n**Local:** {dest}\n**Itens:** {mat}"
-                    if disparar_teams(url_webhook[0], f"📦 Andamento: {dest}", mensagem):
+                url_webhook, _ = obter_webhook_teams(
+                    dest,
+                    supervisor=sup,
+                    obra=row['Obra']
+                )
+                if url_webhook:
+                    mensagem = (
+                        f"**Obra:** {row['Obra']}\n\n"
+                        f"**Origem:** {row['Origem']}\n\n"
+                        f"**Destino:** {dest}\n\n"
+                        f"**Materiais:** {mat}\n\n"
+                        f"**Urgência:** {row['Urgência']}"
+                    )
+                    enviado, detalhe = disparar_teams(
+                        url_webhook,
+                        f"📦 Atualização logística — {dest}",
+                        mensagem
+                    )
+                    if enviado:
                         st.success(f"Notificação enviada para {sup}!")
                     else:
-                        st.error("Erro ao enviar mensagem.")
+                        st.error(f"Erro ao enviar: {detalhe}")
                 else:
                     st.warning(f"O supervisor {sup} não tem webhook cadastrado.")
             st.write("---")
-    conn.close()
 
 # -------------------------------------------------------------
 # ABA: HISTÓRICO E CONCLUÍDOS
@@ -964,21 +1077,78 @@ with tab_custos:
 # ABA: TEAMS CONFIG
 # -------------------------------------------------------------
 with tab_teams:
-    st.subheader("💬 Configuração dos Supervisores no Teams")
-    st.write("Cole aqui o link do Webhook gerado no Microsoft Teams para cada supervisor.")
-    
-    conn = sqlite3.connect(DB_FILE)
-    df_teams = pd.read_sql_query("SELECT * FROM webhooks_teams ORDER BY setor", conn)
-    
-    for index, row in df_teams.iterrows():
-        setor = row['setor']
-        nova_url = st.text_input(f"👤 {setor}", value=row['url'], key=f"tms_{setor}")
-        if st.button(f"Salvar URL de {setor}"):
-            conn.execute("UPDATE webhooks_teams SET url=? WHERE setor=?", (nova_url, setor))
-            conn.commit()
-            st.success(f"Link de '{setor}' atualizado!")
-            
-    conn.close()
+    st.subheader("💬 Integração dos Grupos de Unidade no Teams")
+    st.write(
+        "Cada demanda será enviada ao grupo da unidade correspondente. "
+        "As URLs ficam protegidas nos Secrets do aplicativo."
+    )
+
+    with st.expander("📘 Como criar cada link", expanded=False):
+        st.markdown(
+            "1. Abra o grupo da unidade no Teams.\n"
+            "2. Entre em **Fluxos de trabalho** e selecione a opção de webhook.\n"
+            "3. Salve e copie a URL fornecida.\n"
+            "4. Cole a URL na chave da mesma unidade nos Secrets."
+        )
+
+    st.code(
+        '[teams_unidades]\n'
+        'geral_logistica = ""\n'
+        'maracanau = ""\n'
+        'horizonte = ""\n'
+        'barra = ""\n'
+        'casa_industria = ""\n'
+        'centro = ""\n'
+        'sebrae = ""\n'
+        'museu = ""\n'
+        'unifor = ""\n'
+        'sede_parangaba = ""',
+        language="toml"
+    )
+
+    configurados = sum(
+        1
+        for _, _, destino_teste in TEAMS_GRUPOS_UNIDADE
+        if obter_webhook_teams(destino_teste, obra=destino_teste)[0]
+    )
+    st.progress(
+        configurados / max(len(TEAMS_GRUPOS_UNIDADE), 1),
+        text=(
+            f"{configurados} de {len(TEAMS_GRUPOS_UNIDADE)} "
+            "grupos configurados"
+        )
+    )
+
+    for nome_grupo, chave, destino_teste in TEAMS_GRUPOS_UNIDADE:
+        url_ativa, fonte = obter_webhook_teams(
+            destino_teste,
+            obra=destino_teste
+        )
+
+        with st.container(border=True):
+            c_nome, c_teste = st.columns([4, 1])
+            if url_ativa:
+                c_nome.markdown(
+                    f"**✅ {nome_grupo}**  \nConfigurado via {fonte} (`{chave}`)"
+                )
+                if c_teste.button(
+                    "🧪 Testar",
+                    key=f"teste_teams_{chave}",
+                    use_container_width=True
+                ):
+                    ok, detalhe = disparar_teams(
+                        url_ativa,
+                        "✅ Teste da Torre de Controle",
+                        f"Integração com **{nome_grupo}** configurada com sucesso."
+                    )
+                    if ok:
+                        st.success(f"Teste enviado para {nome_grupo}!")
+                    else:
+                        st.error(detalhe)
+            else:
+                c_nome.markdown(
+                    f"**⚠️ {nome_grupo}**  \nAinda não configurado (`{chave}`)"
+                )
 
 # -------------------------------------------------------------
 # ABA: ROTEIRO E MAPA
@@ -1186,15 +1356,20 @@ with tab_roteiro:
                 conn.close()
                 st.success(f"✅ {total_km:.1f} km registrados para o fechamento mensal!")
 
-            conn = sqlite3.connect(DB_FILE)
-            url_geral = conn.execute("SELECT url FROM webhooks_teams WHERE setor='Geral / Logística'").fetchone()
-            conn.close()
+            url_geral, _ = obter_webhook_teams("Geral / Logística")
             
-            if url_geral and url_geral[0]:
+            if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
                     resumo = f"O roteiro do Davi já está pronto.\n\n**Total Paradas:** {num_parada-1}\n**Quilometragem:** {total_km:.1f} km"
-                    if disparar_teams(url_geral[0], "🚚 Roteiro Diário Liberado!", resumo):
+                    enviado, detalhe = disparar_teams(
+                        url_geral,
+                        "🚚 Roteiro Diário Liberado!",
+                        resumo
+                    )
+                    if enviado:
                         st.success("✅ Roteiro enviado para o grupo Geral!")
+                    else:
+                        st.error(f"Erro ao enviar o roteiro: {detalhe}")
 
             st.text_area("📋 Texto Pronto para WhatsApp", value=texto_whatsapp, height=150)
 
