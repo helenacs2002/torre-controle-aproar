@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
-RASTREADOR_URL = "https://portal.protegeexpress.com.br/"
+RASTREADOR_URL = "https://portal.protegeexpress.com.br/sistema/login.aspx"
 DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
 FUSO_LOCAL = ZoneInfo("America/Fortaleza")
