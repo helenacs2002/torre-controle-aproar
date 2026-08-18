@@ -5,7 +5,8 @@ import math
 import sqlite3
 import urllib.request
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 import folium
@@ -23,6 +24,7 @@ st.set_page_config(
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
+FUSO_LOCAL = ZoneInfo("America/Fortaleza")
 
 UNIDADES_PROPRIAS = [
     "FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", 
@@ -229,13 +231,67 @@ def encontrar_endereco_na_descricao(descricao):
 def classificar_prioridade(due_str):
     if not due_str: return 1, "Sem Prazo"
     try:
-        due_date = datetime.strptime(due_str[:10], "%Y-%m-%d").date()
-        diff = (due_date - datetime.now().date()).days
+        due_date = converter_data_trello(due_str).date()
+        diff = (due_date - datetime.now(FUSO_LOCAL).date()).days
         if diff < 0: return 5, "VENCIDA"
         elif diff == 0: return 4, "HOJE"
         elif diff <= 2: return 3, f"Em {diff} dias"
         else: return 1, "Futuro"
     except: return 1, "Sem Prazo"
+
+def converter_data_trello(valor):
+    """Converte uma data ISO do Trello para o horário local de Fortaleza."""
+    if not valor:
+        return None
+    data = datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    if data.tzinfo is None:
+        data = data.replace(tzinfo=timezone.utc)
+    return data.astimezone(FUSO_LOCAL)
+
+def lista_esta_concluida(nome_lista):
+    nome = normalizar_local(nome_lista or "")
+    return "CONCLU" in nome or "ENTREG" in nome
+
+def encontrar_conclusao_de_hoje(card_id, acoes):
+    """Retorna o último movimento de hoje que colocou o cartão em uma lista concluída."""
+    hoje = datetime.now(FUSO_LOCAL).date()
+    conclusoes = []
+
+    for acao in acoes:
+        if acao.get("type") != "updateCard":
+            continue
+
+        dados = acao.get("data", {})
+        cartao = dados.get("card", {})
+        lista_antes = dados.get("listBefore", {}).get("name", "")
+        lista_depois = dados.get("listAfter", {}).get("name", "")
+
+        if cartao.get("id") != card_id:
+            continue
+        if not lista_esta_concluida(lista_depois):
+            continue
+        if lista_esta_concluida(lista_antes):
+            continue
+
+        try:
+            momento = converter_data_trello(acao.get("date"))
+        except (TypeError, ValueError):
+            continue
+
+        if momento and momento.date() == hoje:
+            conclusoes.append(momento)
+
+    return max(conclusoes) if conclusoes else None
+
+def prazo_era_hoje_ou_atrasado(due_str, momento_conclusao):
+    """Aceita apenas prazo igual ou anterior ao dia em que a demanda foi concluída."""
+    if not due_str or not momento_conclusao:
+        return False
+    try:
+        prazo = converter_data_trello(due_str)
+        return prazo.date() <= momento_conclusao.date()
+    except (TypeError, ValueError):
+        return False
 
 def format_time(minutes):
     total = int(round(minutes))
@@ -262,9 +318,11 @@ with st.sidebar:
                 
                 trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
                 cards = data.get('cards', [])
+                acoes = data.get('actions', [])
                 
                 demandas_extraidas = []
-                data_hoje = datetime.now().strftime("%d/%m/%Y")
+                data_hoje = datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y")
+                ids_concluidos_validos_hoje = set()
                 
                 conn = sqlite3.connect(DB_FILE)
                 df_antigo = st.session_state.demandas
@@ -277,10 +335,19 @@ with st.sidebar:
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
                     
-                    # CORREÇÃO AQUI: BUSCA POR "CONCLU" E "ENTREG" PARA PEGAR CONCLUÍDAS/CONCLUÍDAS/ENTREGUE
-                    if "CONCLU" in nome_lista or "ENTREG" in nome_lista:
-                        conn.execute("INSERT OR IGNORE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
-                                     (c['id'], short_name, origem, destino, materiais, data_hoje))
+                    # Só entra no painel diário se foi movida para Concluídas/Entregues
+                    # hoje e se o prazo era hoje ou já estava vencido.
+                    if lista_esta_concluida(nome_lista):
+                        momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
+                        if prazo_era_hoje_ou_atrasado(c.get('due'), momento_conclusao):
+                            data_conclusao = momento_conclusao.strftime("%d/%m/%Y")
+                            conn.execute(
+                                "INSERT OR REPLACE INTO historico_concluidos "
+                                "(id, obra, origem, destino, materiais, data_conclusao) "
+                                "VALUES (?, ?, ?, ?, ?, ?)",
+                                (c['id'], short_name, origem, destino, materiais, data_conclusao)
+                            )
+                            ids_concluidos_validos_hoje.add(c['id'])
                         continue
                     
                     endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
@@ -309,13 +376,35 @@ with st.sidebar:
                         "Materiais": materiais, "Urgência": status_prazo, "Peso": peso,
                         "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val, "Supervisor": supervisor
                     })
+
+                # Remove do registro de hoje qualquer cartão salvo pela lógica antiga
+                # que não satisfaça os dois critérios atuais.
+                if acoes:
+                    registros_de_hoje = conn.execute(
+                        "SELECT id FROM historico_concluidos WHERE data_conclusao = ?",
+                        (data_hoje,)
+                    ).fetchall()
+                    for (card_id_salvo,) in registros_de_hoje:
+                        if card_id_salvo not in ids_concluidos_validos_hoje:
+                            conn.execute(
+                                "DELETE FROM historico_concluidos WHERE id = ?",
+                                (card_id_salvo,)
+                            )
                 
                 conn.commit()
                 conn.close()
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas)
                 st.session_state['rota_gerada'] = False 
-                st.success("✅ Sincronizado! Demandas concluídas foram enviadas para o Histórico.")
+                st.success(
+                    f"✅ Sincronizado! {len(ids_concluidos_validos_hoje)} demanda(s) "
+                    "atrasada(s) ou de hoje foi(ram) concluída(s) hoje."
+                )
+                if not acoes:
+                    st.warning(
+                        "O Trello não enviou o histórico de movimentações. "
+                        "Por segurança, nenhuma conclusão foi registrada como sendo de hoje."
+                    )
             
             except Exception as e:
                 st.error(f"⚠️ Erro ao acessar o Trello: {e}")
@@ -389,15 +478,23 @@ with tab_demandas:
 # ABA: HISTÓRICO E CONCLUÍDOS
 # -------------------------------------------------------------
 with tab_historico:
-    st.subheader("📋 Registro de Demandas Concluídas (Via Trello)")
-    st.write("Aqui ficam guardadas todas as entregas que foram movidas para a coluna **'CONCLUÍDAS'** lá no Trello durante a sincronização.")
+    st.subheader("📋 Atrasadas ou de Hoje Concluídas Hoje")
+    st.write(
+        "Aqui aparecem somente as demandas cujo prazo era **hoje ou já estava "
+        "vencido** e que foram movidas para **'CONCLUÍDAS/ENTREGUES' hoje** no Trello."
+    )
     
     conn = sqlite3.connect(DB_FILE)
-    df_hist = pd.read_sql_query("SELECT * FROM historico_concluidos ORDER BY rowid DESC", conn)
+    data_hoje = datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y")
+    df_hist = pd.read_sql_query(
+        "SELECT * FROM historico_concluidos WHERE data_conclusao = ? ORDER BY rowid DESC",
+        conn,
+        params=(data_hoje,)
+    )
     conn.close()
     
     if df_hist.empty:
-        st.info("Nenhuma demanda concluída registrada ainda. Assim que você sincronizar o Trello com cartões na coluna CONCLUÍDAS, eles aparecerão aqui.")
+        st.info("Nenhuma demanda atrasada ou com prazo de hoje foi concluída hoje.")
     else:
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
