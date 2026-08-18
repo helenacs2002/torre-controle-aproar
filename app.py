@@ -12,7 +12,7 @@ import folium
 from streamlit_folium import st_folium
 
 # =====================================================================
-# CONFIGURAÇÕES DE TELA, EQUIPE E BANCO DE DADOS
+# CONFIGURAÇÕES DE TELA E BANCO DE DADOS
 # =====================================================================
 st.set_page_config(
     page_title="Aproar - Torre de Controle Logística",
@@ -89,14 +89,14 @@ def inicializar_bd():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL, custo_fixo REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     
-    c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina, custo_fixo) VALUES (1, 11.5, 5.90, 23.0)")
+    c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90)")
     c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '')")
     
-    # Adiciona todos os supervisores na tabela do Teams
     for sup in set(SUPERVISORES_MAP.values()):
         c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES (?, '')", (sup,))
     
@@ -108,26 +108,16 @@ def inicializar_bd():
 inicializar_bd()
 
 # =====================================================================
-# FUNÇÕES DE INTEGRAÇÃO (TEAMS E MAPAS)
+# FUNÇÕES DE INTEGRAÇÃO E MAPAS
 # =====================================================================
 def disparar_teams(webhook_url, titulo, mensagem, cor="22c55e"):
     if not webhook_url or "http" not in webhook_url: return False
-    payload = {
-        "@type": "MessageCard",
-        "@context": "http://schema.org/extensions",
-        "themeColor": cor,
-        "summary": titulo,
-        "sections": [{
-            "activityTitle": titulo,
-            "text": mensagem
-        }]
-    }
+    payload = {"@type": "MessageCard", "themeColor": cor, "summary": titulo, "sections": [{"activityTitle": titulo, "text": mensagem}]}
     try:
         req = urllib.request.Request(webhook_url, json.dumps(payload).encode('utf-8'), {'Content-Type': 'application/json'})
         urllib.request.urlopen(req, timeout=5)
         return True
-    except:
-        return False
+    except: return False
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -285,7 +275,6 @@ with st.sidebar:
                     short_name, origem, destino, materiais = extrair_dados_completos(descricao, c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     
-                    # Define quem é o supervisor dessa entrega
                     supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
                     
                     endereco_card = encontrar_endereco_na_descricao(descricao)
@@ -304,21 +293,18 @@ with st.sidebar:
                             conn.commit()
                             conn.close()
                     
-                    uber_val = False
                     tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
                     te_val = 10
                     
                     if not df_antigo.empty and c['id'] in df_antigo['id'].values:
                         linha_antiga = df_antigo[df_antigo['id'] == c['id']].iloc[0]
-                        uber_val = linha_antiga['Uber']
                         tc_val = linha_antiga['Tempo_Coleta']
                         te_val = linha_antiga['Tempo_Entrega']
                     
                     demandas_extraidas.append({
                         "id": c['id'], "Obra": short_name, "Origem": origem, "Destino": destino,
                         "Materiais": materiais, "Urgência": status_prazo, "Peso": peso,
-                        "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val, "Uber": uber_val,
-                        "Supervisor": supervisor
+                        "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val, "Supervisor": supervisor
                     })
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas)
@@ -329,10 +315,10 @@ with st.sidebar:
                 st.error(f"⚠️ Erro ao acessar o Trello: {e}")
     
     st.divider()
-    veiculo_selecionado = st.radio("🚗 Veículo da Rota", ["Carro da Empresa (Apenas Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"])
+    veiculo_selecionado = st.radio("🚗 Tipo de Custeio da Rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"])
     st.divider()
     
-    ponto_saida = st.selectbox("🏁 Ponto de Saída (07:30)", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
+    ponto_saida = st.selectbox("🏁 Ponto de Saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
     estrategia = st.selectbox("🎯 Estratégia da Rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"])
     retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
 
@@ -359,7 +345,6 @@ with tab_demandas:
     df_editado = st.data_editor(
         st.session_state.demandas,
         column_config={
-            "Uber": st.column_config.CheckboxColumn("Enviar via Uber?", default=False),
             "Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120),
             "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120),
             "Peso": None, "id": None, "Supervisor": None
@@ -371,15 +356,11 @@ with tab_demandas:
     
     st.divider()
     st.subheader("🔔 Baixa de Entregas (Avisar Supervisor)")
-    st.write("Clique no botão correspondente para avisar o supervisor no Teams de que o material da obra dele foi entregue.")
+    st.write("Clique no botão para avisar o supervisor no Teams de que o material da obra dele foi entregue.")
     
     conn = sqlite3.connect(DB_FILE)
-    df_pendentes = st.session_state.demandas[st.session_state.demandas["Uber"] == False]
-    
-    if df_pendentes.empty:
-        st.info("Nenhuma demanda pendente para o carro.")
-    else:
-        for idx, row in df_pendentes.iterrows():
+    if not st.session_state.demandas.empty:
+        for idx, row in st.session_state.demandas.iterrows():
             sup = row['Supervisor']
             dest = row['Destino']
             mat = row['Materiais']
@@ -428,70 +409,107 @@ with tab_enderecos:
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
 
 # -------------------------------------------------------------
-# ABA: DASHBOARD & CUSTOS
+# ABA: FECHAMENTO MENSAL E CUSTOS (A MÁGICA ACONTECE AQUI)
 # -------------------------------------------------------------
 with tab_custos:
-    st.subheader("💰 Análise de Custos e Combustível")
+    st.subheader("💰 Fechamento Mensal e Controle de Frota")
     conn = sqlite3.connect(DB_FILE)
     
-    cfg = pd.read_sql_query("SELECT * FROM config_frota WHERE id=1", conn).iloc[0]
+    # Busca a configuração de consumo
+    cfg = pd.read_sql_query("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", conn).iloc[0]
     
-    st.markdown("#### ⚙️ Parâmetros do Carro da Empresa")
-    cc1, cc2, cc3 = st.columns(3)
-    novo_consumo = cc1.number_input("Consumo (km/L)", value=float(cfg['consumo']), step=0.1)
-    novo_preco = cc2.number_input("Gasolina (R$/L)", value=float(cfg['preco_gasolina']), step=0.01)
-    novo_fixo = cc3.number_input("Custo Fixo Diário (R$)", value=float(cfg['custo_fixo']), step=1.0)
-    
-    if st.button("Salvar Parâmetros"):
-        conn.execute("UPDATE config_frota SET consumo=?, preco_gasolina=?, custo_fixo=? WHERE id=1", (novo_consumo, novo_preco, novo_fixo))
+    st.markdown("#### ⚙️ Estimativa Base do Carro")
+    cc1, cc2 = st.columns(2)
+    novo_consumo = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1)
+    novo_preco = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01)
+    if st.button("Atualizar Base"):
+        conn.execute("UPDATE config_frota SET consumo=?, preco_gasolina=? WHERE id=1", (novo_consumo, novo_preco))
         conn.commit()
-        st.success("✅ Parâmetros atualizados!")
+        st.success("✅ Base de cálculo atualizada!")
     
     st.divider()
     
-    if st.session_state.get('rota_gerada', False):
-        km_total = st.session_state['total_km']
-        custo_strada = (km_total / novo_consumo) * novo_preco + novo_fixo
-        custo_uber = (km_total * 2.20) + 8.00  # Estimativa Uber
-        custo_proprio = km_total * 1.50 # Terceirizado
-        
-        st.markdown(f"#### 📊 Comparativo da Rota Atual ({km_total:.1f} km)")
-        met1, met2, met3 = st.columns(3)
-        met1.metric("Carro da Empresa (Combustível)", f"R$ {custo_strada:.2f}", f"R$ {novo_preco/novo_consumo:.2f} / km", delta_color="off")
-        met2.metric("Veículo Próprio (R$ 1,50/km)", f"R$ {custo_proprio:.2f}", "R$ 1.50 / km", delta_color="off")
-        met3.metric("Terceirizar tudo no Uber", f"R$ {custo_uber:.2f}", "R$ 2.20 / km", delta_color="inverse")
-        st.divider()
-        
-    st.markdown("#### ⛽ Diário de Bordo da Empresa")
-    with st.expander("➕ Adicionar Novo Recibo (Gasolina / Manutenção)", expanded=False):
-        f_data = st.date_input("Data do Recibo")
-        fc1, fc2, fc3 = st.columns(3)
-        f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
-        f_valor = fc2.number_input("Preço da Gasolina (R$/L)", value=novo_preco, step=0.01)
-        f_manut = fc3.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
-        f_obs = st.text_input("Observação (Ex: Troca de óleo, pneu furado)")
-        
-        if st.button("Lançar Despesa"):
-            conn.execute("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs) VALUES (?, ?, ?, ?, ?)", 
-                         (f_data.strftime("%d/%m/%Y"), f_litros, f_valor, f_manut, f_obs))
-            conn.commit()
-            st.success("Lançamento salvo com sucesso!")
+    # ------------------ SISTEMA DE LANÇAMENTOS ------------------
+    col_recibo, col_km = st.columns(2)
+    
+    with col_recibo:
+        st.markdown("#### ⛽ Lançar Recibo de Gasto")
+        with st.form("form_recibo", clear_on_submit=True):
+            f_data = st.date_input("Data do Recibo")
+            fc1, fc2 = st.columns(2)
+            f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
+            f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
+            f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
+            f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
+            
+            if st.form_submit_button("Lançar no Caixa"):
+                conn.execute("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs) VALUES (?, ?, ?, ?, ?)", 
+                             (f_data.strftime("%d/%m/%Y"), f_litros, f_valor, f_manut, f_obs))
+                conn.commit()
+                st.success("Recibo salvo com sucesso!")
 
-    df_abastec = pd.read_sql_query("SELECT * FROM abastecimentos ORDER BY id DESC", conn)
-    if not df_abastec.empty:
-        df_abastec['Custo Gasolina'] = df_abastec['litros'] * df_abastec['valor_litro']
-        df_abastec['Custo Total'] = df_abastec['Custo Gasolina'] + df_abastec['manutencao']
-        st.dataframe(df_abastec[['data', 'litros', 'valor_litro', 'Custo Gasolina', 'manutencao', 'Custo Total', 'obs']], use_container_width=True)
-        
-        tot_litros = df_abastec['litros'].sum()
-        tot_gas = df_abastec['Custo Gasolina'].sum()
-        tot_man = df_abastec['manutencao'].sum()
-        st.info(f"**Acumulado Histórico:** ⛽ {tot_litros:.1f}L abastecidos | 💰 R$ {tot_gas:.2f} em Gasolina | 🔧 R$ {tot_man:.2f} em Manutenção | **Custo Total: R$ {tot_gas + tot_man:.2f}**")
+    with col_km:
+        st.markdown("#### 🛣️ Lançar KMs Avulsos")
+        st.write("Use aqui caso o carro tenha rodado por fora do aplicativo.")
+        with st.form("form_km", clear_on_submit=True):
+            k_data = st.date_input("Data da Corrida")
+            k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
+            k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
+            
+            if st.form_submit_button("Lançar KMs"):
+                conn.execute("INSERT INTO registro_km (data, km, obs) VALUES (?, ?, ?)", 
+                             (k_data.strftime("%d/%m/%Y"), k_km, k_obs))
+                conn.commit()
+                st.success(f"{k_km} km salvos com sucesso!")
 
+    st.divider()
+
+    # ------------------ FECHAMENTO MENSAL ------------------
+    st.markdown("#### 📊 Painel de Fechamento (Mês Atual)")
+    
+    mes_atual_str = datetime.now().strftime("%m/%Y")
+    
+    # Busca os KMs
+    df_km = pd.read_sql_query("SELECT data, km FROM registro_km", conn)
+    df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
+    df_km = df_km.dropna(subset=['data_dt'])
+    # Filtra KMs pelo mês atual
+    km_mes = df_km[df_km['data_dt'].dt.strftime('%m/%Y') == mes_atual_str]['km'].sum()
+    
+    # Busca os Gastos
+    df_abastec = pd.read_sql_query("SELECT data, litros, valor_litro, manutencao FROM abastecimentos", conn)
+    df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
+    df_abastec = df_abastec.dropna(subset=['data_dt'])
+    df_abastec_mes = df_abastec[df_abastec['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
+    
+    if not df_abastec_mes.empty:
+        gasto_gasolina_mes = (df_abastec_mes['litros'] * df_abastec_mes['valor_litro']).sum()
+        gasto_manutencao_mes = df_abastec_mes['manutencao'].sum()
+    else:
+        gasto_gasolina_mes = 0.0
+        gasto_manutencao_mes = 0.0
+        
+    gasto_total_mes = gasto_gasolina_mes + gasto_manutencao_mes
+    custo_real_por_km = (gasto_total_mes / km_mes) if km_mes > 0 else 0.0
+
+    # Cards de Resumo
+    met1, met2, met3, met4 = st.columns(4)
+    met1.metric("KM Total Rodado", f"{km_mes:.1f} km", f"Mês: {mes_atual_str}", delta_color="off")
+    met2.metric("Gasto com Gasolina", f"R$ {gasto_gasolina_mes:.2f}", "Pelo recibo", delta_color="inverse")
+    met3.metric("Gasto em Manutenção", f"R$ {gasto_manutencao_mes:.2f}", "Pelo recibo", delta_color="inverse")
+    
+    # A Métrica de Ouro
+    if custo_real_por_km <= 1.50:
+        met4.metric("CUSTO REAL / KM", f"R$ {custo_real_por_km:.2f}", "Mais barato que frete 1.50!", delta_color="normal")
+    else:
+        met4.metric("CUSTO REAL / KM", f"R$ {custo_real_por_km:.2f}", "Atenção: Carro caro!", delta_color="inverse")
+
+    st.write(f"*Nota: O Custo Real divide tudo que saiu do caixa (Gasolina + Oficina) pelos KMs que o carro efetivamente rodou no mês.*")
+    
     conn.close()
 
 # -------------------------------------------------------------
-# ABA: TEAMS
+# ABA: TEAMS CONFIG
 # -------------------------------------------------------------
 with tab_teams:
     st.subheader("💬 Configuração dos Supervisores no Teams")
@@ -514,8 +532,7 @@ with tab_teams:
 # ABA: ROTEIRO E MAPA
 # -------------------------------------------------------------
 with tab_roteiro:
-    df_ativos = st.session_state.demandas[st.session_state.demandas["Uber"] == False]
-    df_uber = st.session_state.demandas[st.session_state.demandas["Uber"] == True]
+    df_ativos = st.session_state.demandas
     
     if st.button("🚀 Calcular Rota Otimizada", type="primary"):
         with st.spinner("Analisando grupamentos e traçando rota anti zigue-zague..."):
@@ -576,10 +593,8 @@ with tab_roteiro:
                     
                     if is_pickup:
                         destinos_desta_coleta = set(t['Destino'] for t in unpicked if t['Origem'] == p)
-                        if destinos_desta_coleta.intersection(destinos_no_carro):
-                            prio *= 3.0
-                        else:
-                            prio *= 1.5
+                        if destinos_desta_coleta.intersection(destinos_no_carro): prio *= 3.0
+                        else: prio *= 1.5
 
                     if "Urgências" in estrategia: prio *= (urgency ** 2)
                     elif "Descarregar" in estrategia and is_dropoff: prio *= 5.0
@@ -652,31 +667,29 @@ with tab_roteiro:
             st.session_state['total_km'] = total_km
             st.session_state['locais_dict'] = locais_dict
             st.session_state['p_saida'] = ponto_saida
-            st.session_state['df_uber_final'] = df_uber
 
     if st.session_state.get('rota_gerada', False):
         route_steps = st.session_state['route_steps']
         total_km = st.session_state['total_km']
         locais_dict = st.session_state['locais_dict']
         p_saida = st.session_state['p_saida']
-        df_uber_final = st.session_state['df_uber_final']
         
-        # CÁLCULO DINÂMICO DE CUSTO BASEADO NO VEÍCULO SELECIONADO
+        # Define o descritivo de custo
         if "Empresa" in veiculo_selecionado:
             conn = sqlite3.connect(DB_FILE)
             cfg = pd.read_sql_query("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", conn).iloc[0]
             conn.close()
             custo_rota = (total_km / float(cfg['consumo'])) * float(cfg['preco_gasolina'])
-            desc_custo = "Custo Aprox. (Combustível Empresa)"
+            desc_custo = "Estimativa Gasolina"
         else:
             custo_rota = total_km * 1.50
-            desc_custo = "Custo (R$ 1,50/km)"
+            desc_custo = "Custo do Frete (R$ 1,50/km)"
 
         col_esq, col_dir = st.columns([1.2, 0.8])
 
         with col_esq:
             st.subheader("📋 Roteiro de Viagem do Davi")
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n🏁 Saída: {p_saida} (07:30)\n🚗 Veículo: {veiculo_selecionado}\n\n"
+            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n🏁 Saída: {p_saida} (07:30)\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
             for step in route_steps:
@@ -704,27 +717,28 @@ with tab_roteiro:
                     texto_whatsapp += "\n"
                     num_parada += 1
 
-            # Botão de Envio Geral (Opcional)
+            st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
+            texto_whatsapp += f"🛣️ Total: {total_km:.1f} km\n"
+            
+            # --- BOTÃO NOVO: SALVAR KM DIÁRIO ---
+            if st.button("💾 Salvar KM desta Rota no Painel de Custos", type="secondary", use_container_width=True):
+                data_atual = datetime.now().strftime("%d/%m/%Y")
+                conn = sqlite3.connect(DB_FILE)
+                conn.execute("INSERT INTO registro_km (data, km, obs) VALUES (?, ?, ?)", (data_atual, total_km, f"Roteiro Automático ({num_parada-1} paradas)"))
+                conn.commit()
+                conn.close()
+                st.success(f"✅ {total_km:.1f} km registrados para o fechamento mensal!")
+
+            # Botão Teams Geral
             conn = sqlite3.connect(DB_FILE)
             url_geral = conn.execute("SELECT url FROM webhooks_teams WHERE setor='Geral / Logística'").fetchone()
             conn.close()
             
             if url_geral and url_geral[0]:
-                if st.button("📢 Mandar Roteiro Completo no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Total Paradas:** {num_parada-1}\n**Quilometragem Estimada:** {total_km:.1f} km"
+                if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
+                    resumo = f"O roteiro do Davi já está pronto.\n\n**Total Paradas:** {num_parada-1}\n**Quilometragem:** {total_km:.1f} km"
                     if disparar_teams(url_geral[0], "🚚 Roteiro Diário Liberado!", resumo):
                         st.success("✅ Roteiro enviado para o grupo Geral!")
-
-            st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
-            texto_whatsapp += f"🛣️ Total: {total_km:.1f} km | {desc_custo}: R$ {custo_rota:.2f}\n"
-
-            if not df_uber_final.empty:
-                st.divider()
-                st.markdown("### 🚕 Demandas Terceirizadas (Uber Flash)")
-                texto_whatsapp += "\n📱 *DEMANDAS UBER FLASH:*\n"
-                for _, u in df_uber_final.iterrows():
-                    st.write(f"🚕 **{u['Materiais']}** (De: {u['Origem']} ➔ Para: {u['Destino']})")
-                    texto_whatsapp += f"🚕 {u['Materiais']} (De: {u['Origem']} ➔ Para: {u['Destino']})\n"
 
             st.text_area("📋 Texto Pronto para WhatsApp", value=texto_whatsapp, height=150)
 
