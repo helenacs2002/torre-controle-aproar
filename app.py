@@ -26,20 +26,20 @@ CUSTO_KM_PADRAO = 1.50
 VELOCIDADE_MEDIA_KMH = 25.0
 
 UNIDADES_PROPRIAS = [
-    "FIEC", "CENTRO", "MARACANAÚ", "MARACANAU", "SEBRAE", 
+    "FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", 
     "UNIFOR", "PARANGABA", "HORIZONTE", "MUSEU", "BARRA", 
-    "ESCRITÓRIO", "ESCRITORIO", "CASA DA INDÚSTRIA"
+    "ESCRITÓRIO", "CASA DA INDÚSTRIA"
 ]
 
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
     ("ESCOLA CENTRO", "R. Agapito dos Santos, 750 - Centro, Fortaleza - CE"),
-    ("CENTRO", "R. Agapito dos Santos, 750 - Centro, Fortaleza - CE"),
+    ("CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
     ("NR SAÚDE", "R. Padre Ibiapina, 1449 - Jacarecanga, Fortaleza - CE"),
     ("SESI BARRA DO CEARÁ", "R. Florêncio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
     ("SENAI BARRA DO CEARÁ", "Av. Francisco Sá, 7221 - Barra do Ceará, Fortaleza - CE"),
-    ("BARRA", "Av. Francisco Sá, 7221 - Barra do Ceará, Fortaleza - CE"),
+    ("BARRA", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
     ("SESI ALBANO FRANCO", "Av. Sen. Virgílio Távora, 1103 - Distrito Industrial, Maracanaú - CE"),
     ("SESI CLUBE DA PARCERIA", "Av. Sen. Virgílio Távora, 1102 - Distrito Industrial, Maracanaú - CE"),
     ("SENAI ISTEMM", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
@@ -52,10 +52,11 @@ ENDERECOS_PADRAO = [
     ("MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE"),
     ("SESI SOBRAL", "Av. Dr. José Arimathéa Monte e Silva, 1003 - Junco, Sobral - CE"),
     ("ESCRITÓRIO", "R. Professor Mário Rocha, 84 - Joaquim Távora, Fortaleza - CE"),
-    ("ESCRITORIO", "R. Professor Mário Rocha, 84 - Joaquim Távora, Fortaleza - CE"),
+    ("ALDEOTA", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"),
+    ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"),
     ("FIEC", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("UNIFOR", "Av. Washington Soares, 1321 - Edson Queiroz, Fortaleza - CE"),
-    ("HORIZONTE", "Av. Presidente Castelo Branco, 4260 - Centro, Horizonte - CE")
+    ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE")
 ]
 
 def inicializar_bd():
@@ -77,19 +78,15 @@ inicializar_bd()
 # MOTORES DE GEOLOCALIZAÇÃO E CÁLCULOS OSRM
 # =====================================================================
 def is_in_ceara(lat, lon):
-    """Cercadinho Virtual: Bloqueia qualquer coordenada fora do Ceará"""
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
 def buscar_coordenadas(endereco):
     endereco_limpo = endereco.strip()
-    
-    # 1. Checa Coordenadas Diretas
     match_coords = re.search(r'^(-?\d+\.\d+)[\s,;]+(-?\d+\.\d+)$', endereco_limpo)
     if match_coords:
         lat, lon = float(match_coords.group(1)), float(match_coords.group(2))
         if is_in_ceara(lat, lon): return lat, lon
         
-    # 2. Extrai Coordenadas de Links do Google Maps
     if "http" in endereco_limpo or "google" in endereco_limpo.lower() or "goo.gl" in endereco_limpo.lower():
         match_at = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', endereco_limpo)
         if match_at: return float(match_at.group(1)), float(match_at.group(2))
@@ -106,7 +103,6 @@ def buscar_coordenadas(endereco):
             if match_3d: return float(match_3d.group(1)), float(match_3d.group(2))
         except: pass
 
-    # 3. ArcGIS para Lojas e Endereços formatados
     try:
         url_arcgis = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&singleLine=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&maxLocations=1"
         req = urllib.request.Request(url_arcgis, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
@@ -118,7 +114,6 @@ def buscar_coordenadas(endereco):
                 if is_in_ceara(lat, lon): return lat, lon
     except: pass
 
-    # 4. Fallback Nominatim
     try:
         url = "https://nominatim.openstreetmap.org/search?q=" + urllib.parse.quote(endereco_limpo + ", Ceará, Brasil") + "&format=json&limit=1"
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
@@ -160,14 +155,24 @@ def calcular_matriz_rotas(coords):
         duracoes.append(row_t)
     return distancias, duracoes
 
+# -------------------------------------------------------------
+# FILTRO ORTOGRÁFICO E DE SINÔNIMOS (Evita o bug de Duas Cidades)
+# -------------------------------------------------------------
+def normalizar_local(nome):
+    if not nome: return "DESCONHECIDO"
+    n = nome.upper().strip()
+    if "MARACANAU" in n: n = n.replace("MARACANAU", "MARACANAÚ")
+    if "ESCRITORIO" in n: n = n.replace("ESCRITORIO", "ESCRITÓRIO")
+    return n
+
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
     
     unidade = ""
     for u in UNIDADES_PROPRIAS:
-        if u.lower() in card_name.lower():
-            unidade = "MARACANAÚ" if u.upper() == "MARACANAU" else u.upper()
+        if normalizar_local(u) in normalizar_local(card_name):
+            unidade = normalizar_local(u)
             break
             
     if num and unidade: short_name = f"{num} - {unidade}"
@@ -180,10 +185,10 @@ def extrair_dados_completos(texto, card_name):
     
     if texto:
         mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar)\s+(?:no|na|em|o|a|ao|à)\s+\*?\*?(.*?)\*?\*?(?:\:|\n|$)', texto)
-        if mo: origem = mo.group(1).strip().upper()
+        if mo: origem = normalizar_local(mo.group(1))
 
         md = re.search(r'(?i)(?:e\s+)?(?:levar|entreg(?:ar|á-lo|á-la|á-los|á-las)|devolver|encaminhar|transportar|deixar)\s+(?:para|no|na|ao|à|aos|às)\s+(?:o|a|os|as)?\s*\*?\*?(.*?)\*?\*?(?:\:|\n|$|\.)', texto)
-        if md: destino = md.group(1).strip().upper()
+        if md: destino = normalizar_local(md.group(1))
         
         if mo and md:
             start_idx = mo.end()
@@ -199,28 +204,20 @@ def extrair_dados_completos(texto, card_name):
                 if linhas_limpas: materiais = " | ".join(linhas_limpas)
 
     if "SEBRAE" in destino or "SEBRAE" in short_name:
-        if destino != "DESCONHECIDO" and destino not in ["ESCRITÓRIO", "ESCRITORIO"]:
+        if destino != "DESCONHECIDO" and destino not in ["ESCRITÓRIO"]:
             destino = "ESCRITÓRIO"
             materiais += " ⚠️[DEIXAR NO ESCRITÓRIO P/ SOARES]"
 
     return short_name, origem, destino, materiais
 
 def encontrar_endereco_na_descricao(descricao):
-    """Procura por um endereço explícito ou link do Maps escrito no Card do Trello"""
     if not descricao: return None
-    
-    # 1. Procura Link do Maps
     mo_link = re.search(r'(https?://(?:www\.)?google\.[a-z\.]+/maps[^\s\n]+|https?://goo\.gl/maps/[^\s\n]+|https?://maps\.app\.goo\.gl/[^\s\n]+)', descricao)
     if mo_link: return mo_link.group(1)
-    
-    # 2. Procura linha com "Endereço:" ou "Local:"
     mo_end = re.search(r'(?i)(?:endere[çc]o|local)\s*(?:\:|-)\s*([^\n]+)', descricao)
     if mo_end: return mo_end.group(1).strip()
-    
-    # 3. Procura linhas começando com Rua, Av, Avenida, Rodovia, BR
     mo_rua = re.search(r'(?im)^(?:rua|av\.?|avenida|rodovia|br[- ]?\d+)\s+[^\n]+', descricao)
     if mo_rua: return mo_rua.group(0).strip()
-    
     return None
 
 def classificar_prioridade(due_str):
@@ -246,12 +243,12 @@ st.title("🚚 LOGÍSTICA APROAR - Torre de Controle")
 if "demandas" not in st.session_state:
     st.session_state.demandas = pd.DataFrame()
 
-# Painel Lateral (Configurações e Integração Trello)
+# Painel Lateral
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
-        with st.spinner("Puxando demandas ao vivo... (Isso pode levar alguns segundos)"):
+        with st.spinner("Puxando demandas ao vivo... (Até 60s)"):
             try:
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
@@ -274,30 +271,23 @@ with st.sidebar:
                     short_name, origem, destino, materiais = extrair_dados_completos(descricao, c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     
-                    # -------------------------------------------------------------
-                    # INTELIGÊNCIA: Scanner de Endereço/Link Direto no Card do Trello
-                    # -------------------------------------------------------------
                     endereco_card = encontrar_endereco_na_descricao(descricao)
                     if endereco_card:
                         lat, lon = buscar_coordenadas(endereco_card)
                         if lat:
                             conn = sqlite3.connect(DB_FILE)
-                            # Se a origem for a loja desconhecida, salva o endereço nela
                             if origem not in UNIDADES_PROPRIAS and origem != "DESCONHECIDO":
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
                                 if not res or res[0] is None:
                                     conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (origem, endereco_card, lat, lon))
                             
-                            # Se o destino for a loja desconhecida, salva o endereço nele
                             if destino not in UNIDADES_PROPRIAS and destino != "DESCONHECIDO":
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (destino,)).fetchone()
                                 if not res or res[0] is None:
                                     conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (destino, endereco_card, lat, lon))
                             conn.commit()
                             conn.close()
-                    # -------------------------------------------------------------
                     
-                    # Preservação Inteligente de Edições Antigas
                     uber_val = False
                     tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
                     te_val = 10
@@ -329,9 +319,7 @@ with st.sidebar:
                 st.error(f"⚠️ Erro ao acessar o Trello: {e}")
     
     st.divider()
-    
     ponto_saida = st.selectbox("🏁 Ponto de Saída (07:30)", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
-    
     estrategia = st.selectbox(
         "🎯 Estratégia da Rota",
         [
@@ -349,51 +337,37 @@ with st.sidebar:
         "🚨 Priorizar Urgências": "Atende demandas vencidas ou de hoje primeiro, mesmo aumentando o percurso."
     }
     st.caption(f"ℹ️ *{descricoes_estrategia[estrategia]}*")
-    
     retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
-    
     st.divider()
     tracker_url = st.text_input("🛰️ Link do Rastreador Online", value="https://rastreamento.exemplo.com")
     if st.button("Abrir Rastreador ao Vivo"):
         st.markdown(f'<a href="{tracker_url}" target="_blank">Clique aqui para abrir o rastreamento em tempo real</a>', unsafe_allow_html=True)
 
-# Trava a tela se não houver dados
 if st.session_state.demandas.empty:
     st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão vermelho **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
     st.stop()
 
-# Abas Principais
 tab_roteiro, tab_demandas, tab_enderecos = st.tabs(["🗺️ Roteiro do Davi & Mapa", "📦 Gestão de Demandas & Uber", "📍 Base de Endereços"])
 
-# =====================================================================
-# ABA 2: GESTÃO DE DEMANDAS & UBER (Tabela Editável)
-# =====================================================================
 with tab_demandas:
     st.subheader("Gerenciamento de Cargas e Minutos")
-    st.write("Marque as caixas para enviar itens via **Uber** ou altere manualmente os minutos de coleta e entrega. As edições não serão perdidas ao sincronizar o Trello!")
-    
+    st.write("Marque as caixas para enviar itens via **Uber** ou altere manualmente os minutos de coleta e entrega:")
     df_editado = st.data_editor(
         st.session_state.demandas,
         column_config={
             "Uber": st.column_config.CheckboxColumn("Enviar via Uber?", default=False),
             "Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120),
             "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120),
-            "Peso": None,
-            "id": None
+            "Peso": None, "id": None
         },
         disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"],
-        hide_index=True,
-        use_container_width=True
+        hide_index=True, use_container_width=True
     )
     st.session_state.demandas = df_editado
 
-# =====================================================================
-# ABA 3: BASE DE ENDEREÇOS
-# =====================================================================
 with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
     st.info("💡 Como usar: Digite o nome do local igualzinho aparece na demanda e cole o link do Google Maps. O sistema nunca mais esquecerá!")
-    
     col1, col2 = st.columns(2)
     with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper()
     with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps")
@@ -417,17 +391,13 @@ with tab_enderecos:
     conn.close()
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
 
-# =====================================================================
-# ABA 1: ROTEIRIZADOR & MAPA INTERATIVO
-# =====================================================================
 with tab_roteiro:
     df_ativos = st.session_state.demandas[st.session_state.demandas["Uber"] == False]
     df_uber = st.session_state.demandas[st.session_state.demandas["Uber"] == True]
     
     if st.button("🚀 Calcular Rota Otimizada", type="primary"):
-        with st.spinner("Traçando a melhor rota pelas ruas..."):
+        with st.spinner("Analisando grupamentos e traçando rota anti zigue-zague..."):
             
-            # Checagem Rigorosa de Coordenadas
             conn = sqlite3.connect(DB_FILE)
             pontos_necessarios = set([ponto_saida] + df_ativos["Origem"].tolist() + df_ativos["Destino"].tolist())
             locais_dict = {}
@@ -437,11 +407,9 @@ with tab_roteiro:
                     locais_dict[p] = (res[0], res[1])
             conn.close()
             
-            # Se não tem no banco, avisa imediatamente e interrompe! (FIM DO CHUTE CEGO)
             faltando = [p for p in pontos_necessarios if p not in locais_dict]
             if faltando:
                 st.warning(f"⚠️ Os seguintes locais precisam de endereço/GPS na Aba 2: **{', '.join(faltando)}**")
-                st.info("💡 Solução rápida: Vá na Aba '📍 Base de Endereços', digite o nome do local igualzinho está acima e cole o link do Google Maps para ele aprender.")
                 st.stop()
 
             pontos_unicos = list(locais_dict.keys())
@@ -461,6 +429,9 @@ with tab_roteiro:
             current_time = 7.5 * 60
             lunch_taken = False
 
+            # =================================================================
+            # NOVO MOTOR ANTI ZIGUE-ZAGUE (Agrupamento e Enchimento de Carga)
+            # =================================================================
             while unpicked or carrying:
                 candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
                 if not candidates: break
@@ -468,18 +439,51 @@ with tab_roteiro:
                 best_point = None
                 min_score = float('inf')
                 best_dist, best_dur = 0, 0
+                
+                destinos_no_carro = set(t['Destino'] for t in carrying)
 
                 for p in candidates:
                     d, dur = get_dist_dur(current, p)
                     is_dropoff = any(t['Destino'] == p for t in carrying)
-                    urgency = max([t['Peso'] for t in unpicked if t['Origem'] == p], default=1)
+                    is_pickup = any(t['Origem'] == p for t in unpicked)
+                    urgency = max([t['Peso'] for t in unpicked if t['Origem'] == p] + [1])
+                    
+                    # Checa quantas coisas ainda precisam ser coletadas pra ir pra esse lugar 'p'
+                    pendentes_para_p = sum(1 for t in unpicked if t['Destino'] == p)
+                    
+                    prio = 1.0
+                    
+                    # Regra 1: Segurar Entrega se tiver mais coisas pendentes pra lá
+                    if is_dropoff:
+                        prio = 2.0
+                        if pendentes_para_p > 0:
+                            prio = 0.1 # Cai drasticamente a prioridade de entregar agora
+                    
+                    # Regra 2: Bônus para coletar coisas que vão para o mesmo lugar que já está no carro
+                    if is_pickup:
+                        destinos_desta_coleta = set(t['Destino'] for t in unpicked if t['Origem'] == p)
+                        if destinos_desta_coleta.intersection(destinos_no_carro):
+                            prio *= 3.0
+                        else:
+                            prio *= 1.5
 
-                    if "Economia" in estrategia: prio = 2 if is_dropoff else 1
-                    elif "Urgências" in estrategia: prio = 10 if is_dropoff else (urgency ** 2)
-                    elif "Descarregar" in estrategia: prio = 1000 if is_dropoff else 1
-                    else: prio = 10 if is_dropoff else urgency
+                    # Regra 3: Ajustes da Estratégia
+                    if "Urgências" in estrategia:
+                        prio *= (urgency ** 2)
+                    elif "Descarregar" in estrategia and is_dropoff:
+                        prio *= 5.0
+                    elif "Economia" in estrategia:
+                        if is_dropoff and pendentes_para_p > 0:
+                            prio = 0.05
+                            
+                    if prio == 0: prio = 0.001
+                    
+                    score = (d + (dur * 0.1)) / prio
+                    
+                    # CUSTO ZERO: Se eu já estou na porta da loja, faz TUDO que tiver que fazer lá!
+                    if d < 0.1:
+                        score = -1.0
 
-                    score = d / prio
                     if score < min_score:
                         min_score = score
                         best_point = p
