@@ -208,10 +208,11 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
-        with st.spinner("Puxando demandas ao vivo..."):
+        with st.spinner("Puxando demandas ao vivo... (Isso pode levar alguns segundos)"):
             try:
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
-                with urllib.request.urlopen(req, timeout=10) as response:
+                # AUMENTAMOS O TIMEOUT PARA 60 SEGUNDOS AQUI
+                with urllib.request.urlopen(req, timeout=60) as response:
                     data = json.loads(response.read())
                 
                 trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
@@ -230,7 +231,7 @@ with st.sidebar:
                     short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     
-                    # Preservação Inteligente: Mantém edições (Uber e Tempos) se a demanda já existia na tela
+                    # Preservação Inteligente
                     uber_val = False
                     tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
                     te_val = 10
@@ -255,7 +256,7 @@ with st.sidebar:
                     })
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas)
-                st.session_state['rota_gerada'] = False # Força o botão de rota a resetar se vier coisa nova
+                st.session_state['rota_gerada'] = False 
                 st.success("✅ Demandas atualizadas com sucesso!")
             
             except Exception as e:
@@ -292,7 +293,7 @@ with st.sidebar:
 
 # Trava a tela se não houver dados
 if st.session_state.demandas.empty:
-    st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão verde **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
+    st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão vermelho **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
     st.stop()
 
 # Abas Principais
