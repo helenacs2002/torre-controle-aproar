@@ -7,6 +7,7 @@ import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
+from html import escape as html_escape
 from html.parser import HTMLParser
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -33,6 +34,11 @@ RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
 FUSO_LOCAL = ZoneInfo("America/Fortaleza")
+INICIO_EXPEDIENTE_MIN = 7 * 60
+INICIO_ROTA_MIN = 7 * 60 + 20
+FIM_EXPEDIENTE_MIN = 17 * 60
+INICIO_ALMOCO_MIN = 12 * 60
+DURACAO_ALMOCO_MIN = 60
 
 COLUNAS_DEMANDAS = [
     "id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso",
@@ -94,13 +100,6 @@ TEAMS_GRUPOS_UNIDADE = [
     ("UNIFOR X COMPRAS", "unifor", "UNIFOR"),
     ("SEDE/PARANGABA X COMPRAS", "sede_parangaba", "PARANGABA"),
 ]
-
-ICONE_FALTOU_HTML = (
-    '<span title="Faltou concluir" style="display:inline-flex;'
-    'width:24px;height:24px;border-radius:50%;background:#facc15;'
-    'color:#713f12;align-items:center;justify-content:center;'
-    'font-weight:900;font-size:18px;line-height:1;vertical-align:middle;">−</span>'
-)
 
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
@@ -320,6 +319,38 @@ def calcular_matriz_rotas(coords):
         duracoes.append(row_t)
     return distancias, duracoes
 
+def buscar_geometria_rota(coords_ordenadas):
+    """Retorna o traçado viário da rota na ordem informada."""
+    coords_limpas = []
+    for coord in coords_ordenadas:
+        if not coords_limpas or coord != coords_limpas[-1]:
+            coords_limpas.append(coord)
+
+    if len(coords_limpas) < 2:
+        return [[lat, lon] for lat, lon in coords_limpas], False
+
+    try:
+        coords_str = ";".join(
+            f"{lon},{lat}" for lat, lon in coords_limpas
+        )
+        url = (
+            "https://router.project-osrm.org/route/v1/driving/"
+            f"{coords_str}?overview=full&geometries=geojson&steps=false"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'AproarLogisticsWeb/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res = json.loads(response.read())
+        if res.get("code") == "Ok" and res.get("routes"):
+            coordenadas = res["routes"][0]["geometry"]["coordinates"]
+            return [[lat, lon] for lon, lat in coordenadas], True
+    except Exception:
+        pass
+
+    return [[lat, lon] for lat, lon in coords_limpas], False
+
 def normalizar_local(nome):
     if not nome: return "DESCONHECIDO"
     n = nome.upper().strip()
@@ -443,6 +474,15 @@ def prazo_era_hoje_ou_atrasado(due_str, momento_conclusao):
 def format_time(minutes):
     total = int(round(minutes))
     return f"{total // 60:02d}:{total % 60:02d}"
+
+def formatar_duracao(minutes):
+    total = max(0, int(round(minutes)))
+    horas, minutos = divmod(total, 60)
+    if horas and minutos:
+        return f"{horas}h{minutos:02d}"
+    if horas:
+        return f"{horas}h"
+    return f"{minutos}min"
 
 
 # =====================================================================
@@ -1252,7 +1292,7 @@ with tab_roteiro:
             current = ponto_saida
             route_steps = []
             total_km = 0.0
-            current_time = 7.5 * 60
+            current_time = INICIO_ROTA_MIN
             lunch_taken = False
 
             while unpicked or carrying:
@@ -1272,24 +1312,36 @@ with tab_roteiro:
                     urgency = max([t['Peso'] for t in unpicked if t['Origem'] == p] + [1])
                     
                     pendentes_para_p = sum(1 for t in unpicked if t['Destino'] == p)
-                    prio = 1.0
-                    
-                    if is_dropoff:
-                        prio = 2.0
-                        if pendentes_para_p > 0: prio = 0.1 
-                    
-                    if is_pickup:
-                        destinos_desta_coleta = set(t['Destino'] for t in unpicked if t['Origem'] == p)
-                        if destinos_desta_coleta.intersection(destinos_no_carro): prio *= 3.0
-                        else: prio *= 1.5
+                    if "Menor Distância" in estrategia:
+                        # Nesta estratégia vence sempre o próximo ponto viável
+                        # mais próximo, sem os pesos das demais estratégias.
+                        score = d + (dur * 0.1)
+                    else:
+                        prio = 1.0
 
-                    if "Urgências" in estrategia: prio *= (urgency ** 2)
-                    elif "Descarregar" in estrategia and is_dropoff: prio *= 5.0
-                    elif "Economia" in estrategia:
-                        if is_dropoff and pendentes_para_p > 0: prio = 0.05
-                            
-                    if prio == 0: prio = 0.001
-                    score = (d + (dur * 0.1)) / prio
+                        if is_dropoff:
+                            prio = 2.0
+                            if pendentes_para_p > 0:
+                                prio = 0.1
+
+                        if is_pickup:
+                            destinos_desta_coleta = set(
+                                t['Destino'] for t in unpicked
+                                if t['Origem'] == p
+                            )
+                            if destinos_desta_coleta.intersection(destinos_no_carro):
+                                prio *= 3.0
+                            else:
+                                prio *= 1.5
+
+                        if "Urgências" in estrategia:
+                            prio *= urgency ** 2
+                        elif "Descarregar" in estrategia and is_dropoff:
+                            prio *= 5.0
+
+                        if prio == 0:
+                            prio = 0.001
+                        score = (d + (dur * 0.1)) / prio
                     
                     if d < 0.1: score = -1.0
 
@@ -1298,9 +1350,18 @@ with tab_roteiro:
                         best_point = p
                         best_dist, best_dur = d, dur
 
-                if (current_time + best_dur) >= 720 and not lunch_taken:
-                    route_steps.append({"type": "lunch", "chegada": format_time(current_time + best_dur), "saida": format_time(current_time + best_dur + 60)})
-                    current_time += 60
+                if (
+                    (current_time + best_dur) >= INICIO_ALMOCO_MIN
+                    and not lunch_taken
+                ):
+                    route_steps.append({
+                        "type": "lunch",
+                        "chegada": format_time(current_time + best_dur),
+                        "saida": format_time(
+                            current_time + best_dur + DURACAO_ALMOCO_MIN
+                        )
+                    })
+                    current_time += DURACAO_ALMOCO_MIN
                     lunch_taken = True
 
                 current_time += best_dur
@@ -1348,12 +1409,24 @@ with tab_roteiro:
                     "actions": []
                 })
                 current_time += dur
+
+            coords_ordenadas_rota = [locais_dict[ponto_saida]]
+            for step in route_steps:
+                destino_step = step.get("destino")
+                if destino_step in locais_dict:
+                    coords_ordenadas_rota.append(locais_dict[destino_step])
+            geometria_rota, geometria_viaria = buscar_geometria_rota(
+                coords_ordenadas_rota
+            )
             
             st.session_state['rota_gerada'] = True
             st.session_state['route_steps'] = route_steps
             st.session_state['total_km'] = total_km
             st.session_state['locais_dict'] = locais_dict
             st.session_state['p_saida'] = ponto_saida
+            st.session_state['horario_conclusao_min'] = current_time
+            st.session_state['geometria_rota'] = geometria_rota
+            st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = datetime.now(FUSO_LOCAL).strftime(
                 "%d/%m/%Y"
             )
@@ -1363,6 +1436,30 @@ with tab_roteiro:
         total_km = st.session_state['total_km']
         locais_dict = st.session_state['locais_dict']
         p_saida = st.session_state['p_saida']
+        horario_conclusao_min = st.session_state.get('horario_conclusao_min')
+        if horario_conclusao_min is None:
+            ultima_saida = next(
+                (
+                    step.get('saida')
+                    for step in reversed(route_steps)
+                    if step.get('saida')
+                ),
+                "07:20"
+            )
+            hora_fim, minuto_fim = map(int, ultima_saida.split(":"))
+            horario_conclusao_min = hora_fim * 60 + minuto_fim
+
+        geometria_rota = st.session_state.get('geometria_rota')
+        geometria_viaria = st.session_state.get('geometria_viaria', False)
+        if not geometria_rota:
+            coords_ordenadas_rota = [locais_dict[p_saida]]
+            for step in route_steps:
+                destino_step = step.get("destino")
+                if destino_step in locais_dict:
+                    coords_ordenadas_rota.append(locais_dict[destino_step])
+            geometria_rota, geometria_viaria = buscar_geometria_rota(
+                coords_ordenadas_rota
+            )
         
         if "Empresa" in veiculo_selecionado:
             conn = sqlite3.connect(DB_FILE)
@@ -1377,7 +1474,13 @@ with tab_roteiro:
         col_esq, col_dir = st.columns([1.2, 0.8])
 
         with col_esq:
-            st.subheader("📋 Roteiro de Viagem do Davi")
+            st.subheader(
+                f"📋 Roteiro de Viagem do Davi — {data_hoje_roteiro}"
+            )
+            st.caption(
+                "🕖 Expediente: 07:00 às 17:00  •  "
+                "Preparação: 07:00 às 07:20  •  Saída para a rota: 07:20"
+            )
             conn = sqlite3.connect(DB_FILE)
             ids_concluidos_hoje = {
                 str(registro[0])
@@ -1388,13 +1491,13 @@ with tab_roteiro:
                 ).fetchall()
             }
             conn.close()
-
-            st.markdown(
-                f"**Legenda do andamento:** ✅ Concluído &nbsp;&nbsp; "
-                f"{ICONE_FALTOU_HTML} Faltou concluir",
-                unsafe_allow_html=True
+            texto_whatsapp = (
+                "🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n"
+                f"📅 Data: {data_hoje_roteiro}\n"
+                "🕖 Expediente: 07:00 às 17:00\n"
+                f"🏁 Saída: {p_saida} (07:20)\n"
+                f"🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             )
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n🏁 Saída: {p_saida} (07:30)\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
             for step in route_steps:
@@ -1417,21 +1520,65 @@ with tab_roteiro:
                         cor = "orange" if acao == "COLETAR" else "green"
                         icone = "📦 COLETAR:" if acao == "COLETAR" else "📬 ENTREGAR:"
                         concluida = str(t.get('id', '')) in ids_concluidos_hoje
-                        status_html = "✅" if concluida else ICONE_FALTOU_HTML
-                        status_texto = "✅" if concluida else "🟡 −"
                         col_demanda, col_status = st.columns([9, 1])
                         col_demanda.markdown(
                             f":{cor}[**{icone}**] {t['Materiais']} "
                             f"*(Obra: {t['Obra']})*"
                         )
-                        col_status.markdown(status_html, unsafe_allow_html=True)
+                        if concluida:
+                            col_status.markdown("✅")
+                        prefixo_status = "✅ " if concluida else ""
                         texto_whatsapp += (
-                            f" - {status_texto} {acao.capitalize()}: "
+                            f" - {prefixo_status}{acao.capitalize()}: "
                             f"{t['Materiais']} (Obra: {t['Obra']})\n"
                         )
                         
                     texto_whatsapp += "\n"
                     num_parada += 1
+
+            horario_conclusao = format_time(horario_conclusao_min)
+            if horario_conclusao_min < FIM_EXPEDIENTE_MIN:
+                tempo_standby = FIM_EXPEDIENTE_MIN - horario_conclusao_min
+                st.success(
+                    f"✅ **Rota prevista para ser concluída às "
+                    f"{horario_conclusao}.**"
+                )
+                st.info(
+                    f"🟢 **Todas as demandas finalizadas:** Davi ficará em "
+                    f"stand-by das {horario_conclusao} às 17:00 "
+                    f"({formatar_duracao(tempo_standby)} disponíveis)."
+                )
+                texto_whatsapp += (
+                    f"✅ Rota concluída às {horario_conclusao}.\n"
+                    f"🟢 Davi em stand-by até 17:00 "
+                    f"({formatar_duracao(tempo_standby)}).\n"
+                )
+                status_expediente = (
+                    f"Davi em stand-by até 17:00 "
+                    f"({formatar_duracao(tempo_standby)})"
+                )
+            elif horario_conclusao_min == FIM_EXPEDIENTE_MIN:
+                st.success(
+                    "✅ **Rota prevista para ser concluída às 17:00, "
+                    "no fim do expediente.**"
+                )
+                texto_whatsapp += "✅ Rota concluída às 17:00.\n"
+                status_expediente = "Conclusão no fim do expediente"
+            else:
+                excedente = horario_conclusao_min - FIM_EXPEDIENTE_MIN
+                st.warning(
+                    f"⚠️ **Rota prevista para terminar às {horario_conclusao}, "
+                    f"ultrapassando o expediente em "
+                    f"{formatar_duracao(excedente)}.**"
+                )
+                texto_whatsapp += (
+                    f"⚠️ Previsão de término: {horario_conclusao} "
+                    f"({formatar_duracao(excedente)} após as 17:00).\n"
+                )
+                status_expediente = (
+                    f"Previsão excede o expediente em "
+                    f"{formatar_duracao(excedente)}"
+                )
 
             st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total: {total_km:.1f} km\n"
@@ -1448,7 +1595,15 @@ with tab_roteiro:
             
             if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Total Paradas:** {num_parada-1}\n**Quilometragem:** {total_km:.1f} km"
+                    resumo = (
+                        "O roteiro do Davi já está pronto.\n\n"
+                        f"**Data da rota:** {data_hoje_roteiro}\n\n"
+                        "**Saída para a rota:** 07:20\n\n"
+                        f"**Previsão de conclusão:** {horario_conclusao}\n\n"
+                        f"**Situação após a rota:** {status_expediente}\n\n"
+                        f"**Total de paradas:** {num_parada-1}\n\n"
+                        f"**Quilometragem:** {total_km:.1f} km"
+                    )
                     enviado, detalhe = disparar_teams(
                         url_geral,
                         "🚚 Roteiro Diário Liberado!",
@@ -1470,10 +1625,6 @@ with tab_roteiro:
             if p_saida in locais_dict:
                 lat_s, lon_s = locais_dict[p_saida]
                 path_points.append([lat_s, lon_s])
-                folium.Marker(
-                    [lat_s, lon_s], popup=f"Saída: {p_saida}", tooltip="Ponto de Saída",
-                    icon=folium.DivIcon(html=f'''<div style="background-color: #3b82f6; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">0</div>''')
-                ).add_to(m)
 
             for step in route_steps:
                 if step.get('destino') and step['destino'] in locais_dict:
@@ -1482,21 +1633,68 @@ with tab_roteiro:
                     
                     if step['type'] == 'lunch': continue
                     if step['type'] == 'return':
-                        bg_color, num_str, tt_text = "#3b82f6", "🏁", f"Retorno: {step['destino']}"
-                    else:
-                        acoes = [a[0] for a in step.get('actions', [])]
-                        bg_color = "#a855f7" if "COLETAR" in acoes and "ENTREGAR" in acoes else "#f59e0b" if "COLETAR" in acoes else "#22c55e"
-                        num_str, tt_text = str(p_num), f"Parada {p_num}: {step['destino']}"
+                        continue
+
+                    acoes = [a[0] for a in step.get('actions', [])]
+                    bg_color = "#16a34a"
+                    num_str = str(p_num)
+                    tt_text = f"Parada {p_num}: {step['destino']}"
+                    acoes_texto = " e ".join(sorted(set(acoes))).title()
+                    popup_html = (
+                        f"<b>Parada {p_num}: "
+                        f"{html_escape(str(step['destino']))}</b>"
+                        f"<br>Chegada: {step['chegada']}"
+                        f"<br>Saída: {step['saida']}"
+                        f"<br>Ação: {html_escape(acoes_texto)}"
+                    )
                     
                     folium.Marker(
-                        [lat, lon], popup=f"{step['destino']}", tooltip=tt_text,
+                        [lat, lon],
+                        popup=folium.Popup(popup_html, max_width=280),
+                        tooltip=tt_text,
                         icon=folium.DivIcon(html=f'''<div style="background-color: {bg_color}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">{num_str}</div>''')
                     ).add_to(m)
-                    if step['type'] != "return": p_num += 1
+                    p_num += 1
+
+            if geometria_viaria and len(geometria_rota) > 1:
+                folium.PolyLine(
+                    geometria_rota,
+                    color="#2563eb",
+                    weight=5,
+                    opacity=0.85,
+                    tooltip="Trajeto planejado"
+                ).add_to(m)
 
             if len(path_points) > 1:
-                folium.PolyLine(path_points, color="#2563eb", weight=4, opacity=0.8).add_to(m)
-                m.fit_bounds(path_points)
+                m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
+
+            # Adicionado por último e com prioridade alta para nunca ser
+            # encoberto por uma parada no mesmo endereço.
+            if p_saida in locais_dict:
+                lat_s, lon_s = locais_dict[p_saida]
+                folium.Marker(
+                    [lat_s, lon_s],
+                    popup=folium.Popup(
+                        f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>"
+                        "<br>Início da rota: 07:20",
+                        max_width=280
+                    ),
+                    tooltip="Saída/retorno — 07:20",
+                    z_index_offset=1000,
+                    icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-family: sans-serif; font-size: 15px;">0</div>''')
+                ).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px;'><b>Legenda:</b> 🔵 Saída/Retorno | 🟡 Coleta | 🟢 Entrega | 🟣 Ambos</div>", unsafe_allow_html=True)
+            if geometria_viaria:
+                st.caption("🛣️ Traçado calculado pelas ruas, na ordem das paradas.")
+            else:
+                st.caption(
+                    "⚠️ O serviço viário não respondeu. Para evitar linhas "
+                    "incorretas, somente as paradas estão sendo exibidas."
+                )
+            st.markdown(
+                "<div style='text-align: center; font-size: 14px; "
+                "margin-top: 10px;'><b>Legenda:</b> 🔵 Saída/Retorno | "
+                "🟢 Paradas numeradas</div>",
+                unsafe_allow_html=True
+            )
