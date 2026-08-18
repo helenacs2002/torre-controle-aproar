@@ -927,7 +927,7 @@ with tab_demandas:
     st.session_state.demandas = df_editado
     
     st.divider()
-    st.subheader("🔔 Notificar Supervisor no Teams")
+    st.subheader("✅ Confirmar entregas no Teams")
     if not st.session_state.demandas.empty:
         for idx, row in st.session_state.demandas.iterrows():
             sup = row['Supervisor']
@@ -936,31 +936,44 @@ with tab_demandas:
             
             c1, c2 = st.columns([3, 1])
             c1.markdown(f"📦 **{dest}** (Resp: {sup}) <br> <span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
-            if c2.button(f"💬 Avisar {sup.split()[0]}", key=f"btn_tms_{row['id']}", use_container_width=True):
+            if c2.button(
+                "✅ Informar entrega",
+                key=f"btn_tms_{row['id']}",
+                use_container_width=True
+            ):
                 url_webhook, _ = obter_webhook_teams(
                     dest,
                     supervisor=sup,
                     obra=row['Obra']
                 )
                 if url_webhook:
+                    concluida_em = datetime.now(FUSO_LOCAL).strftime(
+                        "%d/%m/%Y às %H:%M"
+                    )
                     mensagem = (
+                        "✅ **Os materiais foram entregues na obra e a demanda "
+                        "foi concluída.**\n\n"
                         f"**Obra:** {row['Obra']}\n\n"
-                        f"**Origem:** {row['Origem']}\n\n"
-                        f"**Destino:** {dest}\n\n"
-                        f"**Materiais:** {mat}\n\n"
-                        f"**Urgência:** {row['Urgência']}"
+                        f"**Unidade / local da entrega:** {dest}\n\n"
+                        f"**Materiais entregues:** {mat}\n\n"
+                        f"**Origem da coleta:** {row['Origem']}\n\n"
+                        f"**Conclusão informada em:** {concluida_em}"
                     )
                     enviado, detalhe = disparar_teams(
                         url_webhook,
-                        f"📦 Atualização logística — {dest}",
+                        f"✅ Entrega concluída — {dest}",
                         mensagem
                     )
                     if enviado:
-                        st.success(f"Notificação enviada para {sup}!")
+                        st.success(
+                            f"Entrega concluída informada no grupo de {dest}!"
+                        )
                     else:
                         st.error(f"Erro ao enviar: {detalhe}")
                 else:
-                    st.warning(f"O supervisor {sup} não tem webhook cadastrado.")
+                    st.warning(
+                        f"O grupo da unidade {dest} não tem webhook cadastrado."
+                    )
             st.write("---")
 
 # -------------------------------------------------------------
