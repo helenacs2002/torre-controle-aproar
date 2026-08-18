@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import folium
 from streamlit_folium import st_folium
 
@@ -22,6 +23,7 @@ st.set_page_config(
 )
 
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
+RASTREADOR_URL = "https://portal.protegeexpress.com.br/"
 DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
 FUSO_LOCAL = ZoneInfo("America/Fortaleza")
@@ -424,14 +426,48 @@ if st.session_state.demandas.empty:
 # =====================================================================
 # ABAS PRINCIPAIS
 # =====================================================================
-tab_roteiro, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_teams = st.tabs([
+tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_teams = st.tabs([
     "🗺️ Roteiro do Davi", 
+    "📡 Rastreador ao Vivo",
     "📦 Demandas Ativas", 
     "📋 Histórico & Concluídos",
     "📍 Endereços",
     "💰 Dashboard & Custos",
     "💬 Integração Teams"
 ])
+
+# -------------------------------------------------------------
+# ABA: RASTREADOR AO VIVO
+# -------------------------------------------------------------
+with tab_rastreador:
+    st.subheader("📡 Rastreador ao Vivo — Protege Express")
+    st.caption(
+        "Faça o login diretamente no painel abaixo. A sessão será mantida pelo "
+        "próprio navegador enquanto a Protege Express não a encerrar."
+    )
+
+    if "rastreador_recarga" not in st.session_state:
+        st.session_state.rastreador_recarga = 0
+
+    if st.button("🔄 Recarregar rastreador", key="btn_recarregar_rastreador"):
+        st.session_state.rastreador_recarga += 1
+
+    separador = "&" if "?" in RASTREADOR_URL else "?"
+    url_rastreador = (
+        f"{RASTREADOR_URL}{separador}recarregar={st.session_state.rastreador_recarga}"
+    )
+
+    components.iframe(
+        url_rastreador,
+        height=760,
+        scrolling=True
+    )
+
+    st.caption(
+        "Se a área acima aparecer em branco ou mostrar que recusou a conexão, "
+        "significa que o portal bloqueia páginas incorporadas. Nesse caso, a "
+        "Protege Express precisará liberar a incorporação ou fornecer uma API."
+    )
 
 # -------------------------------------------------------------
 # ABA: DEMANDAS ATIVAS
