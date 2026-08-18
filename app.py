@@ -20,6 +20,7 @@ st.set_page_config(
     layout="wide"
 )
 
+TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 DB_FILE = "enderecos_logistica.db"
 CUSTO_KM_PADRAO = 1.50
 VELOCIDADE_MEDIA_KMH = 25.0
@@ -119,7 +120,6 @@ def calcular_matriz_rotas(coords):
                 return distancias, duracoes
     except: pass
     
-    # Fallback em Linha Reta
     distancias, duracoes = [], []
     for i in range(len(coords)):
         row_d, row_t = [], []
@@ -200,11 +200,68 @@ def format_time(minutes):
 # =====================================================================
 st.title("🚚 LOGÍSTICA APROAR - Torre de Controle")
 
-# Painel Lateral (Configurações e Importação)
+if "demandas" not in st.session_state:
+    st.session_state.demandas = pd.DataFrame()
+
+# Painel Lateral (Configurações e Integração Trello)
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
     
-    arquivo_json = st.file_uploader("📂 Carregar JSON do Trello", type=["json"])
+    if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
+        with st.spinner("Puxando demandas ao vivo..."):
+            try:
+                req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read())
+                
+                trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
+                cards = data.get('cards', [])
+                
+                demandas_extraidas = []
+                excluir_termos = ["CONCLUÍDAS", "CONCLUIDAS", "ENTREGUE"]
+                
+                df_antigo = st.session_state.demandas
+                
+                for c in cards:
+                    if c.get('closed'): continue
+                    nome_lista = trello_lists.get(c.get('idList', ''), '').upper()
+                    if any(t in nome_lista for t in excluir_termos) or not nome_lista: continue
+                    
+                    short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
+                    peso, status_prazo = classificar_prioridade(c.get('due'))
+                    
+                    # Preservação Inteligente: Mantém edições (Uber e Tempos) se a demanda já existia na tela
+                    uber_val = False
+                    tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
+                    te_val = 10
+                    
+                    if not df_antigo.empty and c['id'] in df_antigo['id'].values:
+                        linha_antiga = df_antigo[df_antigo['id'] == c['id']].iloc[0]
+                        uber_val = linha_antiga['Uber']
+                        tc_val = linha_antiga['Tempo_Coleta']
+                        te_val = linha_antiga['Tempo_Entrega']
+                    
+                    demandas_extraidas.append({
+                        "id": c['id'],
+                        "Obra": short_name,
+                        "Origem": origem,
+                        "Destino": destino,
+                        "Materiais": materiais,
+                        "Urgência": status_prazo,
+                        "Peso": peso,
+                        "Tempo_Coleta": tc_val,
+                        "Tempo_Entrega": te_val,
+                        "Uber": uber_val
+                    })
+                
+                st.session_state.demandas = pd.DataFrame(demandas_extraidas)
+                st.session_state['rota_gerada'] = False # Força o botão de rota a resetar se vier coisa nova
+                st.success("✅ Demandas atualizadas com sucesso!")
+            
+            except Exception as e:
+                st.error(f"⚠️ Erro ao acessar o Trello: {e}")
+    
+    st.divider()
     
     ponto_saida = st.selectbox("🏁 Ponto de Saída (07:30)", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
     
@@ -233,40 +290,9 @@ with st.sidebar:
     if st.button("Abrir Rastreador ao Vivo"):
         st.markdown(f'<a href="{tracker_url}" target="_blank">Clique aqui para abrir o rastreamento em tempo real</a>', unsafe_allow_html=True)
 
-# Processamento do JSON
-if arquivo_json:
-    data = json.load(arquivo_json)
-    trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
-    cards = data.get('cards', [])
-    
-    demandas_extraidas = []
-    excluir_termos = ["CONCLUÍDAS", "CONCLUIDAS", "ENTREGUE"]
-    
-    for c in cards:
-        if c.get('closed'): continue
-        nome_lista = trello_lists.get(c.get('idList', ''), '').upper()
-        if any(t in nome_lista for t in excluir_termos) or not nome_lista: continue
-        
-        short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
-        peso, status_prazo = classificar_prioridade(c.get('due'))
-        
-        demandas_extraidas.append({
-            "id": c['id'],
-            "Obra": short_name,
-            "Origem": origem,
-            "Destino": destino,
-            "Materiais": materiais,
-            "Urgência": status_prazo,
-            "Peso": peso,
-            "Tempo_Coleta": 20 if origem not in UNIDADES_PROPRIAS else 10,
-            "Tempo_Entrega": 10,
-            "Uber": False
-        })
-    
-    if "demandas" not in st.session_state:
-        st.session_state.demandas = pd.DataFrame(demandas_extraidas)
-else:
-    st.info("👋 Para começar, carregue o arquivo JSON exportado do Trello no menu lateral.")
+# Trava a tela se não houver dados
+if st.session_state.demandas.empty:
+    st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão verde **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
     st.stop()
 
 # Abas Principais
@@ -277,7 +303,7 @@ tab_roteiro, tab_demandas, tab_enderecos = st.tabs(["🗺️ Roteiro do Davi & M
 # =====================================================================
 with tab_demandas:
     st.subheader("Gerenciamento de Cargas e Minutos")
-    st.write("Marque as caixas para enviar itens via **Uber** ou altere manualmente os minutos de coleta e entrega:")
+    st.write("Marque as caixas para enviar itens via **Uber** ou altere manualmente os minutos de coleta e entrega. As edições não serão perdidas ao sincronizar o Trello!")
     
     df_editado = st.data_editor(
         st.session_state.demandas,
@@ -312,7 +338,7 @@ with tab_roteiro:
     df_uber = st.session_state.demandas[st.session_state.demandas["Uber"] == True]
     
     # -------------------------------------------------------------
-    # BOTÃO E LÓGICA DE CÁLCULO (Agora salva na Memória da Sessão)
+    # BOTÃO E LÓGICA DE CÁLCULO
     # -------------------------------------------------------------
     if st.button("🚀 Calcular Rota Otimizada", type="primary"):
         with st.spinner("Traçando a melhor rota pelas ruas..."):
@@ -337,7 +363,6 @@ with tab_roteiro:
                 st.error(f"⚠️ Os seguintes locais precisam de endereço/GPS na Aba 2: {', '.join(faltando)}")
                 st.stop()
 
-            # Matriz OSRM
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
             dist_matrix, dur_matrix = calcular_matriz_rotas(coords)
@@ -431,7 +456,7 @@ with tab_roteiro:
                 })
                 current_time += dur
             
-            # SALVAR TUDO NA MEMÓRIA DA SESSÃO (Isso evita a tela sumir!)
+            # SALVAR TUDO NA MEMÓRIA DA SESSÃO
             st.session_state['rota_gerada'] = True
             st.session_state['route_steps'] = route_steps
             st.session_state['total_km'] = total_km
@@ -440,11 +465,9 @@ with tab_roteiro:
             st.session_state['df_uber_final'] = df_uber
 
     # -------------------------------------------------------------
-    # RENDERIZAÇÃO DA ROTA (Puxa da Memória e Desenha)
+    # RENDERIZAÇÃO DA ROTA E DO MAPA
     # -------------------------------------------------------------
     if st.session_state.get('rota_gerada', False):
-        
-        # Recupera as informações salvas
         route_steps = st.session_state['route_steps']
         total_km = st.session_state['total_km']
         locais_dict = st.session_state['locais_dict']
@@ -522,5 +545,4 @@ with tab_roteiro:
                 folium.PolyLine(path_points, color="#2563eb", weight=4, opacity=0.8).add_to(m)
                 m.fit_bounds(path_points)
 
-            # O mapa é renderizado aqui. O "use_container_width=True" ajuda na responsividade
             st_folium(m, width=450, height=550, returned_objects=[])
