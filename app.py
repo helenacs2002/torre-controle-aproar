@@ -95,6 +95,13 @@ TEAMS_GRUPOS_UNIDADE = [
     ("SEDE/PARANGABA X COMPRAS", "sede_parangaba", "PARANGABA"),
 ]
 
+ICONE_FALTOU_HTML = (
+    '<span title="Faltou concluir" style="display:inline-flex;'
+    'width:24px;height:24px;border-radius:50%;background:#facc15;'
+    'color:#713f12;align-items:center;justify-content:center;'
+    'font-weight:900;font-size:18px;line-height:1;vertical-align:middle;">−</span>'
+)
+
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
@@ -733,7 +740,10 @@ with st.sidebar:
                     demandas_extraidas,
                     columns=COLUNAS_DEMANDAS
                 )
-                st.session_state['rota_gerada'] = False 
+                # Mantém o roteiro do mesmo dia para acompanhar o que foi
+                # concluído após novas sincronizações com o Trello.
+                if st.session_state.get('data_rota') != data_hoje:
+                    st.session_state['rota_gerada'] = False
                 st.success(
                     f"✅ Sincronizado! {len(ids_concluidos_validos_hoje)} demanda(s) "
                     "atrasada(s) ou de hoje foi(ram) concluída(s) hoje."
@@ -1195,7 +1205,63 @@ with tab_teams:
 # ABA: ROTEIRO E MAPA
 # -------------------------------------------------------------
 with tab_roteiro:
+    data_hoje_roteiro = datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y")
+    if (
+        st.session_state.get('rota_gerada', False)
+        and st.session_state.get('data_rota') != data_hoje_roteiro
+    ):
+        st.session_state['rota_gerada'] = False
+
     df_ativos = st.session_state.demandas
+
+    conn = sqlite3.connect(DB_FILE)
+    df_concluidas_hoje = pd.read_sql_query(
+        "SELECT id, obra, origem, destino, materiais "
+        "FROM historico_concluidos WHERE data_conclusao = ? "
+        "ORDER BY rowid DESC",
+        conn,
+        params=(data_hoje_roteiro,)
+    )
+    conn.close()
+
+    st.subheader("📌 Andamento de cada demanda")
+    st.caption(
+        "✅ Concluída no Trello hoje  •  círculo amarelo com − = faltou concluir. "
+        "Clique em Sincronizar com Trello para atualizar."
+    )
+
+    if df_ativos.empty and df_concluidas_hoje.empty:
+        st.info("Ainda não há demandas sincronizadas para acompanhar.")
+    else:
+        for _, demanda in df_concluidas_hoje.iterrows():
+            with st.container(border=True):
+                col_icone, col_demanda, col_estado = st.columns([0.35, 4.65, 1.4])
+                col_icone.markdown(
+                    '<div style="font-size:24px;line-height:1.2;">✅</div>',
+                    unsafe_allow_html=True
+                )
+                col_demanda.markdown(f"**{demanda['obra']}**")
+                col_demanda.caption(
+                    f"{demanda['origem']} → {demanda['destino']} | "
+                    f"{demanda['materiais']}"
+                )
+                col_estado.markdown("**CONCLUÍDA**")
+
+        ids_ja_concluidos = set(df_concluidas_hoje["id"].astype(str))
+        for _, demanda in df_ativos.iterrows():
+            if str(demanda.get("id", "")) in ids_ja_concluidos:
+                continue
+            with st.container(border=True):
+                col_icone, col_demanda, col_estado = st.columns([0.35, 4.65, 1.4])
+                col_icone.markdown(ICONE_FALTOU_HTML, unsafe_allow_html=True)
+                col_demanda.markdown(f"**{demanda['Obra']}**")
+                col_demanda.caption(
+                    f"{demanda['Origem']} → {demanda['Destino']} | "
+                    f"{demanda['Materiais']}"
+                )
+                col_estado.markdown("**FALTOU CONCLUIR**")
+
+    st.divider()
 
     if df_ativos.empty:
         st.info("Sincronize o Trello para carregar demandas antes de calcular a rota.")
@@ -1337,6 +1403,9 @@ with tab_roteiro:
             st.session_state['total_km'] = total_km
             st.session_state['locais_dict'] = locais_dict
             st.session_state['p_saida'] = ponto_saida
+            st.session_state['data_rota'] = datetime.now(FUSO_LOCAL).strftime(
+                "%d/%m/%Y"
+            )
 
     if st.session_state.get('rota_gerada', False):
         route_steps = st.session_state['route_steps']
@@ -1358,6 +1427,22 @@ with tab_roteiro:
 
         with col_esq:
             st.subheader("📋 Roteiro de Viagem do Davi")
+            conn = sqlite3.connect(DB_FILE)
+            ids_concluidos_hoje = {
+                str(registro[0])
+                for registro in conn.execute(
+                    "SELECT id FROM historico_concluidos "
+                    "WHERE data_conclusao = ?",
+                    (data_hoje_roteiro,)
+                ).fetchall()
+            }
+            conn.close()
+
+            st.markdown(
+                f"**Legenda do andamento:** ✅ Concluído &nbsp;&nbsp; "
+                f"{ICONE_FALTOU_HTML} Faltou concluir",
+                unsafe_allow_html=True
+            )
             texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n🏁 Saída: {p_saida} (07:30)\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
@@ -1380,8 +1465,18 @@ with tab_roteiro:
                     for acao, t in step['actions']:
                         cor = "orange" if acao == "COLETAR" else "green"
                         icone = "📦 COLETAR:" if acao == "COLETAR" else "📬 ENTREGAR:"
-                        st.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*")
-                        texto_whatsapp += f" - {acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
+                        concluida = str(t.get('id', '')) in ids_concluidos_hoje
+                        status_html = "✅" if concluida else ICONE_FALTOU_HTML
+                        status_texto = "✅" if concluida else "🟡 −"
+                        st.markdown(
+                            f"{status_html} :{cor}[**{icone}**] "
+                            f"{t['Materiais']} *(Obra: {t['Obra']})*",
+                            unsafe_allow_html=True
+                        )
+                        texto_whatsapp += (
+                            f" - {status_texto} {acao.capitalize()}: "
+                            f"{t['Materiais']} (Obra: {t['Obra']})\n"
+                        )
                         
                     texto_whatsapp += "\n"
                     num_parada += 1
