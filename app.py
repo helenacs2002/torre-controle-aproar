@@ -210,11 +210,39 @@ def obter_webhook_teams(setor, supervisor=None, obra=""):
 
 
 def disparar_teams(webhook_url, titulo, mensagem):
-    """Envia texto para um webhook moderno do Teams Workflows."""
+    """Envia um cartão adaptável para um webhook do Teams Workflows."""
     if not webhook_url or not webhook_url.lower().startswith("https://"):
         return False, "O link precisa ser um webhook HTTPS do Teams Workflows."
 
-    payload = {"text": f"**{titulo}**\n\n{mensagem}"}
+    payload = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "contentUrl": None,
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.2",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "text": titulo,
+                            "size": "Medium",
+                            "weight": "Bolder",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": mensagem,
+                            "wrap": True,
+                            "spacing": "Medium",
+                        },
+                    ],
+                },
+            }
+        ],
+    }
     ultimo_erro = ""
 
     for tentativa in range(3):
