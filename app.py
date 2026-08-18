@@ -4,6 +4,7 @@ import json
 import math
 import sqlite3
 import time
+import base64
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
@@ -410,6 +411,7 @@ def disparar_teams(webhook_url, titulo, mensagem):
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
 def mover_cartao_trello(card_id):
+    """Envia requisição para a API do Trello para mover o cartão de lista."""
     conn = sqlite3.connect(DB_FILE)
     cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
     conn.close()
@@ -862,19 +864,22 @@ def carregar_config_protege():
 # INTERFACE STREAMLIT
 # =====================================================================
 
-# Título customizado com Logo da APROAR gigante
-col_logo, col_titulo = st.columns([2.5, 9.5])
-
-with col_logo:
-    try:
-        # Puxa o logo.png que você salvou no GitHub, ajustado para ser o grande destaque
-        st.image("logo.png", width=260)
-    except:
-        st.write("🚚") 
-
-with col_titulo:
-    # Ajuste de margem negativa para alinhar perfeitamente com a logo grande
-    st.markdown("<h1 style='margin-top: -5px;'>ORGANIZADOR DE ROTA - SUPRIMENTOS</h1>", unsafe_allow_html=True)
+try:
+    # Transforma a imagem num código legível pelo navegador
+    with open("logo.png", "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode()
+    
+    # Renderiza o HTML usando Flexbox para forçar o alinhamento perfeito no centro!
+    header_html = f"""
+    <div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;">
+        <img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;">
+        <h1 style="margin: 0; padding: 0; line-height: 1.2;">ORGANIZADOR DE ROTA - SUPRIMENTOS</h1>
+    </div>
+    """
+    st.markdown(header_html, unsafe_allow_html=True)
+except Exception:
+    # Se ele não achar o arquivo logo.png, não quebra a tela, apenas exibe o título normal.
+    st.title("🚚 ORGANIZADOR DE ROTA - SUPRIMENTOS")
 
 
 if "demandas" not in st.session_state:
@@ -1244,10 +1249,8 @@ with tab_demandas:
                     type="primary",
                     use_container_width=True
                 ):
-                    # 1. Movimentar no Trello Automaticamente
                     trello_ok, trello_msg = mover_cartao_trello(card_id)
                     
-                    # 2. Avisar no Teams
                     url_webhook, _ = obter_webhook_teams(
                         dest,
                         supervisor=sup,
@@ -1942,7 +1945,6 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
-            # FECHAMENTO REALISTA DE KM DA ROTA
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
