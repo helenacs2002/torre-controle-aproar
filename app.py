@@ -65,17 +65,24 @@ def aplicar_estilo_customizado():
             backdrop-filter: blur(5px);
         }
 
-        /* Botão Primário (Azul/Steel) */
-        [data-testid="baseButton-primary"] {
-            background-color: #407492 !important;
-            color: white !important;
-            border: 1px solid #407492 !important;
+        /* Botões Primários Brancos */
+        button[kind="primary"], [data-testid="baseButton-primary"] {
+            background-color: #ffffff !important;
+            color: #080b1a !important;
+            border: 1px solid #ffffff !important;
             border-radius: 5px !important;
+            font-weight: 700 !important;
             transition: all .15s;
         }
-        [data-testid="baseButton-primary"]:hover {
-            background-color: #4e8aaa !important;
-            border-color: #5b9db8 !important;
+        button[kind="primary"]:hover, [data-testid="baseButton-primary"]:hover {
+            background-color: #e4e8f4 !important;
+            border-color: #e4e8f4 !important;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        button[kind="primary"] *, [data-testid="baseButton-primary"] * {
+            color: #080b1a !important;
+            font-weight: 700 !important;
         }
 
         /* Botão Secundário (Transparente/Cinza) */
@@ -88,8 +95,8 @@ def aplicar_estilo_customizado():
         }
         [data-testid="baseButton-secondary"]:hover {
             background-color: rgba(64,116,146,.1) !important;
-            color: #e4e8f4 !important;
-            border-color: #407492 !important;
+            color: #ffffff !important;
+            border-color: #ffffff !important;
         }
 
         /* Inputs de Texto, Data e Selects */
@@ -123,8 +130,8 @@ def aplicar_estilo_customizado():
             background-color: transparent !important;
         }
         [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-            color: #5b9db8 !important;
-            border-bottom-color: #5b9db8 !important;
+            color: #ffffff !important;
+            border-bottom-color: #ffffff !important;
         }
 
         /* Caixas de Alerta (Info, Success, Warning, Error) */
@@ -377,17 +384,29 @@ def disparar_teams(webhook_url, titulo, mensagem):
     for tentativa in range(3):
         try:
             resposta = requests.post(webhook_url, json=payload, timeout=15)
-            if 200 <= resposta.status_code < 300:
-                return True, "Mensagem aceita pelo Teams."
-
+            if 200 <= resposta.status_code < 300: return True, "Mensagem aceita pelo Teams."
             ultimo_erro = f"Teams respondeu com o código {resposta.status_code}."
             if resposta.status_code != 429 and resposta.status_code < 500: break
-        except requests.RequestException:
-            ultimo_erro = "Não foi possível alcançar o Teams."
-
+        except requests.RequestException: ultimo_erro = "Não foi possível alcançar o Teams."
         if tentativa < 2: time.sleep(1 + tentativa)
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
+
+def mover_cartao_trello(card_id):
+    conn = sqlite3.connect(DB_FILE)
+    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
+    conn.close()
+    
+    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
+        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
+        
+    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
+    try:
+        req = urllib.request.Request(url, method='PUT')
+        urllib.request.urlopen(req, timeout=5)
+        return True, "Movido com sucesso!"
+    except Exception as e:
+        return False, f"Erro de comunicação com o Trello: {e}"
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -431,10 +450,7 @@ def garantir_gps_local_base(conn):
     if coordenadas is not None:
         lat, lon = coordenadas
         for alias in ALIASES_LOCAL_BASE:
-            conn.execute(
-                "INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)",
-                (alias, LOCAL_BASE_ENDERECO, lat, lon)
-            )
+            conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (alias, LOCAL_BASE_ENDERECO, lat, lon))
         conn.commit()
 
     return coordenadas
@@ -470,9 +486,7 @@ def calcular_matriz_rotas(coords):
 def buscar_geometria_rota(coords_ordenadas):
     coords_limpas = []
     for coord in coords_ordenadas:
-        if not coords_limpas or coord != coords_limpas[-1]:
-            coords_limpas.append(coord)
-
+        if not coords_limpas or coord != coords_limpas[-1]: coords_limpas.append(coord)
     if len(coords_limpas) < 2: return [[lat, lon] for lat, lon in coords_limpas], False
 
     try:
@@ -579,12 +593,10 @@ def encontrar_conclusao_de_hoje(card_id, acoes):
         if not lista_esta_concluida(lista_depois): continue
         if lista_esta_concluida(lista_antes): continue
 
-        try:
-            momento = converter_data_trello(acao.get("date"))
+        try: momento = converter_data_trello(acao.get("date"))
         except (TypeError, ValueError): continue
 
-        if momento and momento.date() == hoje:
-            conclusoes.append(momento)
+        if momento and momento.date() == hoje: conclusoes.append(momento)
 
     return max(conclusoes) if conclusoes else None
 
@@ -614,13 +626,10 @@ class FormularioLoginParser(HTMLParser):
         super().__init__()
         self.action = None
         self.inputs = []
-
     def handle_starttag(self, tag, attrs):
         atributos = {k: (v or "") for k, v in attrs}
-        if tag.lower() == "form" and self.action is None:
-            self.action = atributos.get("action", "")
-        elif tag.lower() == "input":
-            self.inputs.append(atributos)
+        if tag.lower() == "form" and self.action is None: self.action = atributos.get("action", "")
+        elif tag.lower() == "input": self.inputs.append(atributos)
 
 def _escolher_campo(campos, palavras):
     if not campos: return None
@@ -639,8 +648,7 @@ def _montar_formulario_login(html, usuario, senha):
     campo_usuario = _escolher_campo(campos_usuario, ("usu", "user", "login", "email"))
     campo_senha = _escolher_campo(campos_senha, ("senha", "password", "pass"))
 
-    if not campo_usuario or not campo_senha:
-        raise RuntimeError("Não foi possível identificar os campos de acesso do portal.")
+    if not campo_usuario or not campo_senha: raise RuntimeError("Não foi possível identificar os campos de acesso do portal.")
 
     dados = {c["name"]: c.get("value", "") for c in campos_com_nome if c.get("type", "").lower() == "hidden"}
     dados[campo_usuario["name"]] = usuario
@@ -682,7 +690,6 @@ def _parsear_resposta_rastreador(texto):
             "Latitude": latitude, "Longitude": longitude, "Velocidade (km/h)": velocidade,
             "Situação": situacao, "Código": codigo_status, "Ícone": partes[7].strip(), "Endereço": partes[8].strip(),
         })
-
     return posicoes
 
 def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
@@ -767,7 +774,6 @@ with st.sidebar:
                 conn = sqlite3.connect(DB_FILE)
                 df_antigo = st.session_state.demandas
                 
-                # Resgata quem já foi notificado hoje
                 registros_antigos = conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()
                 ids_ja_notificados = {str(r[0]) for r in registros_antigos}
                 
@@ -784,7 +790,6 @@ with st.sidebar:
                         if momento_conclusao:
                             data_conclusao = momento_conclusao.strftime("%d/%m/%Y")
                             
-                            # Dispara Teams Automático se for novo hoje!
                             if str(c['id']) not in ids_ja_notificados and data_conclusao == DATA_HOJE_REAL_STR:
                                 url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
                                 if url_webhook:
@@ -798,10 +803,8 @@ with st.sidebar:
                                     )
                                     disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
 
-                            conn.execute(
-                                "INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
-                                (c['id'], short_name, origem, destino, materiais, data_conclusao)
-                            )
+                            conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
+                                (c['id'], short_name, origem, destino, materiais, data_conclusao))
                             ids_concluidos_validos_hoje.add(c['id'])
                         continue
                     
@@ -836,12 +839,10 @@ with st.sidebar:
                 conn.close()
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
-                if st.session_state.get('data_rota') != DATA_REF_ROTA_STR:
-                    st.session_state['rota_gerada'] = False
+                if st.session_state.get('data_rota') != DATA_REF_ROTA_STR: st.session_state['rota_gerada'] = False
                 st.success(f"✅ Sincronizado! Avisos automáticos disparados para as baixas de hoje.")
             
-            except Exception as e:
-                st.error(f"⚠️ Erro ao acessar o Trello: {e}")
+            except Exception as e: st.error(f"⚠️ Erro ao acessar o Trello: {e}")
     
     st.divider()
     veiculo_selecionado = st.radio("🚗 Tipo de Custeio da Rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"])
@@ -861,7 +862,7 @@ with st.sidebar:
     retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
 
 if st.session_state.demandas.empty:
-    st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão vermelho **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
+    st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
 
 # =====================================================================
 # ABAS PRINCIPAIS
@@ -981,7 +982,6 @@ with tab_demandas:
 
     ids_entregues_hoje = set(df_entregues_hoje.get("id", pd.Series(dtype=str)).astype(str))
     
-    # Baseia a exibição nas demandas que foram roteirizadas
     rota_atual = st.session_state.get('route_steps', [])
     demandas_na_rota = {}
     for step in rota_atual:
@@ -1001,10 +1001,8 @@ with tab_demandas:
             c1, c_status = st.columns([3.2, 2.5])
             c1.markdown(f"📦 **{row.get('Obra', '')} — {dest}** (Resp: {sup}) <br><span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
             
-            if entregue_no_trello:
-                c_status.success("✅ **Entregue (Baixa no Trello confirmada)**")
-            else:
-                c_status.warning("⏳ Pendente / No Carro")
+            if entregue_no_trello: c_status.success("✅ **Entregue (Baixa no Trello confirmada)**")
+            else: c_status.warning("⏳ Pendente / No Carro")
 
             st.write("---")
 
@@ -1235,9 +1233,8 @@ with tab_roteiro:
             lunch_taken = False
 
             while unpicked or carrying:
-                # CORTE INTELIGENTE DE EXPEDIENTE: Bateu 15:30h, ele abandona novas coletas não-urgentes!
                 if current_time >= 15 * 60 + 30: 
-                    to_postpone = [t for t in unpicked if t['Peso'] < 4] # Se não for HOJE nem VENCIDA, adia.
+                    to_postpone = [t for t in unpicked if t['Peso'] < 4] 
                     for t in to_postpone:
                         unpicked.remove(t)
                         st.session_state['demandas_adiadas'].append(t)
@@ -1347,7 +1344,6 @@ with tab_roteiro:
         p_saida = st.session_state['p_saida']
         horario_conclusao_min = st.session_state.get('horario_conclusao_min')
         
-        # Alerta de demandas cortadas por horário
         if st.session_state.get('demandas_adiadas'):
             st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã. Isso garante que o Davi não ultrapasse o fim do expediente (17:00).")
         
@@ -1380,7 +1376,7 @@ with tab_roteiro:
             )
             
             num_parada = 1
-            for step in route_steps:
+            for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
                     st.warning(f"🍔 **Pausa para Almoço** ({step['chegada']} às {step['saida']})")
                     texto_whatsapp += f"🍔 Almoço: {step['chegada']} às {step['saida']}\n\n"
@@ -1391,10 +1387,17 @@ with tab_roteiro:
                     texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['chegada']})\n"
                     continue
 
+                is_start = (i == 0 and step['destino'] == p_saida)
+
                 with st.container(border=True):
-                    st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
-                    st.caption(f"🚘 Trecho: {step['dist']:.1f} km (~{step['travel_mins']:.0f} min) | Pátio: {step['tempo_local']} min")
-                    texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
+                    if is_start:
+                        st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
+                        st.caption(f"Pátio: {step['tempo_local']} min")
+                        texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
+                    else:
+                        st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
+                        st.caption(f"🚘 Trecho: {step['dist']:.1f} km (~{step['travel_mins']:.0f} min) | Pátio: {step['tempo_local']} min")
+                        texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     
                     for acao, t in step['actions']:
                         cor = "orange" if acao == "COLETAR" else "green"
@@ -1407,7 +1410,9 @@ with tab_roteiro:
                         texto_whatsapp += f" - {prefixo_status}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                         
                     texto_whatsapp += "\n"
-                    num_parada += 1
+                    
+                    if not is_start:
+                        num_parada += 1
 
             horario_conclusao = format_time(horario_conclusao_min)
             if horario_conclusao_min < FIM_EXPEDIENTE_MIN:
@@ -1487,13 +1492,16 @@ with tab_roteiro:
                 lat_s, lon_s = apply_offset(*locais_dict[p_saida])
                 path_points.append([lat_s, lon_s])
 
-            for step in route_steps:
+            for i, step in enumerate(route_steps):
                 if step.get('destino') and step['destino'] in locais_dict:
+                    if step['type'] in ['lunch', 'return']: continue
+                    
+                    is_start = (i == 0 and step['destino'] == p_saida)
+                    if is_start: continue # Pula desenhar um marcador numérico em cima do marcador de Início (Bandeira)
+
                     lat_orig, lon_orig = locais_dict[step['destino']]
                     lat, lon = apply_offset(lat_orig, lon_orig)
                     path_points.append([lat, lon])
-                    
-                    if step['type'] == 'lunch' or step['type'] == 'return': continue
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta = "COLETAR" in acoes
@@ -1518,15 +1526,16 @@ with tab_roteiro:
 
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
 
+            # O marcador principal de saída desenhado com a BANDEIRA XADREZ (🏁)
             if p_saida in locais_dict:
                 lat_s, lon_s = path_points[0]
                 folium.Marker(
                     [lat_s, lon_s], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b><br>Início da rota: 07:30", max_width=280),
                     tooltip="Saída/retorno — 07:30", z_index_offset=1000,
-                    icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-family: sans-serif; font-size: 15px;">0</div>''')
+                    icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')
                 ).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
             if geometria_viaria: st.caption("🛣️ Traçado calculado pelas ruas, na ordem das paradas.")
             else: st.caption("⚠️ O serviço viário não respondeu. Para evitar linhas incorretas, somente as paradas estão sendo exibidas.")
-            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🔵 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
