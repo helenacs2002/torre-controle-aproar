@@ -56,7 +56,15 @@ ENDERECOS_PADRAO = [
     ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"),
     ("FIEC", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("UNIFOR", "Av. Washington Soares, 1321 - Edson Queiroz, Fortaleza - CE"),
-    ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE")
+    ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE"),
+    
+    # --- MEMÓRIA ANTI-AMNÉSIA (Insira os links reais do Maps aqui) ---
+    ("DEPOSITO MAZIM", "COLE O LINK DO MAPS AQUI"),
+    ("ESTOQUE", "COLE O LINK DO MAPS AQUI"),
+    ("CLARUS EPI", "COLE O LINK DO MAPS AQUI"),
+    ("YHANNO FLORES", "COLE O LINK DO MAPS AQUI"),
+    ("ESCRITÓRIO PROVISÓRIO", "COLE O LINK DO MAPS AQUI"),
+    ("LECI FERRAGENS", "Rua Gen. Clarindo de Queiroz, 1668 - Centro, Fortaleza - CE")
 ]
 
 def inicializar_bd():
@@ -69,6 +77,8 @@ def inicializar_bd():
                     lon REAL)''')
     for apelido, end in ENDERECOS_PADRAO:
         c.execute("INSERT OR IGNORE INTO locais (apelido, endereco) VALUES (?, ?)", (apelido, end))
+        # Força a atualização se os fixos de cima forem alterados no código
+        c.execute("UPDATE locais SET endereco = ? WHERE apelido = ?", (end, apelido))
     conn.commit()
     conn.close()
 
@@ -81,6 +91,7 @@ def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
 def buscar_coordenadas(endereco):
+    if not endereco or endereco == "COLE O LINK DO MAPS AQUI": return None, None
     endereco_limpo = endereco.strip()
     match_coords = re.search(r'^(-?\d+\.\d+)[\s,;]+(-?\d+\.\d+)$', endereco_limpo)
     if match_coords:
@@ -156,13 +167,15 @@ def calcular_matriz_rotas(coords):
     return distancias, duracoes
 
 # -------------------------------------------------------------
-# FILTRO ORTOGRÁFICO E DE SINÔNIMOS
+# FILTRO ORTOGRÁFICO E DE SINÔNIMOS (Tratando acentos)
 # -------------------------------------------------------------
 def normalizar_local(nome):
     if not nome: return "DESCONHECIDO"
     n = nome.upper().strip()
     if "MARACANAU" in n: n = n.replace("MARACANAU", "MARACANAÚ")
     if "ESCRITORIO" in n: n = n.replace("ESCRITORIO", "ESCRITÓRIO")
+    if "DEPÓSITO" in n: n = n.replace("DEPÓSITO", "DEPOSITO")
+    if "ESPACO" in n: n = n.replace("ESPACO", "ESPAÇO")
     return n
 
 def extrair_dados_completos(texto, card_name):
@@ -369,8 +382,10 @@ with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
     st.info("💡 Como usar: Digite o nome do local igualzinho aparece na demanda e cole o link do Google Maps. O sistema nunca mais esquecerá!")
     col1, col2 = st.columns(2)
-    with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper()
-    with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps")
+    
+    # O STRIP AQUI É O HERÓI ANTI-ESPAÇO-INVISÍVEL
+    with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper().strip()
+    with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps").strip()
     
     if st.button("Salvar Endereço Definitivo / Extrair GPS"):
         if apelido_input and endereco_input:
@@ -532,9 +547,6 @@ with tab_roteiro:
             st.session_state['p_saida'] = ponto_saida
             st.session_state['df_uber_final'] = df_uber
 
-    # =================================================================
-    # RENDERIZAÇÃO DA ROTA E DO NOVO MAPA COM MARCADORES NUMERADOS
-    # =================================================================
     if st.session_state.get('rota_gerada', False):
         route_steps = st.session_state['route_steps']
         total_km = st.session_state['total_km']
@@ -596,7 +608,6 @@ with tab_roteiro:
             path_points = []
             p_num = 1
             
-            # Adiciona Ponto de Saída no mapa primeiro (Para corrigir a linha cortada)
             if p_saida in locais_dict:
                 lat_s, lon_s = locais_dict[p_saida]
                 path_points.append([lat_s, lon_s])
@@ -618,24 +629,22 @@ with tab_roteiro:
                     if step['type'] == 'lunch':
                         continue
                         
-                    # Define a cor e o número/texto do marcador
                     if step['type'] == 'return':
-                        bg_color = "#3b82f6" # Azul (Saída/Retorno)
+                        bg_color = "#3b82f6" 
                         num_str = "🏁"
                         tt_text = f"Retorno: {step['destino']}"
                     else:
                         acoes = [a[0] for a in step.get('actions', [])]
                         if "COLETAR" in acoes and "ENTREGAR" in acoes:
-                            bg_color = "#a855f7" # Roxo (Ambos no mesmo lugar)
+                            bg_color = "#a855f7" 
                         elif "COLETAR" in acoes:
-                            bg_color = "#f59e0b" # Amarelo/Laranja (Só Coleta)
+                            bg_color = "#f59e0b" 
                         else:
-                            bg_color = "#22c55e" # Verde (Só Entrega)
+                            bg_color = "#22c55e" 
                             
                         num_str = str(p_num)
                         tt_text = f"Parada {p_num}: {step['destino']}"
                     
-                    # Desenha o marcador personalizado na tela
                     folium.Marker(
                         [lat, lon],
                         popup=f"{step['destino']}",
