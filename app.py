@@ -143,6 +143,7 @@ def inicializar_bd():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS locais_removidos (apelido TEXT PRIMARY KEY)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
@@ -156,7 +157,12 @@ def inicializar_bd():
         c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES (?, '')", (sup,))
     
     for apelido, end in ENDERECOS_PADRAO:
-        c.execute("INSERT OR IGNORE INTO locais (apelido, endereco) VALUES (?, ?)", (apelido, end))
+        c.execute(
+            "INSERT OR IGNORE INTO locais (apelido, endereco) "
+            "SELECT ?, ? WHERE NOT EXISTS ("
+            "SELECT 1 FROM locais_removidos WHERE apelido = ?)",
+            (apelido, end, apelido)
+        )
 
     # Versões anteriores tratavam qualquer local não identificado como se fosse
     # o escritório. Remove esse cadastro para que falhas de leitura fiquem
@@ -1130,6 +1136,10 @@ with tab_enderecos:
             lat, lon = buscar_coordenadas(endereco_input)
             if lat:
                 conn = sqlite3.connect(DB_FILE)
+                conn.execute(
+                    "DELETE FROM locais_removidos WHERE apelido = ?",
+                    (apelido_input,)
+                )
                 conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (apelido_input, endereco_input, lat, lon))
                 conn.commit()
                 conn.close()
@@ -1143,6 +1153,51 @@ with tab_enderecos:
     df_locais = pd.read_sql_query("SELECT * FROM locais ORDER BY apelido", conn)
     conn.close()
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("#### Remover local")
+    locais_protegidos = set(ALIASES_LOCAL_BASE)
+    locais_removiveis = [
+        apelido for apelido in df_locais["apelido"].tolist()
+        if apelido not in locais_protegidos
+    ]
+
+    if locais_removiveis:
+        local_remover = st.selectbox(
+            "Selecione o local que deseja remover",
+            locais_removiveis,
+            index=None,
+            placeholder="Escolha um local..."
+        )
+        confirmar_remocao = st.checkbox(
+            "Confirmo que desejo remover este local e seu GPS",
+            key="confirmar_remocao_local"
+        )
+
+        if st.button(
+            "🗑️ Remover local selecionado",
+            disabled=not (local_remover and confirmar_remocao)
+        ):
+            conn = sqlite3.connect(DB_FILE)
+            conn.execute(
+                "INSERT OR REPLACE INTO locais_removidos (apelido) VALUES (?)",
+                (local_remover,)
+            )
+            conn.execute(
+                "DELETE FROM locais WHERE apelido = ?",
+                (local_remover,)
+            )
+            conn.commit()
+            conn.close()
+            st.success(f"✅ Local '{local_remover}' removido.")
+            st.rerun()
+    else:
+        st.info("Não há locais disponíveis para remoção.")
+
+    st.caption(
+        "O Escritório e o Almoxarifado são protegidos porque são usados como "
+        "ponto-base das rotas. Um local removido pode ser cadastrado novamente acima."
+    )
 
 # -------------------------------------------------------------
 # ABA: FECHAMENTO MENSAL E CUSTOS
