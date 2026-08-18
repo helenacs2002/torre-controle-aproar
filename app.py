@@ -277,8 +277,8 @@ with st.sidebar:
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
                     
-                    # SE O CARTÃO ESTÁ NA COLUNA CONCLUÍDOS, SALVA NO HISTÓRICO E PULA DAS ATIVAS
-                    if "CONCLUÍDO" in nome_lista or "CONCLUIDO" in nome_lista or "ENTREGUE" in nome_lista:
+                    # CORREÇÃO AQUI: BUSCA POR "CONCLU" E "ENTREG" PARA PEGAR CONCLUÍDAS/CONCLUÍDAS/ENTREGUE
+                    if "CONCLU" in nome_lista or "ENTREG" in nome_lista:
                         conn.execute("INSERT OR IGNORE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
                                      (c['id'], short_name, origem, destino, materiais, data_hoje))
                         continue
@@ -333,7 +333,7 @@ if st.session_state.demandas.empty:
     st.stop()
 
 # =====================================================================
-# ABAS PRINCIPAIS (COM HISTÓRICO DE CONCLUÍDOS)
+# ABAS PRINCIPAIS
 # =====================================================================
 tab_roteiro, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_teams = st.tabs([
     "🗺️ Roteiro do Davi", 
@@ -390,14 +390,14 @@ with tab_demandas:
 # -------------------------------------------------------------
 with tab_historico:
     st.subheader("📋 Registro de Demandas Concluídas (Via Trello)")
-    st.write("Aqui ficam guardadas todas as entregas que foram movidas para a coluna **'CONCLUÍDOS'** lá no Trello durante a sincronização.")
+    st.write("Aqui ficam guardadas todas as entregas que foram movidas para a coluna **'CONCLUÍDAS'** lá no Trello durante a sincronização.")
     
     conn = sqlite3.connect(DB_FILE)
     df_hist = pd.read_sql_query("SELECT * FROM historico_concluidos ORDER BY rowid DESC", conn)
     conn.close()
     
     if df_hist.empty:
-        st.info("Nenhuma demanda concluída registrada ainda. Assim que você sincronizar o Trello com cartões na coluna CONCLUÍDOS, eles aparecerão aqui.")
+        st.info("Nenhuma demanda concluída registrada ainda. Assim que você sincronizar o Trello com cartões na coluna CONCLUÍDAS, eles aparecerão aqui.")
     else:
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
