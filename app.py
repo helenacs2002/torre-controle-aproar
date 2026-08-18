@@ -156,7 +156,7 @@ def calcular_matriz_rotas(coords):
     return distancias, duracoes
 
 # -------------------------------------------------------------
-# FILTRO ORTOGRÁFICO E DE SINÔNIMOS (Evita o bug de Duas Cidades)
+# FILTRO ORTOGRÁFICO E DE SINÔNIMOS
 # -------------------------------------------------------------
 def normalizar_local(nome):
     if not nome: return "DESCONHECIDO"
@@ -429,9 +429,6 @@ with tab_roteiro:
             current_time = 7.5 * 60
             lunch_taken = False
 
-            # =================================================================
-            # NOVO MOTOR ANTI ZIGUE-ZAGUE (Agrupamento e Enchimento de Carga)
-            # =================================================================
             while unpicked or carrying:
                 candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
                 if not candidates: break
@@ -448,18 +445,13 @@ with tab_roteiro:
                     is_pickup = any(t['Origem'] == p for t in unpicked)
                     urgency = max([t['Peso'] for t in unpicked if t['Origem'] == p] + [1])
                     
-                    # Checa quantas coisas ainda precisam ser coletadas pra ir pra esse lugar 'p'
                     pendentes_para_p = sum(1 for t in unpicked if t['Destino'] == p)
-                    
                     prio = 1.0
                     
-                    # Regra 1: Segurar Entrega se tiver mais coisas pendentes pra lá
                     if is_dropoff:
                         prio = 2.0
-                        if pendentes_para_p > 0:
-                            prio = 0.1 # Cai drasticamente a prioridade de entregar agora
+                        if pendentes_para_p > 0: prio = 0.1 
                     
-                    # Regra 2: Bônus para coletar coisas que vão para o mesmo lugar que já está no carro
                     if is_pickup:
                         destinos_desta_coleta = set(t['Destino'] for t in unpicked if t['Origem'] == p)
                         if destinos_desta_coleta.intersection(destinos_no_carro):
@@ -467,22 +459,15 @@ with tab_roteiro:
                         else:
                             prio *= 1.5
 
-                    # Regra 3: Ajustes da Estratégia
-                    if "Urgências" in estrategia:
-                        prio *= (urgency ** 2)
-                    elif "Descarregar" in estrategia and is_dropoff:
-                        prio *= 5.0
+                    if "Urgências" in estrategia: prio *= (urgency ** 2)
+                    elif "Descarregar" in estrategia and is_dropoff: prio *= 5.0
                     elif "Economia" in estrategia:
-                        if is_dropoff and pendentes_para_p > 0:
-                            prio = 0.05
+                        if is_dropoff and pendentes_para_p > 0: prio = 0.05
                             
                     if prio == 0: prio = 0.001
-                    
                     score = (d + (dur * 0.1)) / prio
                     
-                    # CUSTO ZERO: Se eu já estou na porta da loja, faz TUDO que tiver que fazer lá!
-                    if d < 0.1:
-                        score = -1.0
+                    if d < 0.1: score = -1.0
 
                     if score < min_score:
                         min_score = score
@@ -547,6 +532,9 @@ with tab_roteiro:
             st.session_state['p_saida'] = ponto_saida
             st.session_state['df_uber_final'] = df_uber
 
+    # =================================================================
+    # RENDERIZAÇÃO DA ROTA E DO NOVO MAPA COM MARCADORES NUMERADOS
+    # =================================================================
     if st.session_state.get('rota_gerada', False):
         route_steps = st.session_state['route_steps']
         total_km = st.session_state['total_km']
@@ -607,22 +595,64 @@ with tab_roteiro:
             
             path_points = []
             p_num = 1
+            
+            # Adiciona Ponto de Saída no mapa primeiro (Para corrigir a linha cortada)
+            if p_saida in locais_dict:
+                lat_s, lon_s = locais_dict[p_saida]
+                path_points.append([lat_s, lon_s])
+                folium.Marker(
+                    [lat_s, lon_s],
+                    popup=f"Saída: {p_saida}",
+                    tooltip="Ponto de Saída",
+                    icon=folium.DivIcon(html=f'''
+                        <div style="background-color: #3b82f6; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">
+                            0
+                        </div>''')
+                ).add_to(m)
+
             for step in route_steps:
                 if step.get('destino') and step['destino'] in locais_dict:
                     lat, lon = locais_dict[step['destino']]
                     path_points.append([lat, lon])
                     
-                    cor_pino = "blue" if step['type'] == "return" else "red"
+                    if step['type'] == 'lunch':
+                        continue
+                        
+                    # Define a cor e o número/texto do marcador
+                    if step['type'] == 'return':
+                        bg_color = "#3b82f6" # Azul (Saída/Retorno)
+                        num_str = "🏁"
+                        tt_text = f"Retorno: {step['destino']}"
+                    else:
+                        acoes = [a[0] for a in step.get('actions', [])]
+                        if "COLETAR" in acoes and "ENTREGAR" in acoes:
+                            bg_color = "#a855f7" # Roxo (Ambos no mesmo lugar)
+                        elif "COLETAR" in acoes:
+                            bg_color = "#f59e0b" # Amarelo/Laranja (Só Coleta)
+                        else:
+                            bg_color = "#22c55e" # Verde (Só Entrega)
+                            
+                        num_str = str(p_num)
+                        tt_text = f"Parada {p_num}: {step['destino']}"
+                    
+                    # Desenha o marcador personalizado na tela
                     folium.Marker(
                         [lat, lon],
                         popup=f"{step['destino']}",
-                        tooltip=f"Parada {p_num}: {step['destino']}",
-                        icon=folium.Icon(color=cor_pino, icon="info-sign")
+                        tooltip=tt_text,
+                        icon=folium.DivIcon(html=f'''
+                            <div style="background-color: {bg_color}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">
+                                {num_str}
+                            </div>''')
                     ).add_to(m)
-                    if step['type'] != "return": p_num += 1
+                    
+                    if step['type'] != "return": 
+                        p_num += 1
 
             if len(path_points) > 1:
                 folium.PolyLine(path_points, color="#2563eb", weight=4, opacity=0.8).add_to(m)
                 m.fit_bounds(path_points)
 
             st_folium(m, width=450, height=550, returned_objects=[])
+            
+            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px;'><b>Legenda:</b> 🔵 Saída/Retorno | 🟡 Coleta | 🟢 Entrega | 🟣 Ambos</div>", unsafe_allow_html=True)
