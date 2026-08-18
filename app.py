@@ -262,10 +262,8 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
     
     c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90)")
-    c.execute("INSERT OR IGNORE INTO config_trello (id, api_key, token, id_lista_concluida) VALUES (1, '', '', '')")
     c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '')")
     
     for sup in set(SUPERVISORES_MAP.values()):
@@ -409,23 +407,6 @@ def disparar_teams(webhook_url, titulo, mensagem):
             time.sleep(1 + tentativa)
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
-
-def mover_cartao_trello(card_id):
-    """Envia requisição para a API do Trello para mover o cartão de lista."""
-    conn = sqlite3.connect(DB_FILE)
-    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
-    conn.close()
-    
-    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
-        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
-        
-    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
-    try:
-        req = urllib.request.Request(url, method='PUT')
-        urllib.request.urlopen(req, timeout=5)
-        return True, "Movido com sucesso!"
-    except Exception as e:
-        return False, f"Erro de comunicação com o Trello: {e}"
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -865,11 +846,9 @@ def carregar_config_protege():
 # =====================================================================
 
 try:
-    # Transforma a imagem num código legível pelo navegador
     with open("logo.png", "rb") as image_file:
         encoded_string = base64.b64encode(image_file.read()).decode()
     
-    # Renderiza o HTML usando Flexbox para forçar o alinhamento perfeito no centro!
     header_html = f"""
     <div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;">
         <img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;">
@@ -878,7 +857,6 @@ try:
     """
     st.markdown(header_html, unsafe_allow_html=True)
 except Exception:
-    # Se ele não achar o arquivo logo.png, não quebra a tela, apenas exibe o título normal.
     st.title("🚚 ORGANIZADOR DE ROTA - SUPRIMENTOS")
 
 
@@ -888,7 +866,7 @@ if "demandas" not in st.session_state:
 # Painel Lateral
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
-    st.caption("Versão 18.08.2026-r21 (Auto-Sync & Timing)")
+    st.caption("Versão 18.08.2026-r22 (Auto-Teams Final)")
     
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
@@ -896,8 +874,6 @@ with st.sidebar:
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
                     data = json.loads(response.read())
-                
-                st.session_state['trello_lists_raw'] = data.get('lists', [])
                 
                 trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
                 cards = data.get('cards', [])
@@ -909,6 +885,10 @@ with st.sidebar:
                 
                 conn = sqlite3.connect(DB_FILE)
                 df_antigo = st.session_state.demandas
+                
+                # Resgata quem já foi notificado hoje para não notificar de novo no Teams
+                registros_antigos = conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (data_hoje,)).fetchall()
+                ids_ja_notificados = {str(r[0]) for r in registros_antigos}
                 
                 for c in cards:
                     if c.get('closed'): continue
@@ -922,6 +902,23 @@ with st.sidebar:
                         momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
                         if prazo_era_hoje_ou_atrasado(c.get('due'), momento_conclusao):
                             data_conclusao = momento_conclusao.strftime("%d/%m/%Y")
+                            
+                            # SE O CARTÃO NÃO ESTAVA NO HISTÓRICO, SIGNIFICA QUE ACABOU DE SER CONCLUÍDO NO TRELLO -> AVISA O TEAMS!
+                            if str(c['id']) not in ids_ja_notificados:
+                                url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
+                                if url_webhook:
+                                    concluida_em = momento_conclusao.strftime("%d/%m/%Y às %H:%M")
+                                    mensagem = (
+                                        "✅ **Os materiais foram entregues na obra e a demanda foi concluída no Trello.**\n\n"
+                                        f"**Obra:** {short_name}\n\n"
+                                        f"**Local:** {destino}\n\n"
+                                        f"**Materiais:** {materiais}\n\n"
+                                        f"**Origem:** {origem}\n\n"
+                                        f"**Data e Hora:** {concluida_em}"
+                                    )
+                                    disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
+
+                            # Insere/Atualiza no Histórico
                             conn.execute(
                                 "INSERT OR REPLACE INTO historico_concluidos "
                                 "(id, obra, origem, destino, materiais, data_conclusao) "
@@ -1169,10 +1166,11 @@ with tab_demandas:
     st.session_state.demandas = df_editado
     
     st.divider()
-    st.subheader("📣 Concluir Entregas (Trello + Teams)")
+    st.subheader("📣 Status das Entregas (Trello ➔ Teams)")
     st.caption(
-        "Ao clicar em 'Concluir e Avisar', o sistema notifica o supervisor no Teams e já move o cartão "
-        "para a coluna 'Concluídas' lá no Trello instantaneamente."
+        "Ao clicar em 'Sincronizar com Trello' no menu lateral, o sistema identifica "
+        "as demandas movidas para 'Concluídas' lá no Trello e notifica automaticamente "
+        "o supervisor no Teams."
     )
 
     data_hoje_entregas = datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y")
@@ -1225,7 +1223,7 @@ with tab_demandas:
             dest = row.get("Destino", "")
             mat = row.get("Materiais", "Ver Trello")
 
-            c1, c_status, c2 = st.columns([3.2, 1.1, 1.4])
+            c1, c_status = st.columns([3.2, 2.5])
             c1.markdown(
                 f"📦 **{row.get('Obra', '')} — {dest}** "
                 f"(Resp: {sup}) <br>"
@@ -1234,59 +1232,9 @@ with tab_demandas:
             )
             
             if entregue_no_trello:
-                c_status.markdown("🟢 **Finalizada**")
-                c2.button(
-                    "✅ Já Baixada",
-                    key=f"btn_tms_{card_id}_done",
-                    disabled=True,
-                    use_container_width=True
-                )
+                c_status.success("✅ **Finalizada no Trello e Avisado no Teams!**")
             else:
-                c_status.caption("Aguardando Baixa")
-                if c2.button(
-                    "✅ Concluir e Avisar",
-                    key=f"btn_tms_{card_id}",
-                    type="primary",
-                    use_container_width=True
-                ):
-                    trello_ok, trello_msg = mover_cartao_trello(card_id)
-                    
-                    url_webhook, _ = obter_webhook_teams(
-                        dest,
-                        supervisor=sup,
-                        obra=row.get("Obra", "")
-                    )
-                    teams_ok = False
-                    if url_webhook:
-                        concluida_em = datetime.now(FUSO_LOCAL).strftime(
-                            "%d/%m/%Y às %H:%M"
-                        )
-                        mensagem = (
-                            "✅ **Os materiais foram entregues na obra e a demanda "
-                            "foi concluída.**\n\n"
-                            f"**Obra:** {row.get('Obra', '')}\n\n"
-                            f"**Unidade / local da entrega:** {dest}\n\n"
-                            f"**Materiais entregues:** {mat}\n\n"
-                            f"**Origem da coleta:** {row.get('Origem', '')}\n\n"
-                            f"**Data e Hora:** {concluida_em}"
-                        )
-                        teams_ok, detalhe = disparar_teams(
-                            url_webhook,
-                            f"✅ Entrega concluída — {dest}",
-                            mensagem
-                        )
-                    
-                    if trello_ok:
-                        st.success("✅ Cartão movido para Concluídas no Trello com sucesso!")
-                        if teams_ok:
-                            st.success(f"📱 Supervisor ({sup}) notificado no Teams!")
-                        else:
-                            st.warning("Trello atualizado, mas o aviso no Teams falhou (ou não configurado).")
-                    else:
-                        st.error(f"⚠️ Erro ao mover no Trello: {trello_msg}")
-                    
-                    time.sleep(2)
-                    st.rerun()
+                c_status.warning("⏳ Aguardando Baixa no Trello")
 
             st.write("---")
 
@@ -1482,52 +1430,17 @@ with tab_custos:
     conn.close()
 
 # -------------------------------------------------------------
-# ABA: INTEGRAÇÕES (TEAMS E TRELLO)
+# ABA: INTEGRAÇÕES
 # -------------------------------------------------------------
 with tab_integ:
-    st.subheader("⚙️ Configurações de API e Automações")
-    
-    # --- TRELLO ---
-    st.markdown("### 1. Automação do Trello (Concluir Cartão)")
-    st.write("Siga os passos abaixo para permitir que a Torre de Controle arraste os cartões no Trello automaticamente:")
-    st.markdown(
-        "1. Acesse [https://trello.com/app-key](https://trello.com/app-key) e copie a **Chave (API Key)**.\n"
-        "2. Na mesma página, clique no botão para gerar um **Token** e copie o código secreto."
-    )
-    
-    conn = sqlite3.connect(DB_FILE)
-    cfg_trello = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
-    
-    c_trl1, c_trl2 = st.columns(2)
-    nova_api = c_trl1.text_input("Chave da API (Key)", value=cfg_trello[0], type="password")
-    novo_token = c_trl2.text_input("Token Secreto", value=cfg_trello[1], type="password")
-    
-    listas_trello = st.session_state.get('trello_lists_raw', [])
-    nova_lista_id = cfg_trello[2]
-    
-    if listas_trello:
-        opcoes_dropdown = [l['id'] for l in listas_trello if not l.get('closed')]
-        nomes_dropdown = {l['id']: l['name'] for l in listas_trello if not l.get('closed')}
-        index_inicial = opcoes_dropdown.index(cfg_trello[2]) if cfg_trello[2] in opcoes_dropdown else 0
-        
-        st.write("Escolha para qual coluna do Trello o cartão deve ir quando você clicar em 'Concluir':")
-        nova_lista_id = st.selectbox("Coluna de Destino", options=opcoes_dropdown, format_func=lambda x: nomes_dropdown[x], index=index_inicial)
-    else:
-        st.info("💡 Sincronize o Trello ali no menu lateral vermelho primeiro para poder ver as colunas do seu quadro aqui.")
-        
-    if st.button("Salvar Chaves do Trello", type="primary"):
-        conn.execute("UPDATE config_trello SET api_key=?, token=?, id_lista_concluida=? WHERE id=1", (nova_api, novo_token, nova_lista_id))
-        conn.commit()
-        st.success("Integração com Trello salva com sucesso!")
-        
-    st.divider()
+    st.subheader("⚙️ Configurações de Integrações e APIs")
 
-    # --- TEAMS ---
-    st.markdown("### 2. Integração dos Grupos no Teams")
+    st.markdown("### Integração dos Grupos no Teams")
     st.write(
-        "Caso os Secrets não estejam configurados, o aplicativo olhará para estes links salvos localmente."
+        "Caso os Secrets não estejam configurados no ambiente, o aplicativo olhará para estes links salvos localmente."
     )
 
+    conn = sqlite3.connect(DB_FILE)
     df_teams = pd.read_sql_query("SELECT * FROM webhooks_teams ORDER BY setor", conn)
     for index, row in df_teams.iterrows():
         setor = row['setor']
@@ -1945,6 +1858,7 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
+            # FECHAMENTO REALISTA DE KM DA ROTA
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
