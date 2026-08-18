@@ -92,6 +92,7 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     
     c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90)")
@@ -108,7 +109,7 @@ def inicializar_bd():
 inicializar_bd()
 
 # =====================================================================
-# FUNÇÕES DE INTEGRAÇÃO E MAPAS
+# FUNÇÕES DE INTEGRAÇÃO (TEAMS E MAPAS)
 # =====================================================================
 def disparar_teams(webhook_url, titulo, mensagem, cor="22c55e"):
     if not webhook_url or "http" not in webhook_url: return False
@@ -263,25 +264,29 @@ with st.sidebar:
                 cards = data.get('cards', [])
                 
                 demandas_extraidas = []
-                excluir_termos = ["CONCLUÍDAS", "CONCLUIDAS", "ENTREGUE"]
+                data_hoje = datetime.now().strftime("%d/%m/%Y")
+                
+                conn = sqlite3.connect(DB_FILE)
                 df_antigo = st.session_state.demandas
                 
                 for c in cards:
                     if c.get('closed'): continue
                     nome_lista = trello_lists.get(c.get('idList', ''), '').upper()
-                    if any(t in nome_lista for t in excluir_termos) or not nome_lista: continue
                     
-                    descricao = c.get('desc', '')
-                    short_name, origem, destino, materiais = extrair_dados_completos(descricao, c.get('name', ''))
+                    short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
-                    
                     supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
                     
-                    endereco_card = encontrar_endereco_na_descricao(descricao)
+                    # SE O CARTÃO ESTÁ NA COLUNA CONCLUÍDOS, SALVA NO HISTÓRICO E PULA DAS ATIVAS
+                    if "CONCLUÍDO" in nome_lista or "CONCLUIDO" in nome_lista or "ENTREGUE" in nome_lista:
+                        conn.execute("INSERT OR IGNORE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
+                                     (c['id'], short_name, origem, destino, materiais, data_hoje))
+                        continue
+                    
+                    endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
                     if endereco_card:
                         lat, lon = buscar_coordenadas(endereco_card)
                         if lat:
-                            conn = sqlite3.connect(DB_FILE)
                             if origem not in UNIDADES_PROPRIAS and origem != "DESCONHECIDO":
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (origem,)).fetchone()
                                 if not res or res[0] is None:
@@ -290,8 +295,6 @@ with st.sidebar:
                                 res = conn.execute("SELECT lat FROM locais WHERE apelido = ?", (destino,)).fetchone()
                                 if not res or res[0] is None:
                                     conn.execute("INSERT OR REPLACE INTO locais (apelido, endereco, lat, lon) VALUES (?, ?, ?, ?)", (destino, endereco_card, lat, lon))
-                            conn.commit()
-                            conn.close()
                     
                     tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
                     te_val = 10
@@ -307,9 +310,12 @@ with st.sidebar:
                         "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val, "Supervisor": supervisor
                     })
                 
+                conn.commit()
+                conn.close()
+                
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas)
                 st.session_state['rota_gerada'] = False 
-                st.success("✅ Demandas atualizadas com sucesso!")
+                st.success("✅ Sincronizado! Demandas concluídas foram enviadas para o Histórico.")
             
             except Exception as e:
                 st.error(f"⚠️ Erro ao acessar o Trello: {e}")
@@ -327,18 +333,19 @@ if st.session_state.demandas.empty:
     st.stop()
 
 # =====================================================================
-# ABAS PRINCIPAIS
+# ABAS PRINCIPAIS (COM HISTÓRICO DE CONCLUÍDOS)
 # =====================================================================
-tab_roteiro, tab_demandas, tab_enderecos, tab_custos, tab_teams = st.tabs([
+tab_roteiro, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_teams = st.tabs([
     "🗺️ Roteiro do Davi", 
-    "📦 Demandas & Entregas", 
+    "📦 Demandas Ativas", 
+    "📋 Histórico & Concluídos",
     "📍 Endereços",
     "💰 Dashboard & Custos",
     "💬 Integração Teams"
 ])
 
 # -------------------------------------------------------------
-# ABA: DEMANDAS E ALERTAS TEAMS
+# ABA: DEMANDAS ATIVAS
 # -------------------------------------------------------------
 with tab_demandas:
     st.subheader("Gerenciamento de Cargas e Minutos")
@@ -355,9 +362,7 @@ with tab_demandas:
     st.session_state.demandas = df_editado
     
     st.divider()
-    st.subheader("🔔 Baixa de Entregas (Avisar Supervisor)")
-    st.write("Clique no botão para avisar o supervisor no Teams de que o material da obra dele foi entregue.")
-    
+    st.subheader("🔔 Notificar Supervisor no Teams")
     conn = sqlite3.connect(DB_FILE)
     if not st.session_state.demandas.empty:
         for idx, row in st.session_state.demandas.iterrows():
@@ -367,18 +372,34 @@ with tab_demandas:
             
             c1, c2 = st.columns([3, 1])
             c1.markdown(f"📦 **{dest}** (Resp: {sup}) <br> <span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
-            if c2.button(f"✅ Avisar {sup.split()[0]}", key=f"btn_concluir_{row['id']}", use_container_width=True):
+            if c2.button(f"💬 Avisar {sup.split()[0]}", key=f"btn_tms_{row['id']}", use_container_width=True):
                 url_webhook = conn.execute("SELECT url FROM webhooks_teams WHERE setor=?", (sup,)).fetchone()
                 if url_webhook and url_webhook[0]:
-                    mensagem = f"O material foi entregue com sucesso pela logística.\n\n**Local:** {dest}\n**Itens:** {mat}"
-                    if disparar_teams(url_webhook[0], f"✅ Entrega Concluída: {dest}", mensagem):
-                        st.success(f"Notificação enviada para {sup} no Teams!")
+                    mensagem = f"Atualização de rota:\n\n**Local:** {dest}\n**Itens:** {mat}"
+                    if disparar_teams(url_webhook[0], f"📦 Andamento: {dest}", mensagem):
+                        st.success(f"Notificação enviada para {sup}!")
                     else:
-                        st.error("Erro ao enviar mensagem para o Teams.")
+                        st.error("Erro ao enviar mensagem.")
                 else:
-                    st.warning(f"O supervisor {sup} ainda não tem um link do Teams cadastrado na aba de Configurações.")
+                    st.warning(f"O supervisor {sup} não tem webhook cadastrado.")
             st.write("---")
     conn.close()
+
+# -------------------------------------------------------------
+# ABA: HISTÓRICO E CONCLUÍDOS
+# -------------------------------------------------------------
+with tab_historico:
+    st.subheader("📋 Registro de Demandas Concluídas (Via Trello)")
+    st.write("Aqui ficam guardadas todas as entregas que foram movidas para a coluna **'CONCLUÍDOS'** lá no Trello durante a sincronização.")
+    
+    conn = sqlite3.connect(DB_FILE)
+    df_hist = pd.read_sql_query("SELECT * FROM historico_concluidos ORDER BY rowid DESC", conn)
+    conn.close()
+    
+    if df_hist.empty:
+        st.info("Nenhuma demanda concluída registrada ainda. Assim que você sincronizar o Trello com cartões na coluna CONCLUÍDOS, eles aparecerão aqui.")
+    else:
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 # -------------------------------------------------------------
 # ABA: ENDEREÇOS
@@ -409,13 +430,12 @@ with tab_enderecos:
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
 
 # -------------------------------------------------------------
-# ABA: FECHAMENTO MENSAL E CUSTOS (A MÁGICA ACONTECE AQUI)
+# ABA: FECHAMENTO MENSAL E CUSTOS
 # -------------------------------------------------------------
 with tab_custos:
     st.subheader("💰 Fechamento Mensal e Controle de Frota")
     conn = sqlite3.connect(DB_FILE)
     
-    # Busca a configuração de consumo
     cfg = pd.read_sql_query("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", conn).iloc[0]
     
     st.markdown("#### ⚙️ Estimativa Base do Carro")
@@ -428,8 +448,6 @@ with tab_custos:
         st.success("✅ Base de cálculo atualizada!")
     
     st.divider()
-    
-    # ------------------ SISTEMA DE LANÇAMENTOS ------------------
     col_recibo, col_km = st.columns(2)
     
     with col_recibo:
@@ -450,7 +468,6 @@ with tab_custos:
 
     with col_km:
         st.markdown("#### 🛣️ Lançar KMs Avulsos")
-        st.write("Use aqui caso o carro tenha rodado por fora do aplicativo.")
         with st.form("form_km", clear_on_submit=True):
             k_data = st.date_input("Data da Corrida")
             k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
@@ -463,20 +480,14 @@ with tab_custos:
                 st.success(f"{k_km} km salvos com sucesso!")
 
     st.divider()
-
-    # ------------------ FECHAMENTO MENSAL ------------------
     st.markdown("#### 📊 Painel de Fechamento (Mês Atual)")
-    
     mes_atual_str = datetime.now().strftime("%m/%Y")
     
-    # Busca os KMs
     df_km = pd.read_sql_query("SELECT data, km FROM registro_km", conn)
     df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
     df_km = df_km.dropna(subset=['data_dt'])
-    # Filtra KMs pelo mês atual
     km_mes = df_km[df_km['data_dt'].dt.strftime('%m/%Y') == mes_atual_str]['km'].sum()
     
-    # Busca os Gastos
     df_abastec = pd.read_sql_query("SELECT data, litros, valor_litro, manutencao FROM abastecimentos", conn)
     df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
     df_abastec = df_abastec.dropna(subset=['data_dt'])
@@ -492,20 +503,16 @@ with tab_custos:
     gasto_total_mes = gasto_gasolina_mes + gasto_manutencao_mes
     custo_real_por_km = (gasto_total_mes / km_mes) if km_mes > 0 else 0.0
 
-    # Cards de Resumo
     met1, met2, met3, met4 = st.columns(4)
     met1.metric("KM Total Rodado", f"{km_mes:.1f} km", f"Mês: {mes_atual_str}", delta_color="off")
     met2.metric("Gasto com Gasolina", f"R$ {gasto_gasolina_mes:.2f}", "Pelo recibo", delta_color="inverse")
     met3.metric("Gasto em Manutenção", f"R$ {gasto_manutencao_mes:.2f}", "Pelo recibo", delta_color="inverse")
     
-    # A Métrica de Ouro
     if custo_real_por_km <= 1.50:
         met4.metric("CUSTO REAL / KM", f"R$ {custo_real_por_km:.2f}", "Mais barato que frete 1.50!", delta_color="normal")
     else:
         met4.metric("CUSTO REAL / KM", f"R$ {custo_real_por_km:.2f}", "Atenção: Carro caro!", delta_color="inverse")
 
-    st.write(f"*Nota: O Custo Real divide tudo que saiu do caixa (Gasolina + Oficina) pelos KMs que o carro efetivamente rodou no mês.*")
-    
     conn.close()
 
 # -------------------------------------------------------------
@@ -513,7 +520,7 @@ with tab_custos:
 # -------------------------------------------------------------
 with tab_teams:
     st.subheader("💬 Configuração dos Supervisores no Teams")
-    st.write("Cole aqui o link do Webhook gerado no Microsoft Teams para cada supervisor. Quando uma entrega for concluída, o alerta vai direto para ele!")
+    st.write("Cole aqui o link do Webhook gerado no Microsoft Teams para cada supervisor.")
     
     conn = sqlite3.connect(DB_FILE)
     df_teams = pd.read_sql_query("SELECT * FROM webhooks_teams ORDER BY setor", conn)
@@ -674,7 +681,6 @@ with tab_roteiro:
         locais_dict = st.session_state['locais_dict']
         p_saida = st.session_state['p_saida']
         
-        # Define o descritivo de custo
         if "Empresa" in veiculo_selecionado:
             conn = sqlite3.connect(DB_FILE)
             cfg = pd.read_sql_query("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", conn).iloc[0]
@@ -720,7 +726,6 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total: {total_km:.1f} km\n"
             
-            # --- BOTÃO NOVO: SALVAR KM DIÁRIO ---
             if st.button("💾 Salvar KM desta Rota no Painel de Custos", type="secondary", use_container_width=True):
                 data_atual = datetime.now().strftime("%d/%m/%Y")
                 conn = sqlite3.connect(DB_FILE)
@@ -729,7 +734,6 @@ with tab_roteiro:
                 conn.close()
                 st.success(f"✅ {total_km:.1f} km registrados para o fechamento mensal!")
 
-            # Botão Teams Geral
             conn = sqlite3.connect(DB_FILE)
             url_geral = conn.execute("SELECT url FROM webhooks_teams WHERE setor='Geral / Logística'").fetchone()
             conn.close()
