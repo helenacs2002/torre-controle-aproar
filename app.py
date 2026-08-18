@@ -106,7 +106,7 @@ LOCAL_BASE_ENDERECO = (
     "Fortaleza - CE, 60120-200"
 )
 LOCAL_BASE_COORDS = (-3.752270016704, -38.51537298342)
-ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "DESCONHECIDO", "ESCRITÓRIO"}
+ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "ESCRITÓRIO"}
 
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
@@ -130,7 +130,7 @@ ENDERECOS_PADRAO = [
     ("SESI SOBRAL", "Av. Dr. José Arimathéa Monte e Silva, 1003 - Junco, Sobral - CE"),
     ("ESCRITÓRIO", LOCAL_BASE_ENDERECO),
     ("ALMOXARIFADO", LOCAL_BASE_ENDERECO),
-    ("DESCONHECIDO", LOCAL_BASE_ENDERECO),
+    ("ESPAÇO SMART", "BR-116, 9370 - Barroso, Fortaleza - CE, 60862-735"),
     ("ALDEOTA", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"),
     ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"),
     ("FIEC", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
@@ -157,6 +157,11 @@ def inicializar_bd():
     
     for apelido, end in ENDERECOS_PADRAO:
         c.execute("INSERT OR IGNORE INTO locais (apelido, endereco) VALUES (?, ?)", (apelido, end))
+
+    # Versões anteriores tratavam qualquer local não identificado como se fosse
+    # o escritório. Remove esse cadastro para que falhas de leitura fiquem
+    # visíveis, em vez de produzirem uma rota incorreta.
+    c.execute("DELETE FROM locais WHERE apelido = 'DESCONHECIDO'")
 
     for alias in ALIASES_LOCAL_BASE:
         c.execute(
@@ -321,9 +326,9 @@ def canonicalizar_ponto_rota(nome):
     return texto
 
 def garantir_gps_local_base(conn):
-    """Garante que os três aliases compartilhem o mesmo endereço e GPS."""
+    """Garante que Escritório e Almoxarifado compartilhem endereço e GPS."""
     coordenadas = None
-    for alias in ("ESCRITÓRIO", "ALMOXARIFADO", "DESCONHECIDO"):
+    for alias in ("ESCRITÓRIO", "ALMOXARIFADO"):
         registro = conn.execute(
             "SELECT lat, lon FROM locais WHERE apelido = ?",
             (alias,)
@@ -432,17 +437,22 @@ def extrair_dados_completos(texto, card_name):
     materiais = "Ver Trello"
     
     if texto:
-        mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar)\s+(?:no|na|em|o|a|ao|à)\s+\*?\*?(.*?)\*?\*?(?:\:|\n|$)', texto)
+        # O Trello costuma envolver instruções em Markdown, por exemplo:
+        # _**COLETAR EM ESPAÇO SMART**_. A limpeza precisa acontecer antes
+        # das expressões regulares para não perder nem deformar o local.
+        texto_limpo = re.sub(r'[*_`]+', '', texto)
+
+        mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar)\s+(?:no|na|em|o|a|ao|à)\s+(.*?)(?:\:|\n|$)', texto_limpo)
         if mo: origem = normalizar_local(mo.group(1))
 
-        md = re.search(r'(?i)(?:e\s+)?(?:levar|entreg(?:ar|á-lo|á-la|á-los|á-las)|devolver|encaminhar|transportar|deixar)\s+(?:para|no|na|ao|à|aos|às)\s+(?:o|a|os|as)?\s*\*?\*?(.*?)\*?\*?(?:\:|\n|$|\.)', texto)
+        md = re.search(r'(?i)(?:e\s+)?(?:levar|entreg(?:ar|á-lo|á-la|á-los|á-las)|devolver|encaminhar|transportar|deixar)\s+(?:para|no|na|ao|à|aos|às)\s+(?:o|a|os|as)?\s*(.*?)(?:\:|\n|$|\.)', texto_limpo)
         if md: destino = normalizar_local(md.group(1))
         
         if mo and md:
             start_idx = mo.end()
             end_idx = md.start()
             if start_idx < end_idx:
-                mat_text = texto[start_idx:end_idx].strip()
+                mat_text = texto_limpo[start_idx:end_idx].strip()
                 mat_text = re.sub(r'\*+', '', mat_text)
                 linhas_limpas = [l.strip().lstrip('-').strip() for l in mat_text.split('\n') if len(l.strip()) >= 2 and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para'] and not l.startswith(('![', '➡️', '→'))]
                 if linhas_limpas: materiais = " | ".join(linhas_limpas)
@@ -1332,9 +1342,25 @@ with tab_roteiro:
             pontos_necessarios = set([ponto_saida] + df_ativos["Origem"].tolist() + df_ativos["Destino"].tolist())
             locais_dict = {}
             for p in pontos_necessarios:
-                res = conn.execute("SELECT lat, lon FROM locais WHERE apelido = ?", (p,)).fetchone()
-                if res and res[0] is not None:
-                    locais_dict[p] = (res[0], res[1])
+                res = conn.execute(
+                    "SELECT endereco, lat, lon FROM locais WHERE apelido = ?",
+                    (p,)
+                ).fetchone()
+                if res and res[1] is not None and res[2] is not None:
+                    locais_dict[p] = (res[1], res[2])
+                    continue
+
+                # Os endereços padrão passam a ter o GPS resolvido na primeira
+                # rota, evitando exigir cadastro manual na Aba 2.
+                if res and res[0]:
+                    lat, lon = buscar_coordenadas(res[0])
+                    if lat is not None and lon is not None:
+                        conn.execute(
+                            "UPDATE locais SET lat = ?, lon = ? WHERE apelido = ?",
+                            (lat, lon, p)
+                        )
+                        locais_dict[p] = (lat, lon)
+            conn.commit()
             conn.close()
             
             faltando = sorted(
