@@ -6,10 +6,11 @@ import sqlite3
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from zoneinfo import ZoneInfo
 import pandas as pd
+import requests
 import streamlit as st
-import streamlit.components.v1 as components
 import folium
 from streamlit_folium import st_folium
 
@@ -23,10 +24,19 @@ st.set_page_config(
 )
 
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
-RASTREADOR_URL = "https://portal.protegeexpress.com.br/sistema/login.aspx"
+RASTREADOR_LOGIN_URLS = [
+    "https://portal.protegeexpress.com.br/sistema/login.aspx",
+    "http://portal.protegeexpress.com.br/sistema/login.aspx",
+]
+RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
 FUSO_LOCAL = ZoneInfo("America/Fortaleza")
+
+COLUNAS_DEMANDAS = [
+    "id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso",
+    "Tempo_Coleta", "Tempo_Entrega", "Supervisor"
+]
 
 UNIDADES_PROPRIAS = [
     "FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", 
@@ -299,13 +309,208 @@ def format_time(minutes):
     total = int(round(minutes))
     return f"{total // 60:02d}:{total % 60:02d}"
 
+
+# =====================================================================
+# INTEGRAÇÃO COM O RASTREADOR PROTEGE EXPRESS
+# =====================================================================
+class FormularioLoginParser(HTMLParser):
+    """Lê os campos do formulário sem depender dos nomes internos do portal."""
+
+    def __init__(self):
+        super().__init__()
+        self.action = None
+        self.inputs = []
+
+    def handle_starttag(self, tag, attrs):
+        atributos = {k: (v or "") for k, v in attrs}
+        if tag.lower() == "form" and self.action is None:
+            self.action = atributos.get("action", "")
+        elif tag.lower() == "input":
+            self.inputs.append(atributos)
+
+
+def _escolher_campo(campos, palavras):
+    if not campos:
+        return None
+    for campo in campos:
+        identificador = f"{campo.get('name', '')} {campo.get('id', '')}".lower()
+        if any(palavra in identificador for palavra in palavras):
+            return campo
+    return campos[0]
+
+
+def _montar_formulario_login(html, usuario, senha):
+    parser = FormularioLoginParser()
+    parser.feed(html)
+
+    campos_com_nome = [c for c in parser.inputs if c.get("name")]
+    campos_usuario = [
+        c for c in campos_com_nome
+        if c.get("type", "text").lower() in ("text", "email")
+    ]
+    campos_senha = [
+        c for c in campos_com_nome if c.get("type", "").lower() == "password"
+    ]
+
+    campo_usuario = _escolher_campo(
+        campos_usuario, ("usu", "user", "login", "email")
+    )
+    campo_senha = _escolher_campo(campos_senha, ("senha", "password", "pass"))
+
+    if not campo_usuario or not campo_senha:
+        raise RuntimeError("Não foi possível identificar os campos de acesso do portal.")
+
+    dados = {
+        c["name"]: c.get("value", "")
+        for c in campos_com_nome
+        if c.get("type", "").lower() == "hidden"
+    }
+    dados[campo_usuario["name"]] = usuario
+    dados[campo_senha["name"]] = senha
+
+    botoes = [
+        c for c in campos_com_nome
+        if c.get("type", "").lower() in ("submit", "button")
+    ]
+    if botoes:
+        botao = _escolher_campo(botoes, ("entr", "acess", "login", "logar"))
+        dados[botao["name"]] = botao.get("value", "Entrar")
+
+    imagens = [
+        c for c in campos_com_nome if c.get("type", "").lower() == "image"
+    ]
+    if imagens:
+        nome = imagens[0]["name"]
+        dados[f"{nome}.x"] = "10"
+        dados[f"{nome}.y"] = "10"
+
+    return parser.action, dados
+
+
+def _parsear_resposta_rastreador(texto):
+    posicoes = []
+    for registro in texto.replace("\r", "").split(";"):
+        registro = registro.strip()
+        if not registro:
+            continue
+
+        partes = registro.split("|", 8)
+        if len(partes) < 9:
+            continue
+
+        try:
+            latitude = float(partes[3])
+            longitude = float(partes[4])
+            velocidade = float(partes[5].replace(",", "."))
+        except (TypeError, ValueError):
+            continue
+
+        codigo_status = partes[6].strip().upper()
+        situacao = {
+            "P": "Parado",
+            "M": "Em movimento",
+            "L": "Ligado",
+            "D": "Desligado",
+        }.get(codigo_status, codigo_status or "Não informado")
+
+        posicoes.append({
+            "ID": partes[0].strip(),
+            "Placa": partes[1].strip(),
+            "Última atualização": partes[2].strip(),
+            "Latitude": latitude,
+            "Longitude": longitude,
+            "Velocidade (km/h)": velocidade,
+            "Situação": situacao,
+            "Código": codigo_status,
+            "Ícone": partes[7].strip(),
+            "Endereço": partes[8].strip(),
+        })
+
+    return posicoes
+
+
+def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
+    url = urllib.parse.urljoin(pagina_atual, "consultaajax_all.aspx")
+    resposta = sessao.post(
+        url,
+        params={"p1": veiculos},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": pagina_atual,
+        },
+        timeout=20,
+    )
+    resposta.raise_for_status()
+    posicoes = _parsear_resposta_rastreador(resposta.text)
+    if not posicoes:
+        raise RuntimeError("O portal não devolveu posições. A sessão pode ter expirado.")
+    return posicoes
+
+
+def autenticar_protege(usuario, senha, veiculos):
+    ultimo_erro = None
+
+    for login_url in RASTREADOR_LOGIN_URLS:
+        try:
+            sessao = requests.Session()
+            sessao.headers.update({
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/151.0 Safari/537.36"
+                )
+            })
+
+            pagina_login = sessao.get(login_url, timeout=20)
+            pagina_login.raise_for_status()
+            action, dados = _montar_formulario_login(
+                pagina_login.text, usuario, senha
+            )
+            url_post = urllib.parse.urljoin(
+                pagina_login.url, action or pagina_login.url
+            )
+            resposta_login = sessao.post(
+                url_post,
+                data=dados,
+                timeout=20,
+                allow_redirects=True,
+            )
+            resposta_login.raise_for_status()
+
+            pagina_atual = resposta_login.url
+            posicoes = consultar_posicoes_protege(
+                sessao, pagina_atual, veiculos
+            )
+            return sessao, pagina_atual, posicoes
+        except Exception as erro:
+            ultimo_erro = erro
+
+    raise RuntimeError(
+        "Não foi possível autenticar ou consultar o rastreador. "
+        "Confira usuário, senha e identificadores dos veículos."
+    ) from ultimo_erro
+
+
+def carregar_config_protege():
+    try:
+        config = st.secrets["protege"]
+        usuario = str(config.get("usuario", "")).strip()
+        senha = str(config.get("senha", "")).strip()
+        veiculos = config.get("veiculos", RASTREADOR_VEICULOS_PADRAO)
+        if isinstance(veiculos, (list, tuple)):
+            veiculos = ",".join(str(v).strip() for v in veiculos)
+        else:
+            veiculos = str(veiculos).strip()
+        return usuario, senha, veiculos
+    except Exception:
+        return "", "", RASTREADOR_VEICULOS_PADRAO
+
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
 st.title("🚚 LOGÍSTICA APROAR - Torre de Controle")
 
 if "demandas" not in st.session_state:
-    st.session_state.demandas = pd.DataFrame()
+    st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 # Painel Lateral
 with st.sidebar:
@@ -396,7 +601,10 @@ with st.sidebar:
                 conn.commit()
                 conn.close()
                 
-                st.session_state.demandas = pd.DataFrame(demandas_extraidas)
+                st.session_state.demandas = pd.DataFrame(
+                    demandas_extraidas,
+                    columns=COLUNAS_DEMANDAS
+                )
                 st.session_state['rota_gerada'] = False 
                 st.success(
                     f"✅ Sincronizado! {len(ids_concluidos_validos_hoje)} demanda(s) "
@@ -421,7 +629,6 @@ with st.sidebar:
 
 if st.session_state.demandas.empty:
     st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão vermelho **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
-    st.stop()
 
 # =====================================================================
 # ABAS PRINCIPAIS
@@ -442,32 +649,137 @@ tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_cus
 with tab_rastreador:
     st.subheader("📡 Rastreador ao Vivo — Protege Express")
     st.caption(
-        "Faça o login diretamente no painel abaixo. A sessão será mantida pelo "
-        "próprio navegador enquanto a Protege Express não a encerrar."
+        "Posições consultadas diretamente no portal e exibidas em mapa próprio. "
+        "Atualização automática a cada 30 segundos."
     )
 
-    if "rastreador_recarga" not in st.session_state:
-        st.session_state.rastreador_recarga = 0
+    usuario_protege, senha_protege, ids_veiculos = carregar_config_protege()
 
-    if st.button("🔄 Recarregar rastreador", key="btn_recarregar_rastreador"):
-        st.session_state.rastreador_recarga += 1
+    if not usuario_protege or not senha_protege:
+        st.warning(
+            "Configure o usuário e a senha da Protege Express nos Secrets do "
+            "aplicativo para ativar o login automático."
+        )
+        st.code(
+            '[protege]\n'
+            'usuario = "SEU_USUARIO"\n'
+            'senha = "SUA_SENHA"\n'
+            'veiculos = "007046861,807289138"',
+            language="toml"
+        )
+        st.info(
+            "No Streamlit, abra Settings → Secrets, cole o modelo acima, "
+            "substitua apenas usuário e senha e salve."
+        )
+    else:
+        def exibir_painel_rastreador():
+            col_status, col_atualizar = st.columns([4, 1])
+            col_status.success("🔒 Login automático configurado")
 
-    separador = "&" if "?" in RASTREADOR_URL else "?"
-    url_rastreador = (
-        f"{RASTREADOR_URL}{separador}recarregar={st.session_state.rastreador_recarga}"
-    )
+            if col_atualizar.button(
+                "🔄 Reconectar",
+                key="btn_reconectar_protege",
+                use_container_width=True
+            ):
+                st.session_state.pop("protege_sessao", None)
+                st.session_state.pop("protege_pagina", None)
 
-    components.iframe(
-        url_rastreador,
-        height=760,
-        scrolling=True
-    )
+            try:
+                sessao = st.session_state.get("protege_sessao")
+                pagina = st.session_state.get("protege_pagina")
 
-    st.caption(
-        "Se a área acima aparecer em branco ou mostrar que recusou a conexão, "
-        "significa que o portal bloqueia páginas incorporadas. Nesse caso, a "
-        "Protege Express precisará liberar a incorporação ou fornecer uma API."
-    )
+                if sessao is None or not pagina:
+                    sessao, pagina, posicoes = autenticar_protege(
+                        usuario_protege,
+                        senha_protege,
+                        ids_veiculos
+                    )
+                    st.session_state["protege_sessao"] = sessao
+                    st.session_state["protege_pagina"] = pagina
+                else:
+                    try:
+                        posicoes = consultar_posicoes_protege(
+                            sessao, pagina, ids_veiculos
+                        )
+                    except Exception:
+                        sessao, pagina, posicoes = autenticar_protege(
+                            usuario_protege,
+                            senha_protege,
+                            ids_veiculos
+                        )
+                        st.session_state["protege_sessao"] = sessao
+                        st.session_state["protege_pagina"] = pagina
+
+                velocidades = [p["Velocidade (km/h)"] for p in posicoes]
+                em_movimento = sum(1 for v in velocidades if v > 0)
+
+                met1, met2, met3 = st.columns(3)
+                met1.metric("Veículos localizados", len(posicoes))
+                met2.metric("Em movimento", em_movimento)
+                met3.metric(
+                    "Última leitura",
+                    datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
+                )
+
+                centro_lat = sum(p["Latitude"] for p in posicoes) / len(posicoes)
+                centro_lon = sum(p["Longitude"] for p in posicoes) / len(posicoes)
+                mapa = folium.Map(
+                    location=[centro_lat, centro_lon],
+                    zoom_start=11,
+                    tiles="OpenStreetMap"
+                )
+
+                limites = []
+                for posicao in posicoes:
+                    em_rota = posicao["Velocidade (km/h)"] > 0
+                    cor = "green" if em_rota else "red"
+                    icone = "play" if em_rota else "stop"
+                    limites.append([posicao["Latitude"], posicao["Longitude"]])
+
+                    popup = (
+                        f"<b>{posicao['Placa']}</b><br>"
+                        f"{posicao['Situação']} — "
+                        f"{posicao['Velocidade (km/h)']:.0f} km/h<br>"
+                        f"Atualização: {posicao['Última atualização']}<br>"
+                        f"{posicao['Endereço']}"
+                    )
+                    folium.Marker(
+                        [posicao["Latitude"], posicao["Longitude"]],
+                        popup=folium.Popup(popup, max_width=360),
+                        tooltip=f"{posicao['Placa']} — {posicao['Situação']}",
+                        icon=folium.Icon(color=cor, icon=icone, prefix="fa")
+                    ).add_to(mapa)
+
+                if len(limites) > 1:
+                    mapa.fit_bounds(limites, padding=(35, 35))
+
+                st_folium(
+                    mapa,
+                    height=520,
+                    use_container_width=True,
+                    returned_objects=[],
+                    key="mapa_rastreador_protege"
+                )
+
+                tabela = pd.DataFrame(posicoes)[[
+                    "Placa", "Última atualização", "Velocidade (km/h)",
+                    "Situação", "Endereço"
+                ]]
+                st.dataframe(tabela, use_container_width=True, hide_index=True)
+
+            except Exception:
+                st.session_state.pop("protege_sessao", None)
+                st.session_state.pop("protege_pagina", None)
+                st.error(
+                    "Não consegui entrar automaticamente no rastreador. "
+                    "Confira as credenciais e os identificadores cadastrados "
+                    "nos Secrets."
+                )
+
+        if hasattr(st, "fragment"):
+            st.fragment(run_every="30s")(exibir_painel_rastreador)()
+        else:
+            exibir_painel_rastreador()
 
 # -------------------------------------------------------------
 # ABA: DEMANDAS ATIVAS
@@ -673,8 +985,15 @@ with tab_teams:
 # -------------------------------------------------------------
 with tab_roteiro:
     df_ativos = st.session_state.demandas
+
+    if df_ativos.empty:
+        st.info("Sincronize o Trello para carregar demandas antes de calcular a rota.")
     
-    if st.button("🚀 Calcular Rota Otimizada", type="primary"):
+    if st.button(
+        "🚀 Calcular Rota Otimizada",
+        type="primary",
+        disabled=df_ativos.empty
+    ):
         with st.spinner("Analisando grupamentos e traçando rota anti zigue-zague..."):
             
             conn = sqlite3.connect(DB_FILE)
