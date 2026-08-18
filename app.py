@@ -25,6 +25,118 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
+def aplicar_estilo_customizado():
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        /* Fonte global e cores de texto */
+        html, body, [class*="css"], .stMarkdown, .stText, p, span, div, h1, h2, h3, h4, h5, h6 {
+            font-family: 'Inter', sans-serif !important;
+            color: #e4e8f4;
+        }
+
+        /* Fundo do App e Barra Lateral */
+        [data-testid="stAppViewContainer"] {
+            background-color: #080b1a !important;
+        }
+        [data-testid="stSidebar"] {
+            background-color: #0d1025 !important;
+            border-right: 1px solid rgba(64,116,146,.2) !important;
+        }
+        [data-testid="stHeader"] {
+            background-color: rgba(8, 11, 26, 0.8) !important;
+            backdrop-filter: blur(5px);
+        }
+
+        /* Botão Primário (Azul/Steel) */
+        [data-testid="baseButton-primary"] {
+            background-color: #407492 !important;
+            color: white !important;
+            border: 1px solid #407492 !important;
+            border-radius: 5px !important;
+            transition: all .15s;
+        }
+        [data-testid="baseButton-primary"]:hover {
+            background-color: #4e8aaa !important;
+            border-color: #5b9db8 !important;
+        }
+
+        /* Botão Secundário (Transparente/Cinza) */
+        [data-testid="baseButton-secondary"] {
+            background-color: transparent !important;
+            color: #8da0b8 !important;
+            border: 1px solid rgba(64,116,146,.35) !important;
+            border-radius: 5px !important;
+            transition: all .15s;
+        }
+        [data-testid="baseButton-secondary"]:hover {
+            background-color: rgba(64,116,146,.1) !important;
+            color: #e4e8f4 !important;
+            border-color: #407492 !important;
+        }
+
+        /* Inputs de Texto, Data e Selects */
+        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div {
+            background-color: #171c3a !important;
+            border: 1px solid rgba(64,116,146,.2) !important;
+            color: #e4e8f4 !important;
+            border-radius: 5px !important;
+        }
+        
+        /* Modificando o fundo da Tabela de Dados (Data Editor) */
+        [data-testid="stDataFrame"] {
+            background-color: #121530 !important;
+            border-radius: 7px;
+            padding: 5px;
+            border: 1px solid rgba(64,116,146,.2);
+        }
+
+        /* Modificando Containers com Borda (Cards) */
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            background-color: #121530 !important;
+            border: 1px solid rgba(64,116,146,.2) !important;
+            border-radius: 7px !important;
+        }
+
+        /* Estilização das Abas (Tabs) */
+        [data-testid="stTabs"] button[role="tab"] {
+            font-family: 'Inter', sans-serif !important;
+            font-weight: 600 !important;
+            color: #8da0b8 !important;
+            background-color: transparent !important;
+        }
+        [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+            color: #5b9db8 !important;
+            border-bottom-color: #5b9db8 !important;
+        }
+
+        /* Caixas de Alerta (Info, Success, Warning, Error) */
+        [data-testid="stAlert"] {
+            border-radius: 7px !important;
+            border: 1px solid rgba(64,116,146,.2) !important;
+            background-color: #121530 !important;
+        }
+        
+        /* Esconder ícone do GitHub no canto superior */
+        .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob,
+        .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137,
+        .viewerBadge_text__1JaDK {
+            display: none !important;
+        }
+        
+        /* Deixar texto das métricas bonito */
+        [data-testid="stMetricValue"] {
+            color: #e4e8f4 !important;
+            font-family: 'DM Mono', monospace !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+aplicar_estilo_customizado()
+# ---------------------------------------------------------------------
+
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = [
     "https://portal.protegeexpress.com.br/sistema/login.aspx",
@@ -35,7 +147,7 @@ DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
 FUSO_LOCAL = ZoneInfo("America/Fortaleza")
 INICIO_EXPEDIENTE_MIN = 7 * 60
-INICIO_ROTA_MIN = 7 * 60 + 30  # Ajustado para 07:30
+INICIO_ROTA_MIN = 7 * 60 + 30  
 FIM_EXPEDIENTE_MIN = 17 * 60
 INICIO_ALMOCO_MIN = 12 * 60
 DURACAO_ALMOCO_MIN = 60
@@ -298,6 +410,7 @@ def disparar_teams(webhook_url, titulo, mensagem):
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
 def mover_cartao_trello(card_id):
+    """Envia requisição para a API do Trello para mover o cartão de lista."""
     conn = sqlite3.connect(DB_FILE)
     cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
     conn.close()
@@ -1147,6 +1260,7 @@ with tab_demandas:
                             mensagem
                         )
                     
+                    # Feedback Integrado
                     if trello_ok:
                         st.success("✅ Cartão movido para Concluídas no Trello com sucesso!")
                         if teams_ok:
@@ -1260,6 +1374,11 @@ with tab_enderecos:
             st.rerun()
     else:
         st.info("Não há locais disponíveis para remoção.")
+
+    st.caption(
+        "O Escritório e o Almoxarifado são protegidos porque são usados como "
+        "ponto-base das rotas. Um local removido pode ser cadastrado novamente acima."
+    )
 
 # -------------------------------------------------------------
 # ABA: FECHAMENTO MENSAL E CUSTOS
@@ -1599,16 +1718,13 @@ with tab_roteiro:
                     carrying.append(t)
                     service_mins += t['Tempo_Coleta']
 
-                # --- AJUSTE CARREGAMENTO MATINAL NO PONTO DE SAÍDA ---
-                # Se estamos na primeira parada, e ela é o Ponto de Saída (o escritório),
-                # então as coletas já foram separadas pelo Almoxarife das 07:00 às 07:30.
                 is_start_load = (best_point == ponto_saida and current_time == INICIO_ROTA_MIN and not any(a[0] == "ENTREGAR" for a in actions_here))
                 
                 if is_start_load:
                     chegada_str = "07:00"
                     saida_str = "07:30"
                     tempo_local_exibicao = 30
-                    service_mins = 0 # O carregamento absorveu os minutos antes de 07:30
+                    service_mins = 0
                 else:
                     chegada_str = format_time(current_time)
                     saida_str = format_time(current_time + service_mins)
@@ -1814,7 +1930,6 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
-            # --- PAINEL INTELIGENTE DE FECHAMENTO DE KM ---
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
@@ -1848,7 +1963,6 @@ with tab_roteiro:
                     conn.close()
                     st.success(f"✅ {km_real:.1f} km registrados para o fechamento de custos!")
 
-            # --- BOTÃO TEAMS ---
             url_geral, _ = obter_webhook_teams("Geral / Logística")
             if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
@@ -1878,14 +1992,12 @@ with tab_roteiro:
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12)
             path_points = []
             
-            # Ajuste de dispersão para pinos que caem na mesma coordenada exata
             offsets_dict = {}
             def apply_offset(lat, lon):
                 key = (round(lat, 4), round(lon, 4))
                 offsets_dict[key] = offsets_dict.get(key, 0) + 1
                 cnt = offsets_dict[key]
                 if cnt > 1:
-                    # Desloca a bolinha sutilmente para enxergar o número abaixo
                     return lat - 0.00035 * (cnt - 1), lon + 0.00035 * (cnt - 1)
                 return lat, lon
 
@@ -1947,7 +2059,6 @@ with tab_roteiro:
             if len(path_points) > 1:
                 m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
 
-            # Início da rota no mapa sempre fica no topo do index visual
             if p_saida in locais_dict:
                 lat_s, lon_s = path_points[0]
                 folium.Marker(
