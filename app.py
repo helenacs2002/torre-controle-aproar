@@ -392,22 +392,6 @@ def disparar_teams(webhook_url, titulo, mensagem):
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
-def mover_cartao_trello(card_id):
-    conn = sqlite3.connect(DB_FILE)
-    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
-    conn.close()
-    
-    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
-        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
-        
-    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
-    try:
-        req = urllib.request.Request(url, method='PUT')
-        urllib.request.urlopen(req, timeout=5)
-        return True, "Movido com sucesso!"
-    except Exception as e:
-        return False, f"Erro de comunicação com o Trello: {e}"
-
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
@@ -1165,10 +1149,10 @@ with tab_integ:
     conn.close()
 
 # -------------------------------------------------------------
-# ABA: ROTEIRO E MAPA (COM CORTE DE EXPEDIENTE)
+# ABA: ROTEIRO E MAPA (COM LINK GOOGLE MAPS)
 # -------------------------------------------------------------
 with tab_roteiro:
-    if st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR:
+    if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR):
         st.session_state['rota_gerada'] = False
 
     df_ativos = st.session_state.demandas.copy()
@@ -1344,6 +1328,12 @@ with tab_roteiro:
         p_saida = st.session_state['p_saida']
         horario_conclusao_min = st.session_state.get('horario_conclusao_min')
         
+        # Garante a reconstrução da ordem de coordenadas exatas
+        coords_ordenadas_rota = [locais_dict[p_saida]]
+        for step in route_steps:
+            destino_step = step.get("destino")
+            if destino_step in locais_dict: coords_ordenadas_rota.append(locais_dict[destino_step])
+
         if st.session_state.get('demandas_adiadas'):
             st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã. Isso garante que o Davi não ultrapasse o fim do expediente (17:00).")
         
@@ -1434,6 +1424,23 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
+            # --- INÍCIO DO GERADOR DE LINK DO GOOGLE MAPS ---
+            if len(coords_ordenadas_rota) > 1:
+                origem_str = f"{coords_ordenadas_rota[0][0]},{coords_ordenadas_rota[0][1]}"
+                destino_str = f"{coords_ordenadas_rota[-1][0]},{coords_ordenadas_rota[-1][1]}"
+                waypoints_list = [f"{lat},{lon}" for lat, lon in coords_ordenadas_rota[1:-1]]
+                
+                # O Google Maps aceita no máximo 9 paradas intermediárias num link via URL
+                waypoints_str = "|".join(waypoints_list[:9]) 
+                
+                link_maps = f"https://www.google.com/maps/dir/?api=1&origin={origem_str}&destination={destino_str}&travelmode=driving"
+                if waypoints_str:
+                    link_maps += f"&waypoints={waypoints_str}"
+                
+                texto_whatsapp += "\n🗺️ *LINK DO GPS PARA ESTA ROTA:*\n"
+                texto_whatsapp += f"Clique aqui para abrir no mapa: {link_maps}\n"
+            # --- FIM DO GERADOR DE LINK DO GOOGLE MAPS ---
+
             # FECHAMENTO REALISTA DE KM DA ROTA
             st.divider()
             with st.form("fechamento_km_rota"):
@@ -1466,7 +1473,8 @@ with tab_roteiro:
                         f"**Previsão de conclusão:** {horario_conclusao}\n\n"
                         f"**Situação após a rota:** {status_expediente}\n\n"
                         f"**Total de paradas:** {num_parada-1}\n\n"
-                        f"**Quilometragem Planejada:** {total_km:.1f} km"
+                        f"**Quilometragem Planejada:** {total_km:.1f} km\n\n"
+                        f"[Abrir GPS da Rota]({link_maps})"
                     )
                     enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Liberado!", resumo)
                     if enviado: st.success("✅ Roteiro enviado para o grupo Geral!")
@@ -1520,6 +1528,11 @@ with tab_roteiro:
                         icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">{num_str}</div>''')
                     ).add_to(m)
                     p_num += 1
+
+            geometria_rota = st.session_state.get('geometria_rota')
+            geometria_viaria = st.session_state.get('geometria_viaria', False)
+            if not geometria_rota:
+                geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordenadas_rota)
 
             if geometria_viaria and len(geometria_rota) > 1:
                 folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85, tooltip="Trajeto planejado").add_to(m)
