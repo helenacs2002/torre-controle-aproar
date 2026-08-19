@@ -99,8 +99,6 @@ def format_mins_to_time(mins):
 
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
-    
-    # ZONA NEUTRA: Se o relógio do seu PC/nuvem está no horário de almoço agora, empurra o cálculo pra depois
     agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
     
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
@@ -312,7 +310,7 @@ RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.asp
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
 INICIO_EXPEDIENTE_MIN = 7 * 60
-INICIO_ROTA_MIN = 8 * 60 + 44  # TIF-2123 (Strada) iniciou às 08:44
+INICIO_ROTA_MIN = 8 * 60 + 44  
 FIM_EXPEDIENTE_MIN = 17 * 60
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor"]
@@ -350,13 +348,19 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)''')
     try: c.execute("ALTER TABLE historico_concluidos ADD COLUMN hora_conclusao TEXT")
     except: pass 
-    c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
     
-    # === INJEÇÃO DA HORA DE PARTIDA COM A PLACA EXATA TIF-2123 ===
+    # ATUALIZAÇÃO DA SEPARAÇÃO DE VEÍCULOS (STRADA / L200)
+    try: c.execute("ALTER TABLE abastecimentos ADD COLUMN veiculo TEXT DEFAULT 'Strada'")
+    except: pass
+    try: c.execute("ALTER TABLE registro_km ADD COLUMN veiculo TEXT DEFAULT 'Strada'")
+    except: pass
+    
+    # Corrige os registros antigos da Borracharia pra L200 automaticamente
+    c.execute("UPDATE abastecimentos SET veiculo = 'L200' WHERE UPPER(obs) LIKE '%DEDÉ%' OR UPPER(obs) LIKE '%DEDE%' OR UPPER(obs) LIKE '%L200%'")
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF-2123', ?, '08:44')", (DATA_HOJE_REAL_STR,))
-    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF2123', ?, '08:44')", (DATA_HOJE_REAL_STR,))
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC-3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
-    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
     
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
@@ -544,7 +548,6 @@ def extrair_dados_completos(texto, card_name):
     
     if texto:
         texto_limpo = re.sub(r'[*_`]+', '', texto).strip()
-        
         if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
             if unidade:
                 origem = unidade
@@ -663,7 +666,12 @@ def _parsear_resposta_rastreador(texto):
             latitude, longitude, velocidade = float(partes[3]), float(partes[4]), float(partes[5].replace(",", "."))
         except: continue
         codigo_status = partes[6].strip().upper()
-        posicoes.append({"ID": partes[0].strip(), "Placa": partes[1].strip(), "Última atualização": partes[2].strip(), "Latitude": latitude, "Longitude": longitude, "Velocidade (km/h)": velocidade, "Situação": {"P": "Parado", "M": "Em movimento", "L": "Ligado", "D": "Desligado"}.get(codigo_status, codigo_status or "Não informado"), "Código": codigo_status, "Ícone": partes[7].strip(), "Endereço": partes[8].strip()})
+        
+        placa = partes[1].strip().upper()
+        if placa.startswith("TIF"): placa = "TIF-2123"
+        elif placa.startswith("OSC"): placa = "OSC-3842"
+        
+        posicoes.append({"ID": partes[0].strip(), "Placa": placa, "Última atualização": partes[2].strip(), "Latitude": latitude, "Longitude": longitude, "Velocidade (km/h)": velocidade, "Situação": {"P": "Parado", "M": "Em movimento", "L": "Ligado", "D": "Desligado"}.get(codigo_status, codigo_status or "Não informado"), "Código": codigo_status, "Ícone": partes[7].strip(), "Endereço": partes[8].strip()})
     return posicoes
 
 def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
@@ -963,43 +971,55 @@ with tab_custos:
         st.markdown("#### ⛽ Lançar Recibo de Gasto")
         with st.form("form_recibo", clear_on_submit=True):
             f_data = st.date_input("Data do Recibo")
+            fc_veic = st.selectbox("Veículo do Gasto", ["Strada", "L200"])
             fc1, fc2 = st.columns(2)
-            f_litros, f_valor = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1), fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
+            f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
+            f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
             f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
             f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
             if st.form_submit_button("Lançar no Caixa"):
-                conn.execute("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs) VALUES (?, ?, ?, ?, ?)", (f_data.strftime("%d/%m/%Y"), f_litros, f_valor, f_manut, f_obs))
+                conn.execute("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (?, ?, ?, ?, ?, ?)", (f_data.strftime("%d/%m/%Y"), f_litros, f_valor, f_manut, f_obs, fc_veic))
                 conn.commit(); st.success("Recibo salvo com sucesso!")
 
     with col_km:
         st.markdown("#### 🛣️ Lançar KMs Avulsos")
         with st.form("form_km", clear_on_submit=True):
-            k_data, k_km, k_obs = st.date_input("Data da Corrida"), st.number_input("Total de KM Rodado", min_value=0.1, step=1.0), st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
+            k_data = st.date_input("Data da Corrida")
+            k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
+            k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
+            k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
             if st.form_submit_button("Lançar KMs"):
-                conn.execute("INSERT INTO registro_km (data, km, obs) VALUES (?, ?, ?)", (k_data.strftime("%d/%m/%Y"), k_km, k_obs))
+                conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (k_data.strftime("%d/%m/%Y"), k_km, k_obs, k_veic))
                 conn.commit(); st.success(f"{k_km} km salvos com sucesso!")
 
     st.divider()
     st.markdown("#### 📊 Painel de Fechamento (Mês Atual)")
     mes_atual_str = AGORA_REAL.strftime("%m/%Y")
     
-    df_km = pd.read_sql_query("SELECT data, km FROM registro_km", conn)
+    df_km = pd.read_sql_query("SELECT * FROM registro_km", conn)
+    if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
     df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
     km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str]['km'].sum()
     
-    df_abastec = pd.read_sql_query("SELECT data, litros, valor_litro, manutencao FROM abastecimentos", conn)
+    df_abastec = pd.read_sql_query("SELECT * FROM abastecimentos", conn)
+    if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
     df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
     df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
     
     gasto_gasolina_mes = (df_abastec_mes['litros'] * df_abastec_mes['valor_litro']).sum() if not df_abastec_mes.empty else 0.0
-    gasto_manutencao_mes = df_abastec_mes['manutencao'].sum() if not df_abastec_mes.empty else 0.0
-    custo_real_por_km = ((gasto_gasolina_mes + gasto_manutencao_mes) / km_mes) if km_mes > 0 else 0.0
+    
+    manut_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']['manutencao'].sum() if not df_abastec_mes.empty else 0.0
+    manut_l200 = df_abastec_mes[df_abastec_mes['veiculo'] == 'L200']['manutencao'].sum() if not df_abastec_mes.empty else 0.0
+    gasto_manutencao_total = manut_strada + manut_l200
+    
+    custo_real_por_km = ((gasto_gasolina_mes + gasto_manutencao_total) / km_mes) if km_mes > 0 else 0.0
 
-    met1, met2, met3, met4 = st.columns(4)
-    met1.metric("KM Total Rodado", f"{km_mes:.1f} km", f"Mês: {mes_atual_str}", delta_color="off")
-    met2.metric("Gasto com Gasolina", f"R$ {gasto_gasolina_mes:.2f}", "Pelo recibo", delta_color="inverse")
-    met3.metric("Gasto em Manutenção", f"R$ {gasto_manutencao_mes:.2f}", "Pelo recibo", delta_color="inverse")
-    met4.metric("CUSTO REAL / KM", f"R$ {custo_real_por_km:.2f}", "Mais barato que frete!" if custo_real_por_km <= 1.50 else "Atenção: Carro caro!", delta_color="normal" if custo_real_por_km <= 1.50 else "inverse")
+    met1, met2, met3, met4, met5 = st.columns(5)
+    met1.metric("KM Rodado (Geral)", f"{km_mes:.1f} km", f"Mês: {mes_atual_str}", delta_color="off")
+    met2.metric("Gasolina (Geral)", f"R$ {gasto_gasolina_mes:.2f}", "Recibos", delta_color="inverse")
+    met3.metric("Manutenção Strada", f"R$ {manut_strada:.2f}", "Strada", delta_color="inverse")
+    met4.metric("Manutenção L200", f"R$ {manut_l200:.2f}", "L200", delta_color="inverse")
+    met5.metric("CUSTO REAL / KM", f"R$ {custo_real_por_km:.2f}", "Mais barato que frete!" if custo_real_por_km <= 1.50 else "Atenção: Carro caro!", delta_color="normal" if custo_real_por_km <= 1.50 else "inverse")
     conn.close()
 
 with tab_integ:
@@ -1295,11 +1315,12 @@ with tab_roteiro:
                 else: st.success("✅ Todas as demandas desta rota foram devidamente concluídas hoje!")
                     
                 km_real = st.number_input("KM Efetivamente Rodado na Rota", value=float(total_km), step=1.0)
+                veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
                 if st.form_submit_button("Gravar KM no Painel de Custos"):
                     conn = sqlite3.connect(DB_FILE)
-                    conn.execute("INSERT INTO registro_km (data, km, obs) VALUES (?, ?, ?)", (DATA_REF_ROTA_STR, km_real, f"Fechamento Automático ({acoes_concluidas}/{total_acoes})"))
+                    conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (DATA_REF_ROTA_STR, km_real, f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", veiculo_fechamento))
                     conn.commit(); conn.close()
-                    st.success(f"✅ {km_real:.1f} km registrados!")
+                    st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento}!")
 
             url_geral, _ = obter_webhook_teams("Geral / Logística")
             if url_geral:
