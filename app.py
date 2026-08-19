@@ -81,7 +81,7 @@ def aplicar_estilo_customizado():
 aplicar_estilo_customizado()
 
 # =====================================================================
-# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO (COM ALMOÇO 12h-13h)
+# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO Waze (COM ALMOÇO TRAVADO)
 # =====================================================================
 def parse_time_to_mins(time_str):
     if not time_str: return 0
@@ -132,13 +132,18 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             step['is_concluded'] = True
         else:
             travel = step.get('travel_mins', 0)
+            
+            # Trava do horário de almoço na linha do tempo dinâmica
+            if 12*60 <= current_min < 13*60:
+                current_min = 13*60
+                
             arr_min = current_min + travel
             
-            # Pausa de almoço (12:00 às 13:00)
-            if current_min < (12 * 60) and arr_min >= (12 * 60):
-                arr_min += 60
+            if current_min < 12*60 and arr_min >= 12*60:
+                arr_min += 60 # Empurra chegada pra depois do almoço
             
-            if arr_min < agora_min: arr_min = agora_min
+            if arr_min < agora_min: 
+                arr_min = agora_min
                 
             service = step.get('tempo_local', 0)
             dep_min = arr_min + service
@@ -150,44 +155,10 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             
     return route_steps, current_min
 
-def calcular_eta_dinamico(route_steps, dict_concluidos, p_saida):
-    if DATA_REF_ROTA_STR != DATA_HOJE_REAL_STR:
-        return None, None, None
-        
-    minutos_restantes = 0
-    achou_pendente = False
-
-    for i, step in enumerate(route_steps):
-        if step['type'] == 'lunch':
-            if achou_pendente:
-                if AGORA_REAL.hour < 12: minutos_restantes += 60
-                elif AGORA_REAL.hour == 12: minutos_restantes += (60 - AGORA_REAL.minute)
-            continue
-            
-        if step['type'] == 'return':
-            if achou_pendente: minutos_restantes += step.get('travel_mins', 0)
-            continue
-            
-        acoes_pendentes = [t for a, t in step.get('actions', []) if str(t.get('id', '')) not in dict_concluidos]
-        if acoes_pendentes: achou_pendente = True
-            
-        if achou_pendente:
-            minutos_restantes += step.get('travel_mins', 0)
-            minutos_restantes += step.get('tempo_local', 0)
-            
-    if not achou_pendente: return AGORA_REAL.strftime("%H:%M"), "✅ Rota Concluída", None
-        
-    minutos_agora = AGORA_REAL.hour * 60 + AGORA_REAL.minute
-    base_dt = AGORA_REAL.replace(hour=7, minute=30) if minutos_agora < (7 * 60 + 30) else AGORA_REAL
-    nova_previsao_dt = base_dt + timedelta(minutes=minutos_restantes)
-    return AGORA_REAL.strftime("%H:%M"), nova_previsao_dt.strftime("%H:%M"), nova_previsao_dt
-
-def renderizar_banner_eta(hora_atual_str, nova_previsao_str, nova_previsao_dt):
+def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     if not hora_atual_str: return
-    if nova_previsao_dt is None: cor_previsao = "#16a34a"
-    else:
-        minutos_prev = nova_previsao_dt.hour * 60 + nova_previsao_dt.minute
-        cor_previsao = "#16a34a" if minutos_prev <= (17 * 60) else "#f59e0b" if minutos_prev <= (17 * 60 + 30) else "#ef4444"
+    
+    cor_previsao = "#16a34a" if final_dyn_min <= (17 * 60) else "#f59e0b" if final_dyn_min <= (17 * 60 + 30) else "#ef4444"
             
     st.markdown(f'''
     <div style="background-color: #121530; padding: 12px 20px; border-radius: 8px; border: 1px solid rgba(64,116,146,.4); display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -227,8 +198,8 @@ if modo_url == "true":
         df_mobile = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:44"
-    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "08:44"
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
+    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "07:30"
     conn.close()
 
     if not res:
@@ -243,6 +214,7 @@ if modo_url == "true":
     p_saida = route_steps[0]['destino'] if route_steps else ""
 
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
+    renderizar_banner_eta(AGORA_REAL.strftime("%H:%M"), format_mins_to_time(final_dyn_min), final_dyn_min)
 
     st.markdown(f"#### Roteiro Passo a Passo ({total_km:.1f} km)")
     p_num = 1
@@ -252,7 +224,7 @@ if modo_url == "true":
             st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
             continue
         if step['type'] == 'return':
-            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada: {step['chegada']})")
+            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
             continue
 
         is_start = (i == 0 and step['destino'] == p_saida)
@@ -332,7 +304,7 @@ RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.asp
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
 INICIO_EXPEDIENTE_MIN = 7 * 60
-INICIO_ROTA_MIN = 8 * 60 + 44  # TIF (Strada) iniciou às 08:44
+INICIO_ROTA_MIN = 7 * 60 + 30  
 FIM_EXPEDIENTE_MIN = 17 * 60
 INICIO_ALMOCO_MIN = 12 * 60
 DURACAO_ALMOCO_MIN = 60
@@ -373,9 +345,11 @@ def inicializar_bd():
     try: c.execute("ALTER TABLE historico_concluidos ADD COLUMN hora_conclusao TEXT")
     except: pass 
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
-    # TIF (Strada) iniciou às 08:44
+    
+    # === INJEÇÃO DA HORA DE PARTIDA CONFORME SEU PEDIDO ===
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF', ?, '08:44')", (DATA_HOJE_REAL_STR,))
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC-3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
+    
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS rota_ativa (id INTEGER PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)''')
@@ -545,6 +519,7 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
+# === LÓGICA DE EXTRAÇÃO COM TRANSBORDOS ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -562,6 +537,8 @@ def extrair_dados_completos(texto, card_name):
     
     if texto:
         texto_limpo = re.sub(r'[*_`]+', '', texto).strip()
+        
+        # Inteligência de Transbordo
         if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
             if unidade:
                 origem = unidade
@@ -737,6 +714,7 @@ def loop_automacoes_background():
                     url_webhook, _ = obter_webhook_teams(destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name)
                     hora_str = momento_conclusao.strftime("%H:%M")
 
+                    # ANTI-SPAM (MÁXIMO 5 MINUTOS DE ATRASO PARA AVISAR NO TEAMS)
                     if (agora_loop - momento_conclusao).total_seconds() / 60 <= 5 and url_webhook:
                         disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n" + f"**Obra:** {short_name}\n\n**Local:** {destino}\n\n**Materiais:** {materiais}\n\n**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}")
 
@@ -1062,8 +1040,10 @@ with tab_roteiro:
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
+            
+            res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
+            current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 44)
             current_point = ponto_saida
-            current_time_tsp = 8 * 60 + 44  # Início real TIF (Strada)
 
             rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_HOJE_REAL_STR,)).fetchone()
             if rota_salva and len(dict_concluidos_torre) > 0:
@@ -1117,6 +1097,7 @@ with tab_roteiro:
             total_km = sum(p_step.get('dist', 0.0) for p_step in past_route_steps)
             
             current_time = current_time_tsp
+            lunch_taken = any(s.get('type') == 'lunch' for s in past_route_steps)
 
             while unpicked or carrying:
                 if current_time >= 15 * 60 + 30: 
@@ -1145,6 +1126,16 @@ with tab_roteiro:
                     if d < 0.1: score = -1.0
                     if score < min_score: min_score, best_point, best_dist, best_dur = score, p, d, dur
 
+                # INJEÇÃO ESTRITA DO HORÁRIO DE ALMOÇO NA CRIAÇÃO DA ROTA
+                if current_time < (12 * 60) and (current_time + best_dur) >= (12 * 60) and not lunch_taken:
+                    route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
+                    current_time = 13 * 60
+                    lunch_taken = True
+                elif current_time >= (12 * 60) and current_time < (13 * 60) and not lunch_taken:
+                    route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
+                    current_time = 13 * 60
+                    lunch_taken = True
+
                 current_time += best_dur
                 total_km += best_dist
                 actions_here, service_mins = [], 0
@@ -1154,10 +1145,10 @@ with tab_roteiro:
                 for t in [t for t in unpicked if t['Origem'] == best_point]:
                     actions_here.append(("COLETAR", t)); unpicked.remove(t); carrying.append(t); service_mins += t['Tempo_Coleta']
 
-                is_start_load = (best_point == ponto_saida and current_time == (8 * 60 + 44) and not any(a[0] == "ENTREGAR" for a in actions_here) and len(past_route_steps) == 0)
+                is_start_load = (best_point == ponto_saida and current_time == current_time_tsp and not any(a[0] == "ENTREGAR" for a in actions_here) and len(past_route_steps) == 0)
                 
                 if is_start_load:
-                    chegada_str, saida_str, tempo_local_exibicao = "08:30", "08:44", 14
+                    chegada_str, saida_str, tempo_local_exibicao = format_time(current_time_tsp - 30), format_time(current_time_tsp), 30
                     service_mins = 0
                 else:
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(current_time + service_mins), service_mins
@@ -1206,7 +1197,7 @@ with tab_roteiro:
         df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:44"
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
         conn.close()
 
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
@@ -1214,15 +1205,19 @@ with tab_roteiro:
         col_esq, col_dir = st.columns([1.2, 0.8])
         with col_esq:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
-            st.caption("🕖 Expediente: 07:00 às 17:00  •  Início da Rota (TIF - Strada): 08:44")
+            st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
 
             hora_atual_str, nova_previsao_str, nova_previsao_dt = calcular_eta_dinamico(route_steps, dict_concluidos_torre, p_saida)
-            renderizar_banner_eta(hora_atual_str, nova_previsao_str, nova_previsao_dt)
+            renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
             
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🏁 Saída: {p_saida} (08:44)\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
+            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🏁 Saída do Pátio: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
             for i, step in enumerate(route_steps):
+                if step['type'] == 'lunch':
+                    st.warning(f"🍔 **Pausa para Almoço** (Previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
+                    texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
+                    continue
                 if step['type'] == 'return':
                     st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
                     texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
@@ -1237,7 +1232,7 @@ with tab_roteiro:
 
                     if is_start:
                         st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}**")
-                        st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']}", unsafe_allow_html=True)
+                        st.caption(f"{status_tempo} | Base original: {step['chegada']} às {step['saida']}", unsafe_allow_html=True)
                         texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n"
                     else:
                         st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}**")
@@ -1260,7 +1255,7 @@ with tab_roteiro:
             horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
-            st.success(f"📍 **Planejamento Original:** Término às {horario_base_fim}.")
+            st.success(f"📍 **Planejamento Original (Se saísse no horário):** Término às {horario_base_fim}.")
             if final_dyn_min <= 17 * 60: st.info(f"🟢 **Previsão Real Atualizada:** Término às {horario_dyn_fim} (Dentro do expediente).")
             else: st.warning(f"⚠️ **Previsão Real Atualizada:** Término às {horario_dyn_fim} (Vai gerar hora extra!).")
 
@@ -1269,8 +1264,9 @@ with tab_roteiro:
             if len(route_steps) > 1:
                 waypts_addr = []
                 for s in route_steps:
-                    addr = enderecos_dict.get(s['destino'], "")
-                    waypts_addr.append(urllib.parse.quote(addr) if addr and not addr.startswith("http") else f"{locais_dict[s['destino']][0]},{locais_dict[s['destino']][1]}")
+                    if s['type'] != 'lunch':
+                        addr = enderecos_dict.get(s['destino'], "")
+                        waypts_addr.append(urllib.parse.quote(addr) if addr and not addr.startswith("http") else f"{locais_dict[s['destino']][0]},{locais_dict[s['destino']][1]}")
                 link_maps = f"https://www.google.com/maps/dir/?api=1&origin={waypts_addr[0]}&destination={waypts_addr[-1]}&travelmode=driving"
                 if len(waypts_addr) > 2: link_maps += f"&waypoints={'|'.join(waypts_addr[1:-1][:9])}"
                 texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
@@ -1278,7 +1274,7 @@ with tab_roteiro:
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
-                total_acoes = sum(len(step.get('actions', [])) for step in route_steps)
+                total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
                 acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
                 
                 if acoes_concluidas < total_acoes: st.warning(f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** demandas da rota foram concluídas hoje.")
@@ -1294,7 +1290,7 @@ with tab_roteiro:
             url_geral, _ = obter_webhook_teams("Geral / Logística")
             if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
+                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio:** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
                     enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
                     if enviado: st.success("✅ Roteiro enviado!")
                     else: st.error(f"Erro ao enviar: {detalhe}")
