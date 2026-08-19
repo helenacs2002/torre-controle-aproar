@@ -40,8 +40,6 @@ else:
 # Data de hoje para registrar o que de fato aconteceu hoje
 DATA_HOJE_REAL_STR = AGORA_REAL.strftime("%d/%m/%Y")
 
-DB_FILE = "enderecos_logistica.db"
-
 # --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
 def aplicar_estilo_customizado():
     st.markdown("""
@@ -160,10 +158,15 @@ def aplicar_estilo_customizado():
 
 aplicar_estilo_customizado()
 
+DB_FILE = "enderecos_logistica.db"
+
 # =====================================================================
-# INTERFACE MOBILE (LINK SECRETO DO DAVI: ?davi=true)
+# RENDERIZAÇÃO DO MODO MOBILE (PÁGINA EXCLUSIVA DO DAVI)
 # =====================================================================
-if st.query_params.get("davi") == "true":
+modo_url = st.query_params.get("davi", "")
+
+if modo_url == "true":
+    # CSS para esconder a barra lateral e os menus superiores nativos
     st.markdown("""
         <style>
             [data-testid="stSidebar"] {display: none !important;}
@@ -238,11 +241,11 @@ if st.query_params.get("davi") == "true":
 
     st.divider()
     st.caption("Central de Logística APROAR")
-    st.stop() # Interrompe o código aqui para o Davi não ver a Torre de Controle inteira
+    st.stop() # Interrompe a renderização para não mostrar a Torre de Controle ao Davi
 
 
 # =====================================================================
-# CONTINUAÇÃO: TORRE DE CONTROLE (PC)
+# CONTINUAÇÃO DA TORRE DE CONTROLE (PC)
 # =====================================================================
 
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
@@ -369,8 +372,6 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
-    
-    # Nova tabela para salvar a rota e enviar para o celular do Davi
     c.execute('''CREATE TABLE IF NOT EXISTS rota_ativa (id INTEGER PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)''')
     
     c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90)")
@@ -479,22 +480,6 @@ def disparar_teams(webhook_url, titulo, mensagem):
         if tentativa < 2: time.sleep(1 + tentativa)
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
-
-def mover_cartao_trello(card_id):
-    conn = sqlite3.connect(DB_FILE)
-    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
-    conn.close()
-    
-    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
-        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
-        
-    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
-    try:
-        req = urllib.request.Request(url, method='PUT')
-        urllib.request.urlopen(req, timeout=5)
-        return True, "Movido com sucesso!"
-    except Exception as e:
-        return False, f"Erro de comunicação com o Trello: {e}"
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -736,7 +721,7 @@ def _montar_formulario_login(html, usuario, senha):
     campo_usuario = _escolher_campo(campos_usuario, ("usu", "user", "login", "email"))
     campo_senha = _escolher_campo(campos_senha, ("senha", "password", "pass"))
 
-    if not campo_usuario or not campo_senha: raise RuntimeError("Não foi possível identificar os campos de acesso do portal.")
+    if not campo_usuario or not campo_senha: raise RuntimeError("Erro no portal.")
 
     dados = {c["name"]: c.get("value", "") for c in campos_com_nome if c.get("type", "").lower() == "hidden"}
     dados[campo_usuario["name"]] = usuario
@@ -785,7 +770,7 @@ def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
     resposta = sessao.post(url, params={"p1": veiculos}, headers={"X-Requested-With": "XMLHttpRequest", "Referer": pagina_atual}, timeout=20)
     resposta.raise_for_status()
     posicoes = _parsear_resposta_rastreador(resposta.text)
-    if not posicoes: raise RuntimeError("O portal não devolveu posições. A sessão pode ter expirado.")
+    if not posicoes: raise RuntimeError("A sessão pode ter expirado.")
     return posicoes
 
 def autenticar_protege(usuario, senha, veiculos):
@@ -804,7 +789,7 @@ def autenticar_protege(usuario, senha, veiculos):
             posicoes = consultar_posicoes_protege(sessao, pagina_atual, veiculos)
             return sessao, pagina_atual, posicoes
         except Exception as erro: ultimo_erro = erro
-    raise RuntimeError("Não foi possível autenticar ou consultar o rastreador.") from ultimo_erro
+    raise RuntimeError("Não foi possível autenticar no rastreador.") from ultimo_erro
 
 def carregar_config_protege():
     try:
@@ -844,7 +829,43 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     
-    st.info("📱 **Link do Motorista:** Adicione `?davi=true` no final do link do site e mande pro Davi para ele acessar o app no celular.")
+    st.markdown("---")
+    st.markdown("📱 **App do Motorista**")
+    st.caption("Clique no botão abaixo para copiar o link da rota e envie para o Davi no WhatsApp:")
+    
+    html_copiar = """
+    <script>
+        function copyLink() {
+            try {
+                var url = window.parent.location.origin + window.parent.location.pathname + "?davi=true";
+                var tempInput = document.createElement("input");
+                tempInput.value = url;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand("copy");
+                document.body.removeChild(tempInput);
+                var btn = document.getElementById("btn");
+                btn.innerText = "✅ Copiado!";
+                btn.style.backgroundColor = "#16a34a";
+                btn.style.color = "white";
+                btn.style.border = "1px solid #16a34a";
+                setTimeout(() => {
+                    btn.innerText = "🔗 Copiar Link do Davi";
+                    btn.style.backgroundColor = "transparent";
+                    btn.style.color = "#8da0b8";
+                    btn.style.border = "1px solid rgba(64,116,146,.35)";
+                }, 2500);
+            } catch (err) {
+                alert("Erro ao copiar o link.");
+            }
+        }
+    </script>
+    <button id="btn" onclick="copyLink()" style="width:100%; padding:8px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:5px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer;">
+        🔗 Copiar Link do Davi
+    </button>
+    """
+    st.components.v1.html(html_copiar, height=45)
+    st.markdown("---")
 
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
@@ -1434,7 +1455,7 @@ with tab_roteiro:
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
 
-            # SALVA NO BD PARA O APP DO CELULAR LER
+            # SALVA NO BD PARA O CELULAR DO DAVI
             conn = sqlite3.connect(DB_FILE)
             conn.execute(
                 "INSERT OR REPLACE INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km) VALUES (1, ?, ?, ?, ?, ?, ?)",
@@ -1668,6 +1689,7 @@ with tab_roteiro:
 
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
 
+            # O marcador principal de saída desenhado com a BANDEIRA XADREZ (🏁)
             if p_saida in locais_dict:
                 lat_s, lon_s = path_points[0]
                 folium.Marker(
