@@ -47,7 +47,6 @@ def ler_dados_sheets(worksheet_name):
         return pd.DataFrame()
 
 def salvar_dados_sheets(df_novo, worksheet_name):
-    # Lê os dados atuais, adiciona a nova linha e atualiza a planilha inteira
     df_atual = ler_dados_sheets(worksheet_name)
     df_atualizado = pd.concat([df_atual, df_novo], ignore_index=True)
     conn_sheets.update(worksheet=worksheet_name, data=df_atualizado)
@@ -477,7 +476,6 @@ def normalizar_local(nome):
 def canonicalizar_ponto_rota(nome):
     texto = normalizar_local(str(nome or ""))
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
-    # Remove automaticamente artigos indesejados no começo (Ex: A BARRA -> BARRA, O MARACANAÚ -> MARACANAÚ)
     texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
@@ -961,7 +959,6 @@ with tab_enderecos:
 with tab_custos:
     st.subheader("💰 Fechamento Mensal e Controle de Frota (Google Sheets)")
     
-    # LEITURA DIRETA DO GOOGLE SHEETS
     df_abastec = ler_dados_sheets("abastecimentos")
     df_km = ler_dados_sheets("registro_km")
     
@@ -1027,21 +1024,21 @@ with tab_custos:
     st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
     mes_atual_str = AGORA_REAL.strftime("%m/%Y")
     
-    # FILTRO KM MÊS
     if not df_km.empty and 'data' in df_km.columns:
         if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
         df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
-        df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y'] == mes_atual_str].copy()
+        df_km_mes = df_km.dropna(subset=['data_dt'])
+        df_km_mes = df_km_mes[df_km_mes['data_dt'].dt.strftime('%m/%Y') == mes_atual_str]
         km_strada = pd.to_numeric(df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'], errors='coerce').sum()
         km_l200 = pd.to_numeric(df_km_mes[df_km_mes['veiculo'] == 'L200']['km'], errors='coerce').sum()
     else:
         km_strada, km_l200 = 0.0, 0.0
 
-    # FILTRO ABASTECIMENTOS MÊS
     if not df_abastec.empty and 'data' in df_abastec.columns:
         if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
         df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
-        df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y'] == mes_atual_str].copy()
+        df_abastec_mes = df_abastec.dropna(subset=['data_dt'])
+        df_abastec_mes = df_abastec_mes[df_abastec_mes['data_dt'].dt.strftime('%m/%Y') == mes_atual_str]
         
         df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
         gas_strada = (pd.to_numeric(df_gas_strada['litros'], errors='coerce') * pd.to_numeric(df_gas_strada['valor_litro'], errors='coerce')).sum()
@@ -1075,7 +1072,6 @@ with tab_custos:
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8;'>⛽ Gasolina: <b>R$ {gas_l200:.2f}</b> &nbsp;|&nbsp; 🔧 Manutenção: <b>R$ {manut_l200:.2f}</b></p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # EXTRATO VISUAL DO GOOGLE SHEETS
     st.divider()
     st.markdown("#### 🗂️ Histórico Salvo na Planilha do Google")
     
@@ -1142,7 +1138,7 @@ with tab_roteiro:
             current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 44)
             current_point = ponto_saida
 
-            rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_HOJE_REAL_STR,)).fetchone()
+            rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
             if rota_salva and len(dict_concluidos_torre) > 0:
                 old_steps = json.loads(rota_salva[0])
                 for step in old_steps:
