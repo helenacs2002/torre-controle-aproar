@@ -532,6 +532,7 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
+# === ATUALIZAÇÃO DO LEITOR PARA TRATAR TRANBORDOS AUTOMATICAMENTE ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -549,19 +550,27 @@ def extrair_dados_completos(texto, card_name):
     
     if texto:
         texto_limpo = re.sub(r'[*_`]+', '', texto)
-        mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar|coleta)\s+(?:no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.\-]+)', texto_limpo)
-        if mo: origem = normalizar_local(mo.group(1))
-
-        md = re.search(r'(?i)(?:levar|entreg(?:ar|a)|devolver|encaminhar|transportar|deixar|entrega)\s+(?:para|no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.]+)', texto_limpo)
-        if md: destino = normalizar_local(md.group(1))
         
-        if mo and md:
-            start_idx = mo.end()
-            end_idx = md.start()
-            if start_idx < end_idx:
-                mat_text = texto_limpo[start_idx:end_idx].strip()
-                linhas_limpas = [l.strip().lstrip('-').strip() for l in mat_text.split('\n') if len(l.strip()) >= 2 and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para']]
-                if linhas_limpas: materiais = " | ".join(linhas_limpas)
+        # Se for um TRANSMORDO / TRANSBORDO (ex: materiais na obra para o escritório)
+        if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
+            if unidade:
+                origem = unidade
+                destino = "ESCRITÓRIO"
+            materiais = texto_limpo.strip()
+        else:
+            mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar|coleta)\s+(?:no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.\-]+)', texto_limpo)
+            if mo: origem = normalizar_local(mo.group(1))
+
+            md = re.search(r'(?i)(?:levar|entreg(?:ar|a)|devolver|encaminhar|transportar|deixar|entrega)\s+(?:para|no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.]+)', texto_limpo)
+            if md: destino = normalizar_local(md.group(1))
+            
+            if mo and md:
+                start_idx = mo.end()
+                end_idx = md.start()
+                if start_idx < end_idx:
+                    mat_text = texto_limpo[start_idx:end_idx].strip()
+                    linhas_limpas = [l.strip().lstrip('-').strip() for l in mat_text.split('\n') if len(l.strip()) >= 2 and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para']]
+                    if linhas_limpas: materiais = " | ".join(linhas_limpas)
 
     if not destino and unidade: destino = unidade
     if not origem and destino: origem = "ESCRITÓRIO"
