@@ -492,7 +492,7 @@ def identificar_grupo_teams(destino, obra=""):
         (("PARANGABA", "ESCRITÓRIO"), "sede_parangaba"),
     ]
     for termos, chave in regras:
-        if any(termo in texto for termos): return chave
+        if any(termo in texto for termo in termos): return chave
     return ""
 
 def obter_webhook_teams(setor, supervisor=None, obra=""):
