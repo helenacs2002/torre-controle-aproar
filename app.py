@@ -81,7 +81,7 @@ def aplicar_estilo_customizado():
 aplicar_estilo_customizado()
 
 # =====================================================================
-# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO (COM ALMOÇO 12h-13h)
+# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO (SEM BLOQUEIO DE ALMOÇO)
 # =====================================================================
 def parse_time_to_mins(time_str):
     if not time_str: return 0
@@ -102,13 +102,6 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
     
     for step in route_steps:
-        if step['type'] == 'lunch':
-            step['dyn_chegada'] = "12:00"
-            step['dyn_saida'] = "13:00"
-            step['is_concluded'] = False
-            current_min = max(current_min, 13 * 60)
-            continue
-            
         if step['type'] == 'return':
             step['dyn_chegada'] = format_mins_to_time(current_min + step.get('travel_mins', 0))
             step['dyn_saida'] = step['dyn_chegada']
@@ -134,10 +127,6 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             travel = step.get('travel_mins', 0)
             arr_min = current_min + travel
             
-            # Trava estrita de almoço (12:00 às 13:00) se cruzar o meio-dia
-            if current_min < (12 * 60) and arr_min >= (12 * 60):
-                arr_min += 60
-            
             if arr_min < agora_min: arr_min = agora_min
                 
             service = step.get('tempo_local', 0)
@@ -158,12 +147,6 @@ def calcular_eta_dinamico(route_steps, dict_concluidos, p_saida):
     achou_pendente = False
 
     for i, step in enumerate(route_steps):
-        if step['type'] == 'lunch':
-            if achou_pendente:
-                if AGORA_REAL.hour < 12: minutos_restantes += 60
-                elif AGORA_REAL.hour == 12: minutos_restantes += (60 - AGORA_REAL.minute)
-            continue
-            
         if step['type'] == 'return':
             if achou_pendente: minutos_restantes += step.get('travel_mins', 0)
             continue
@@ -248,11 +231,8 @@ if modo_url == "true":
     p_num = 1
 
     for i, step in enumerate(route_steps):
-        if step['type'] == 'lunch':
-            st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
-            continue
         if step['type'] == 'return':
-            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
+            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada: {step['chegada']})")
             continue
 
         is_start = (i == 0 and step['destino'] == p_saida)
@@ -334,8 +314,6 @@ VELOCIDADE_MEDIA_KMH = 25.0
 INICIO_EXPEDIENTE_MIN = 7 * 60
 INICIO_ROTA_MIN = 7 * 60 + 30  
 FIM_EXPEDIENTE_MIN = 17 * 60
-INICIO_ALMOCO_MIN = 12 * 60
-DURACAO_ALMOCO_MIN = 60
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor"]
 UNIDADES_PROPRIAS = ["FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", "UNIFOR", "PARANGABA", "HORIZONTE", "MUSEU", "BARRA", "ESCRITÓRIO", "CASA DA INDÚSTRIA"]
@@ -543,7 +521,7 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
-# === LEITOR BLINDADO COM SUPORTE A TRANSBORDOS E DESCRIÇÃO COMPLETA ===
+# === EXTRAÇÃO INTELIGENTE (SUPORTE A TRANSBORDOS) ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -567,7 +545,7 @@ def extrair_dados_completos(texto, card_name):
             if unidade:
                 origem = unidade
                 destino = "ESCRITÓRIO"
-            materiais = texto_limpo # Pega a descrição inteira e joga no campo materiais!
+            materiais = texto_limpo
         else:
             mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar|coleta)\s+(?:no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.\-]+)', texto_limpo)
             if mo: origem = normalizar_local(mo.group(1))
@@ -1118,7 +1096,6 @@ with tab_roteiro:
             total_km = sum(p_step.get('dist', 0.0) for p_step in past_route_steps)
             
             current_time = current_time_tsp
-            lunch_taken = any(s.get('type') == 'lunch' for s in past_route_steps)
 
             while unpicked or carrying:
                 if current_time >= 15 * 60 + 30: 
@@ -1146,15 +1123,6 @@ with tab_roteiro:
                     
                     if d < 0.1: score = -1.0
                     if score < min_score: min_score, best_point, best_dist, best_dur = score, p, d, dur
-
-                # INSERÇÃO RIGOROSA DE ALMOÇO (12h-13h)
-                if current_time < (12 * 60) and (current_time + best_dur) >= (12 * 60) and not lunch_taken:
-                    route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
-                    current_time = 13 * 60
-                    lunch_taken = True
-                elif current_time >= (12 * 60) and current_time < (13 * 60) and not lunch_taken:
-                    current_time = 13 * 60
-                    lunch_taken = True
 
                 current_time += best_dur
                 total_km += best_dist
@@ -1234,10 +1202,6 @@ with tab_roteiro:
             
             num_parada = 1
             for i, step in enumerate(route_steps):
-                if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
-                    texto_whatsapp += f"🍔 Almoço: 12:00 às 13:00\n\n"
-                    continue
                 if step['type'] == 'return':
                     st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
                     texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
