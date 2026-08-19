@@ -100,9 +100,7 @@ def format_mins_to_time(mins):
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
     
-    # ZONA NEUTRA: Se o relógio do seu PC/nuvem está no horário de almoço agora, empurra o cálculo pra depois
     agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
-    
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
     
     for step in route_steps:
@@ -997,7 +995,7 @@ with tab_custos:
                 conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (k_data.strftime("%d/%m/%Y"), k_km, k_obs, k_veic))
                 conn.commit(); st.success(f"{k_km} km salvos com sucesso!")
 
-    # INÍCIO DO NOVO BLOCO - FECHAMENTO DE KM
+    # BLOCO DE FECHAMENTO DE KM POR PERÍODO
     st.divider()
     st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
     with st.form("form_fechamento_km", clear_on_submit=True):
@@ -1020,7 +1018,6 @@ with tab_custos:
                 st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
             else:
                 st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
-    # FIM DO NOVO BLOCO
 
     st.divider()
     st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
@@ -1068,6 +1065,27 @@ with tab_custos:
         l2.metric("Custo Real / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8;'>⛽ Gasolina: <b>R$ {gas_l200:.2f}</b> &nbsp;|&nbsp; 🔧 Manutenção: <b>R$ {manut_l200:.2f}</b></p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
+
+    # EXTRATO VISUAL DE REGISTROS (PARA VOCÊ CONFERIR TUDO O QUE FOI LANÇADO)
+    st.divider()
+    st.markdown("#### 🗂️ Extrato Completo de Registros do Sistema")
+    
+    cx_abast, cx_km = st.columns(2)
+    with cx_abast:
+        st.markdown("**⛽ Histórico de Abastecimentos / Gastos**")
+        df_abastec_all = pd.read_sql_query("SELECT data, veiculo, litros, valor_litro, manutencao, obs FROM abastecimentos ORDER BY id DESC", conn)
+        if not df_abastec_all.empty:
+            st.dataframe(df_abastec_all, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum abastecimento registrado.")
+            
+    with cx_km:
+        st.markdown("**🛣️ Histórico de Quilometragens**")
+        df_km_all = pd.read_sql_query("SELECT data, veiculo, km, obs FROM registro_km ORDER BY id DESC", conn)
+        if not df_km_all.empty:
+            st.dataframe(df_km_all, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum KM registrado.")
 
     conn.close()
 
@@ -1119,7 +1137,7 @@ with tab_roteiro:
             current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 44)
             current_point = ponto_saida
 
-            rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_HOJE_REAL_STR,)).fetchone()
+            rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
             if rota_salva and len(dict_concluidos_torre) > 0:
                 old_steps = json.loads(rota_salva[0])
                 for step in old_steps:
