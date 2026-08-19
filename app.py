@@ -81,7 +81,7 @@ def aplicar_estilo_customizado():
 aplicar_estilo_customizado()
 
 # =====================================================================
-# FUNÇÕES DE CÁLCULO DE ETA DINÂMICO (COM ATRASOS REAIS)
+# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO
 # =====================================================================
 def parse_time_to_mins(time_str):
     if not time_str: return 0
@@ -89,6 +89,10 @@ def parse_time_to_mins(time_str):
         h, m = map(int, time_str.split(':'))
         return h * 60 + m
     except: return 0
+
+def format_time(minutes):
+    total = int(round(minutes))
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 def format_mins_to_time(mins):
     return f"{int(mins) // 60:02d}:{int(mins) % 60:02d}"
@@ -1137,7 +1141,6 @@ with tab_roteiro:
                 for t in [t for t in unpicked if t['Origem'] == best_point]:
                     actions_here.append(("COLETAR", t)); unpicked.remove(t); carrying.append(t); service_mins += t['Tempo_Coleta']
 
-                # CORREÇÃO SEGURA DO ERRO DE ESCOPO (NAMEERROR)
                 is_start_load = (best_point == ponto_saida and current_time == INICIO_ROTA_MIN and not any(a[0] == "ENTREGAR" for a in actions_here) and len(past_route_steps) == 0)
                 
                 if is_start_load:
