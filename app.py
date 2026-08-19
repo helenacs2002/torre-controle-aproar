@@ -997,6 +997,31 @@ with tab_custos:
                 conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (k_data.strftime("%d/%m/%Y"), k_km, k_obs, k_veic))
                 conn.commit(); st.success(f"{k_km} km salvos com sucesso!")
 
+    # INÍCIO DO NOVO BLOCO - FECHAMENTO DE KM
+    st.divider()
+    st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
+    with st.form("form_fechamento_km", clear_on_submit=True):
+        col_f1, col_f2 = st.columns([1, 2])
+        f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
+        f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
+        
+        col_f3, col_f4, col_f5, col_f6 = st.columns(4)
+        f_data_ini = col_f3.date_input("Data Inicial")
+        f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
+        f_data_fin = col_f5.date_input("Data Final")
+        f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
+        
+        if st.form_submit_button("Calcular e Lançar Fechamento"):
+            km_rodado = f_km_fin - f_km_ini
+            if km_rodado > 0:
+                obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
+                conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (f_data_fin.strftime("%d/%m/%Y"), km_rodado, obs_final, f_veic))
+                conn.commit()
+                st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
+            else:
+                st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
+    # FIM DO NOVO BLOCO
+
     st.divider()
     st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
     mes_atual_str = AGORA_REAL.strftime("%m/%Y")
