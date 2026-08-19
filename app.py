@@ -198,8 +198,8 @@ if modo_url == "true":
         df_mobile = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
-    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "07:30"
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:44"
+    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "08:44"
     conn.close()
 
     if not res:
@@ -346,7 +346,6 @@ def inicializar_bd():
     except: pass 
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
     
-    # === INJEÇÃO DA HORA DE PARTIDA CONFORME SEU PEDIDO ===
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF', ?, '08:44')", (DATA_HOJE_REAL_STR,))
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC-3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
     
@@ -519,7 +518,6 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
-# === LÓGICA DE EXTRAÇÃO COM TRANSBORDOS ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -714,7 +712,6 @@ def loop_automacoes_background():
                     url_webhook, _ = obter_webhook_teams(destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name)
                     hora_str = momento_conclusao.strftime("%H:%M")
 
-                    # ANTI-SPAM (MÁXIMO 5 MINUTOS DE ATRASO PARA AVISAR NO TEAMS)
                     if (agora_loop - momento_conclusao).total_seconds() / 60 <= 5 and url_webhook:
                         disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n" + f"**Obra:** {short_name}\n\n**Local:** {destino}\n\n**Materiais:** {materiais}\n\n**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}")
 
@@ -1197,7 +1194,7 @@ with tab_roteiro:
         df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:44"
         conn.close()
 
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
@@ -1207,8 +1204,7 @@ with tab_roteiro:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
             st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
 
-            hora_atual_str, nova_previsao_str, nova_previsao_dt = calcular_eta_dinamico(route_steps, dict_concluidos_torre, p_saida)
-            renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+            renderizar_banner_eta(AGORA_REAL.strftime("%H:%M"), format_mins_to_time(final_dyn_min), final_dyn_min)
             
             texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🏁 Saída do Pátio: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
