@@ -99,6 +99,10 @@ def format_mins_to_time(mins):
 
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+    
+    # ZONA NEUTRA: Se o relógio do seu PC/nuvem está no horário de almoço agora, empurra o cálculo pra depois
+    agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
+    
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
     
     for step in route_steps:
@@ -110,7 +114,12 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             continue
             
         if step['type'] == 'return':
-            step['dyn_chegada'] = format_mins_to_time(current_min + step.get('travel_mins', 0))
+            arr_min = current_min + step.get('travel_mins', 0)
+            if current_min <= 12*60 and arr_min > 12*60: arr_min = max(arr_min + 60, 13*60)
+            if arr_min < agora_min_efetivo: arr_min = agora_min_efetivo
+            if 12*60 <= arr_min < 13*60: arr_min = 13*60
+            
+            step['dyn_chegada'] = format_mins_to_time(arr_min)
             step['dyn_saida'] = step['dyn_chegada']
             step['is_concluded'] = False
             continue
@@ -131,22 +140,19 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             current_min = max(current_min, max_c)
             step['is_concluded'] = True
         else:
-            travel = step.get('travel_mins', 0)
-            
-            # Trava do horário de almoço na linha do tempo dinâmica
-            if 12*60 <= current_min < 13*60:
-                current_min = 13*60
+            if 12*60 <= current_min < 13*60: current_min = 13*60
                 
+            travel = step.get('travel_mins', 0)
             arr_min = current_min + travel
             
-            if current_min < 12*60 and arr_min >= 12*60:
-                arr_min += 60 # Empurra chegada pra depois do almoço
-            
-            if arr_min < agora_min: 
-                arr_min = agora_min
+            if current_min <= 12*60 and arr_min > 12*60: arr_min = max(arr_min + 60, 13*60)
+            if arr_min < agora_min_efetivo: arr_min = agora_min_efetivo
+            if 12*60 <= arr_min < 13*60: arr_min = 13*60
                 
             service = step.get('tempo_local', 0)
             dep_min = arr_min + service
+            
+            if arr_min <= 12*60 and dep_min > 12*60: dep_min = max(dep_min + 60, 13*60)
             
             step['dyn_chegada'] = format_mins_to_time(arr_min)
             step['dyn_saida'] = format_mins_to_time(dep_min)
@@ -157,7 +163,6 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
 
 def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     if not hora_atual_str: return
-    
     cor_previsao = "#16a34a" if final_dyn_min <= (17 * 60) else "#f59e0b" if final_dyn_min <= (17 * 60 + 30) else "#ef4444"
             
     st.markdown(f'''
@@ -214,7 +219,10 @@ if modo_url == "true":
     p_saida = route_steps[0]['destino'] if route_steps else ""
 
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
-    renderizar_banner_eta(AGORA_REAL.strftime("%H:%M"), format_mins_to_time(final_dyn_min), final_dyn_min)
+    
+    hora_atual_str = AGORA_REAL.strftime("%H:%M")
+    nova_previsao_str = format_mins_to_time(final_dyn_min)
+    renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
     st.markdown(f"#### Roteiro Passo a Passo ({total_km:.1f} km)")
     p_num = 1
@@ -306,8 +314,6 @@ VELOCIDADE_MEDIA_KMH = 25.0
 INICIO_EXPEDIENTE_MIN = 7 * 60
 INICIO_ROTA_MIN = 7 * 60 + 30  
 FIM_EXPEDIENTE_MIN = 17 * 60
-INICIO_ALMOCO_MIN = 12 * 60
-DURACAO_ALMOCO_MIN = 60
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor"]
 UNIDADES_PROPRIAS = ["FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", "UNIFOR", "PARANGABA", "HORIZONTE", "MUSEU", "BARRA", "ESCRITÓRIO", "CASA DA INDÚSTRIA"]
@@ -346,6 +352,7 @@ def inicializar_bd():
     except: pass 
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
     
+    # === INJEÇÃO DA HORA DE PARTIDA CONFORME SEU PEDIDO ===
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF', ?, '08:44')", (DATA_HOJE_REAL_STR,))
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC-3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
     
@@ -518,6 +525,7 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
+# === EXTRAÇÃO INTELIGENTE (SUPORTE A TRANSBORDOS E PONTO) ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -536,7 +544,6 @@ def extrair_dados_completos(texto, card_name):
     if texto:
         texto_limpo = re.sub(r'[*_`]+', '', texto).strip()
         
-        # Inteligência de Transbordo
         if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
             if unidade:
                 origem = unidade
@@ -712,6 +719,7 @@ def loop_automacoes_background():
                     url_webhook, _ = obter_webhook_teams(destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name)
                     hora_str = momento_conclusao.strftime("%H:%M")
 
+                    # ANTI-SPAM (MÁXIMO 5 MINUTOS DE ATRASO PARA AVISAR NO TEAMS)
                     if (agora_loop - momento_conclusao).total_seconds() / 60 <= 5 and url_webhook:
                         disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n" + f"**Obra:** {short_name}\n\n**Local:** {destino}\n\n**Materiais:** {materiais}\n\n**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}")
 
@@ -1123,17 +1131,19 @@ with tab_roteiro:
                     if d < 0.1: score = -1.0
                     if score < min_score: min_score, best_point, best_dist, best_dur = score, p, d, dur
 
-                # INJEÇÃO ESTRITA DO HORÁRIO DE ALMOÇO NA CRIAÇÃO DA ROTA
-                if current_time < (12 * 60) and (current_time + best_dur) >= (12 * 60) and not lunch_taken:
+                if 12*60 <= current_time < 13*60 and not lunch_taken:
                     route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
                     current_time = 13 * 60
                     lunch_taken = True
-                elif current_time >= (12 * 60) and current_time < (13 * 60) and not lunch_taken:
+                    
+                arr_time = current_time + best_dur
+                
+                if current_time <= 12*60 and arr_time > 12*60 and not lunch_taken:
                     route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
-                    current_time = 13 * 60
+                    arr_time = max(arr_time + 60, 13 * 60)
                     lunch_taken = True
-
-                current_time += best_dur
+                    
+                current_time = arr_time
                 total_km += best_dist
                 actions_here, service_mins = [], 0
 
@@ -1147,11 +1157,17 @@ with tab_roteiro:
                 if is_start_load:
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time_tsp - 30), format_time(current_time_tsp), 30
                     service_mins = 0
+                    dep_time = current_time_tsp
                 else:
-                    chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(current_time + service_mins), service_mins
+                    dep_time = current_time + service_mins
+                    if current_time <= 12*60 and dep_time > 12*60 and not lunch_taken:
+                        dep_time = max(dep_time + 60, 13 * 60)
+                        lunch_taken = True
+                        
+                    chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(dep_time), service_mins
 
                 route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "tempo_local": tempo_local_exibicao, "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
-                current_time += service_mins
+                current_time = dep_time
                 current = best_point
 
             if retornar_base and current != ponto_saida:
@@ -1172,7 +1188,6 @@ with tab_roteiro:
             st.session_state['total_km'] = total_km
             st.session_state['locais_dict'] = locais_dict
             st.session_state['p_saida'] = ponto_saida
-            st.session_state['horario_conclusao_min'] = current_time
             st.session_state['geometria_rota'] = geometria_rota
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
@@ -1204,15 +1219,17 @@ with tab_roteiro:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
             st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
 
-            renderizar_banner_eta(AGORA_REAL.strftime("%H:%M"), format_mins_to_time(final_dyn_min), final_dyn_min)
+            hora_atual_str = AGORA_REAL.strftime("%H:%M")
+            nova_previsao_str = format_mins_to_time(final_dyn_min)
+            renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
             
             texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🏁 Saída do Pátio: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
             for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para Almoço** (Previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
-                    texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
+                    st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
+                    texto_whatsapp += f"🍔 Almoço: 12:00 às 13:00\n\n"
                     continue
                 if step['type'] == 'return':
                     st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
@@ -1286,7 +1303,7 @@ with tab_roteiro:
             url_geral, _ = obter_webhook_teams("Geral / Logística")
             if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio:** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
+                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
                     enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
                     if enviado: st.success("✅ Roteiro enviado!")
                     else: st.error(f"Erro ao enviar: {detalhe}")
