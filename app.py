@@ -532,7 +532,7 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
-# === ATUALIZAÇÃO DO LEITOR PARA TRATAR TRANBORDOS AUTOMATICAMENTE ===
+# === LEITOR BLINDADO COM SUPORTE A TRANSBORDOS E DESCRIÇÃO COMPLETA ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -549,14 +549,14 @@ def extrair_dados_completos(texto, card_name):
     materiais = "Ver Trello"
     
     if texto:
-        texto_limpo = re.sub(r'[*_`]+', '', texto)
+        texto_limpo = re.sub(r'[*_`]+', '', texto).strip()
         
-        # Se for um TRANSMORDO / TRANSBORDO (ex: materiais na obra para o escritório)
+        # Se for um TRANSBORDO (ex: "Realizar transbordos de materiais na obra para o escritório.")
         if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
             if unidade:
                 origem = unidade
                 destino = "ESCRITÓRIO"
-            materiais = texto_limpo.strip()
+            materiais = texto_limpo # Pega a descrição inteira e joga no campo materiais!
         else:
             mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar|coleta)\s+(?:no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.\-]+)', texto_limpo)
             if mo: origem = normalizar_local(mo.group(1))
