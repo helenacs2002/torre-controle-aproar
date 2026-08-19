@@ -161,12 +161,86 @@ aplicar_estilo_customizado()
 DB_FILE = "enderecos_logistica.db"
 
 # =====================================================================
+# FUNÇÕES DE CÁLCULO DE ETA (NOVA FAIXA DINÂMICA)
+# =====================================================================
+def calcular_eta_dinamico(route_steps, dict_concluidos, p_saida):
+    if DATA_REF_ROTA_STR != DATA_HOJE_REAL_STR:
+        return None, None, None
+        
+    minutos_restantes = 0
+    achou_pendente = False
+
+    for i, step in enumerate(route_steps):
+        if step['type'] == 'lunch':
+            if achou_pendente:
+                if AGORA_REAL.hour < 12:
+                    minutos_restantes += 60
+                elif AGORA_REAL.hour == 12:
+                    minutos_restantes += (60 - AGORA_REAL.minute)
+            continue
+            
+        if step['type'] == 'return':
+            if achou_pendente:
+                minutos_restantes += step.get('travel_mins', 0)
+            continue
+            
+        acoes_pendentes = [t for a, t in step.get('actions', []) if str(t.get('id', '')) not in dict_concluidos]
+        
+        if acoes_pendentes:
+            achou_pendente = True
+            
+        if achou_pendente:
+            minutos_restantes += step.get('travel_mins', 0)
+            minutos_restantes += step.get('tempo_local', 0)
+            
+    if not achou_pendente:
+        return AGORA_REAL.strftime("%H:%M"), "✅ Rota Concluída", None
+        
+    minutos_agora = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+    if minutos_agora < (7 * 60 + 30):
+        base_dt = AGORA_REAL.replace(hour=7, minute=30)
+    else:
+        base_dt = AGORA_REAL
+        
+    nova_previsao_dt = base_dt + timedelta(minutes=minutos_restantes)
+    return AGORA_REAL.strftime("%H:%M"), nova_previsao_dt.strftime("%H:%M"), nova_previsao_dt
+
+def renderizar_banner_eta(hora_atual_str, nova_previsao_str, nova_previsao_dt):
+    if not hora_atual_str:
+        return
+        
+    if nova_previsao_dt is None:
+        cor_previsao = "#16a34a" # Verde
+    else:
+        minutos_prev = nova_previsao_dt.hour * 60 + nova_previsao_dt.minute
+        fim_expediente = 17 * 60
+        if minutos_prev <= fim_expediente:
+            cor_previsao = "#16a34a" # Verde
+        elif minutos_prev <= fim_expediente + 30:
+            cor_previsao = "#f59e0b" # Amarelo/Laranja
+        else:
+            cor_previsao = "#ef4444" # Vermelho
+            
+    st.markdown(f'''
+    <div style="background-color: #121530; padding: 12px 20px; border-radius: 8px; border: 1px solid rgba(64,116,146,.4); display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+       <div style="font-size: 13px; color: #8da0b8; text-align: left;">
+            <span style="font-size: 18px;">⏰</span> Atualizada:<br>
+            <b style="color: #e4e8f4; font-size: 18px;">{hora_atual_str}</b>
+       </div>
+       <div style="font-size: 13px; color: #8da0b8; text-align: right;">
+            <span style="font-size: 18px;">🏁</span> Previsão de Término:<br>
+            <b style="color: {cor_previsao}; font-size: 18px;">{nova_previsao_str}</b>
+       </div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+
+# =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (PÁGINA EXCLUSIVA DO DAVI)
 # =====================================================================
 modo_url = st.query_params.get("davi", "")
 
 if modo_url == "true":
-    # CSS para esconder a barra lateral e os menus superiores nativos
     st.markdown("""
         <style>
             [data-testid="stSidebar"] {display: none !important;}
@@ -185,11 +259,12 @@ if modo_url == "true":
     try:
         res = conn.execute("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
         
-        # Puxa as demandas que já foram dadas baixa hoje para colocar o ✅ no app dele
-        ids_concluidos_hoje = {str(r[0]) for r in conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()}
+        # Lê histórico com a HORA EXATA da baixa
+        df_mobile = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
+        dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
     except sqlite3.OperationalError:
         res = None
-        ids_concluidos_hoje = set()
+        dict_concluidos_mobile = {}
     conn.close()
 
     if not res:
@@ -201,10 +276,13 @@ if modo_url == "true":
     geometria_rota = json.loads(res[2])
     enderecos_dict = json.loads(res[3])
     total_km = res[4]
+    p_saida = route_steps[0]['destino'] if route_steps else ""
+
+    hora_atual_str, nova_previsao_str, nova_previsao_dt = calcular_eta_dinamico(route_steps, dict_concluidos_mobile, p_saida)
+    renderizar_banner_eta(hora_atual_str, nova_previsao_str, nova_previsao_dt)
 
     st.markdown(f"#### Roteiro Passo a Passo ({total_km:.1f} km)")
     p_num = 1
-    p_saida = route_steps[0]['destino'] if route_steps else ""
 
     for i, step in enumerate(route_steps):
         if step['type'] == 'lunch':
@@ -216,7 +294,6 @@ if modo_url == "true":
 
         is_start = (i == 0 and step['destino'] == p_saida)
         
-        # Gera o Link do GPS
         endereco_db = enderecos_dict.get(step['destino'], "")
         if endereco_db.startswith("http"):
             link_gps = endereco_db
@@ -229,18 +306,19 @@ if modo_url == "true":
         with st.container(border=True):
             if is_start:
                 st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}**")
-                st.caption(f"⏰ Das {step['chegada']} às {step['saida']}")
+                st.caption(f"⏰ Previsão Base: {step['chegada']} às {step['saida']}")
             else:
                 st.markdown(f"**📍 PARADA {p_num}: {step['destino']}**")
-                st.caption(f"⏰ Das {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km")
+                st.caption(f"⏰ Previsão Base: {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km")
             
             for acao, t in step['actions']:
                 cor = "orange" if acao == "COLETAR" else "green"
                 icone = "📦" if acao == "COLETAR" else "📬"
                 
-                # Regra do Checkmark (✅) visual no Celular do Motorista
-                concluida = str(t.get('id', '')) in ids_concluidos_hoje
-                texto_check = " &nbsp;<span style='font-size: 1.1em;'>✅</span>" if concluida else ""
+                card_id = str(t.get('id', ''))
+                concluida = card_id in dict_concluidos_mobile
+                hora_baixa = dict_concluidos_mobile.get(card_id) or ""
+                texto_check = f" &nbsp;<span style='font-size: 1.1em; color: #16a34a;'>✅ {hora_baixa}</span>" if concluida else ""
 
                 st.markdown(f":{cor}[**{icone} {acao}**] {t['Materiais']} <br>*(Obra: {t['Obra']})*{texto_check}", unsafe_allow_html=True)
                 
@@ -248,7 +326,6 @@ if modo_url == "true":
                 st.markdown(f"<a href='{link_gps}' target='_blank'><button style='width:100%; padding:15px; background-color:#2563eb; color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
                 p_num += 1
 
-    # --- MAPA VISUAL NO APP MOBILE ---
     st.divider()
     st.markdown("#### 🗺️ Visão Geral da Rota")
     
@@ -309,11 +386,10 @@ if modo_url == "true":
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
     st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
-    # --------------------------------------
-
+    
     st.divider()
     st.caption("Central de Logística APROAR")
-    st.stop() # Interrompe a renderização para não mostrar a Torre de Controle ao Davi
+    st.stop()
 
 
 # =====================================================================
@@ -441,7 +517,14 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT)''')
+    
+    # ATUALIZAÇÃO DA TABELA HISTÓRICO COM HORA_CONCLUSAO
+    c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)''')
+    try:
+        c.execute("ALTER TABLE historico_concluidos ADD COLUMN hora_conclusao TEXT")
+    except sqlite3.OperationalError:
+        pass # Coluna já existe
+        
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS rota_ativa (id INTEGER PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)''')
@@ -474,9 +557,6 @@ def inicializar_bd():
 
 inicializar_bd()
 
-# =====================================================================
-# FUNÇÕES DE INTEGRAÇÃO (TEAMS, TRELLO E MAPAS)
-# =====================================================================
 def identificar_grupo_teams(destino, obra=""):
     texto = normalizar_local(f"{obra} {destino}")
     regras = [
@@ -763,9 +843,6 @@ def formatar_duracao(minutes):
     if horas: return f"{horas}h"
     return f"{minutos}min"
 
-# =====================================================================
-# INTEGRAÇÃO COM O RASTREADOR PROTEGE EXPRESS
-# =====================================================================
 class FormularioLoginParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -874,12 +951,7 @@ def carregar_config_protege():
         return usuario, senha, veiculos
     except Exception: return "", "", RASTREADOR_VEICULOS_PADRAO
 
-
-# =====================================================================
-# NOVA AUTOMAÇÃO: RADAR CONTÍNUO DO TRELLO (Roda sozinho em 2º plano)
-# =====================================================================
 def varredura_silenciosa_trello():
-    """Lê o Trello invisivelmente a cada minuto, atualiza o BD e avisa no Teams."""
     try:
         req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -908,6 +980,9 @@ def varredura_silenciosa_trello():
                         supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
                         url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
                         
+                        # NOVIDADE: Capta a HORA e MINUTO da entrega no Trello
+                        hora_str = momento_conclusao.strftime("%H:%M")
+
                         if url_webhook:
                             concluida_em = momento_conclusao.strftime("%d/%m/%Y às %H:%M")
                             mensagem = (
@@ -919,8 +994,9 @@ def varredura_silenciosa_trello():
                             )
                             disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
 
-                        conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
-                            (c['id'], short_name, origem, destino, materiais, data_conclusao))
+                        # Salva com a hora no BD
+                        conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (c['id'], short_name, origem, destino, materiais, data_conclusao, hora_str))
                         novas_entregas += 1
         conn.commit()
         conn.close()
@@ -928,8 +1004,7 @@ def varredura_silenciosa_trello():
         if novas_entregas > 0:
             st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello detectada(s) automaticamente!", icon="✅")
     except Exception:
-        pass  # Se a internet oscilar ou o Trello cair, ele engole o erro e tenta no próximo minuto.
-
+        pass
 
 # =====================================================================
 # INTERFACE STREAMLIT (TOPO / LOGO)
@@ -953,12 +1028,10 @@ except Exception:
 if "demandas" not in st.session_state:
     st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
-# Painel Lateral
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     
-    # ATIVAÇÃO DO RADAR CONTÍNUO (A cada 60s)
     if hasattr(st, "fragment"):
         @st.fragment(run_every="60s")
         def _loop_trello():
@@ -1006,10 +1079,8 @@ with st.sidebar:
     if st.button("🔄 Sincronizar Manualmente com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
             try:
-                # Dispara a varredura silenciosa manualmente para forçar agora se o usuário quiser
                 varredura_silenciosa_trello()
 
-                # Continua o carregamento dos cartões ativos para a tela de demandas
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
                     data = json.loads(response.read())
@@ -1063,10 +1134,6 @@ with st.sidebar:
                 conn.close()
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
-                
-                # Cuidado para não apagar a rota gerada ao sincronizar
-                # if st.session_state.get('data_rota') != DATA_REF_ROTA_STR: st.session_state['rota_gerada'] = False
-                
                 st.success("✅ Trello Sincronizado e Demandas Importadas!")
             
             except Exception as e: st.error(f"⚠️ Erro ao acessar o Trello: {e}")
@@ -1104,9 +1171,6 @@ tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_cus
     "⚙️ Integrações"
 ])
 
-# -------------------------------------------------------------
-# ABA: RASTREADOR AO VIVO
-# -------------------------------------------------------------
 with tab_rastreador:
     st.subheader("📡 Rastreador ao Vivo — Protege Express")
     st.caption("Posições consultadas diretamente no portal. Atualização automática a cada 30 segundos.")
@@ -1180,9 +1244,6 @@ with tab_rastreador:
         if hasattr(st, "fragment"): st.fragment(run_every="30s")(exibir_painel_rastreador)()
         else: exibir_painel_rastreador()
 
-# -------------------------------------------------------------
-# ABA: DEMANDAS ATIVAS E MONITORAMENTO VIVO
-# -------------------------------------------------------------
 with tab_demandas:
     st.subheader(f"Gerenciamento de Cargas da Rota ({DATA_REF_ROTA_STR})")
     df_editado = st.data_editor(
@@ -1203,11 +1264,11 @@ with tab_demandas:
 
     conn = sqlite3.connect(DB_FILE)
     df_entregues_hoje = pd.read_sql_query(
-        "SELECT id FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,)
+        "SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,)
     )
     conn.close()
 
-    ids_entregues_hoje = set(df_entregues_hoje.get("id", pd.Series(dtype=str)).astype(str))
+    dict_concluidos_monitor = dict(zip(df_entregues_hoje['id'].astype(str), df_entregues_hoje['hora_conclusao']))
     
     rota_atual = st.session_state.get('route_steps', [])
     demandas_na_rota = {}
@@ -1220,7 +1281,8 @@ with tab_demandas:
         st.info("Gere uma rota na aba 'Roteiro do Davi' para monitorar o status das entregas aqui.")
     else:
         for card_id, row in demandas_na_rota.items():
-            entregue_no_trello = card_id in ids_entregues_hoje
+            entregue_no_trello = card_id in dict_concluidos_monitor
+            hora_baixa_mon = dict_concluidos_monitor.get(card_id) or "Hoje"
             sup = row.get("Supervisor", "Sede / Logística")
             dest = row.get("Destino", "")
             mat = row.get("Materiais", "Ver Trello")
@@ -1228,14 +1290,11 @@ with tab_demandas:
             c1, c_status = st.columns([3.2, 2.5])
             c1.markdown(f"📦 **{row.get('Obra', '')} — {dest}** (Resp: {sup}) <br><span style='font-size:12px; color:gray;'>{mat}</span>", unsafe_allow_html=True)
             
-            if entregue_no_trello: c_status.success("✅ **Entregue (Baixa no Trello confirmada)**")
+            if entregue_no_trello: c_status.success(f"✅ **Entregue às {hora_baixa_mon}**")
             else: c_status.warning("⏳ Pendente / No Carro")
 
             st.write("---")
 
-# -------------------------------------------------------------
-# ABA: HISTÓRICO E CONCLUÍDOS
-# -------------------------------------------------------------
 with tab_historico:
     st.subheader(f"📋 Entregas Fisicamente Concluídas ({DATA_HOJE_REAL_STR})")
     st.write("Aqui aparecem as demandas que foram finalizadas e arrastadas para a coluna **'CONCLUÍDAS/ENTREGUES'** no Trello no dia de hoje.")
@@ -1247,9 +1306,6 @@ with tab_historico:
     if df_hist.empty: st.info("Nenhuma entrega foi registrada como finalizada no Trello no dia de hoje.")
     else: st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
-# -------------------------------------------------------------
-# ABA: ENDEREÇOS
-# -------------------------------------------------------------
 with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
     col1, col2 = st.columns(2)
@@ -1296,9 +1352,6 @@ with tab_enderecos:
             st.success(f"✅ Local '{local_remover}' removido.")
             st.rerun()
 
-# -------------------------------------------------------------
-# ABA: FECHAMENTO MENSAL E CUSTOS
-# -------------------------------------------------------------
 with tab_custos:
     st.subheader("💰 Fechamento Mensal e Controle de Frota")
     conn = sqlite3.connect(DB_FILE)
@@ -1370,9 +1423,6 @@ with tab_custos:
 
     conn.close()
 
-# -------------------------------------------------------------
-# ABA: INTEGRAÇÕES
-# -------------------------------------------------------------
 with tab_integ:
     st.subheader("⚙️ Configurações de Integrações e APIs")
 
@@ -1391,9 +1441,6 @@ with tab_integ:
             
     conn.close()
 
-# -------------------------------------------------------------
-# ABA: ROTEIRO E MAPA
-# -------------------------------------------------------------
 with tab_roteiro:
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR):
         st.session_state['rota_gerada'] = False
@@ -1411,7 +1458,6 @@ with tab_roteiro:
             st.warning(f"⚠️ Estas demandas estão sem origem ou destino legível no Trello e ficaram fora da rota: **{obras_incompletas}**.")
             df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
 
-    # MUDANÇA IMPORTANTE: TRAVA DE SEGURANÇA PARA NÃO SOBRESCREVER A ROTA
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
 
     if rota_ativa_hoje:
@@ -1575,7 +1621,6 @@ with tab_roteiro:
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
 
-            # SALVA NO BD PARA O CELULAR DO DAVI
             conn = sqlite3.connect(DB_FILE)
             conn.execute(
                 "INSERT OR REPLACE INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km) VALUES (1, ?, ?, ?, ?, ?, ?)",
@@ -1617,8 +1662,12 @@ with tab_roteiro:
             st.caption("🕖 Expediente: 07:00 às 17:00  •  Preparação: 07:00 às 07:30  •  Saída para a rota: 07:30")
             
             conn = sqlite3.connect(DB_FILE)
-            ids_concluidos_hoje = {str(registro[0]) for registro in conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()}
+            df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
+            dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             conn.close()
+
+            hora_atual_str, nova_previsao_str, nova_previsao_dt = calcular_eta_dinamico(route_steps, dict_concluidos_torre, p_saida)
+            renderizar_banner_eta(hora_atual_str, nova_previsao_str, nova_previsao_dt)
             
             texto_whatsapp = (
                 "🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n"
@@ -1651,11 +1700,11 @@ with tab_roteiro:
 
                 with st.container(border=True):
                     if is_start:
-                        st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
+                        st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}** `⏰ Base: {step['chegada']} às {step['saida']}`")
                         st.caption(f"Pátio: {step['tempo_local']} min")
                         texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     else:
-                        st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
+                        st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}** `⏰ Base: {step['chegada']} às {step['saida']}`")
                         st.caption(f"🚘 Trecho: {step['dist']:.1f} km (~{step['travel_mins']:.0f} min) | Pátio: {step['tempo_local']} min")
                         texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                         texto_whatsapp += f"🧭 *GPS:* {link_parada}\n"
@@ -1663,11 +1712,15 @@ with tab_roteiro:
                     for acao, t in step['actions']:
                         cor = "orange" if acao == "COLETAR" else "green"
                         icone = "📦 COLETAR:" if acao == "COLETAR" else "📬 ENTREGAR:"
-                        concluida = str(t.get('id', '')) in ids_concluidos_hoje
-                        col_demanda, col_status = st.columns([9, 1])
                         
-                        # O ✅ gigante fica grudado na demanda na Torre também
-                        check_ui = "&nbsp;<span style='color: #16a34a; font-size: 1.1em;'>✅</span>" if concluida else ""
+                        # NOVIDADE DA AUDITORIA AQUI!
+                        card_id_torre = str(t.get('id', ''))
+                        concluida = card_id_torre in dict_concluidos_torre
+                        hora_baixa_torre = dict_concluidos_torre.get(card_id_torre) or ""
+                        
+                        check_ui = f"&nbsp;<span style='color: #16a34a; font-size: 0.95em;'>✅ (Baixa às {hora_baixa_torre})</span>" if concluida else ""
+                        
+                        col_demanda, col_status = st.columns([9, 1])
                         col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*{check_ui}", unsafe_allow_html=True)
                         
                         prefixo_status = "✅ " if concluida else ""
@@ -1679,19 +1732,16 @@ with tab_roteiro:
             horario_conclusao = format_time(horario_conclusao_min)
             if horario_conclusao_min < FIM_EXPEDIENTE_MIN:
                 tempo_standby = FIM_EXPEDIENTE_MIN - horario_conclusao_min
-                st.success(f"✅ **Rota prevista para ser concluída às {horario_conclusao}.**")
-                st.info(f"🟢 **Todas as demandas finalizadas:** Davi ficará em stand-by das {horario_conclusao} às 17:00 ({formatar_duracao(tempo_standby)} disponíveis).")
-                texto_whatsapp += f"✅ Rota concluída às {horario_conclusao}.\n🟢 Davi em stand-by até 17:00 ({formatar_duracao(tempo_standby)}).\n"
-                status_expediente = f"Davi em stand-by até 17:00 ({formatar_duracao(tempo_standby)})"
+                st.success(f"📍 **Planejamento Original:** Término planejado para as {horario_conclusao}.")
+                st.info(f"🟢 **Tempo Extra:** Davi ficaria em stand-by das {horario_conclusao} às 17:00 ({formatar_duracao(tempo_standby)} disponíveis).")
+                texto_whatsapp += f"✅ Planejamento da Rota: {horario_conclusao}.\n🟢 Stand-by: até 17:00 ({formatar_duracao(tempo_standby)}).\n"
             elif horario_conclusao_min == FIM_EXPEDIENTE_MIN:
-                st.success("✅ **Rota prevista para ser concluída às 17:00, no fim do expediente.**")
-                texto_whatsapp += "✅ Rota concluída às 17:00.\n"
-                status_expediente = "Conclusão no fim do expediente"
+                st.success("📍 **Planejamento Original:** Término às 17:00, no fim do expediente.")
+                texto_whatsapp += "✅ Rota planejada para 17:00.\n"
             else:
                 excedente = horario_conclusao_min - FIM_EXPEDIENTE_MIN
-                st.warning(f"⚠️ **Rota prevista para terminar às {horario_conclusao}, ultrapassando o expediente em {formatar_duracao(excedente)}.**")
-                texto_whatsapp += f"⚠️ Previsão de término: {horario_conclusao} ({formatar_duracao(excedente)} após as 17:00).\n"
-                status_expediente = f"Previsão excede o expediente em {formatar_duracao(excedente)}"
+                st.warning(f"⚠️ **Planejamento Original:** O cálculo inicial passaria o expediente em {formatar_duracao(excedente)} (Término {horario_conclusao}).")
+                texto_whatsapp += f"⚠️ Previsão inicial: {horario_conclusao} ({formatar_duracao(excedente)} após as 17:00).\n"
 
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
@@ -1720,7 +1770,7 @@ with tab_roteiro:
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
                 
                 total_acoes = sum(len(step.get('actions', [])) for step in route_steps)
-                acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in ids_concluidos_hoje)
+                acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
                 
                 if acoes_concluidas < total_acoes:
                     st.warning(f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** demandas planejadas nesta rota foram marcadas como concluídas no Trello hoje. Se a rota não foi 100% finalizada, altere a quilometragem abaixo para o que foi efetivamente lido no painel do veículo.")
@@ -1743,8 +1793,7 @@ with tab_roteiro:
                         "O roteiro do Davi já está pronto.\n\n"
                         f"**Data da rota:** {DATA_REF_ROTA_STR}\n\n"
                         "**Saída para a rota:** 07:30\n\n"
-                        f"**Previsão de conclusão:** {horario_conclusao}\n\n"
-                        f"**Situação após a rota:** {status_expediente}\n\n"
+                        f"**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n"
                         f"**Total de paradas:** {num_parada-1}\n\n"
                         f"**Quilometragem Planejada:** {total_km:.1f} km\n\n"
                         f"[Abrir GPS da Rota Completa]({link_maps})"
