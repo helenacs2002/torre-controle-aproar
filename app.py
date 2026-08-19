@@ -40,6 +40,8 @@ else:
 # Data de hoje para registrar o que de fato aconteceu hoje
 DATA_HOJE_REAL_STR = AGORA_REAL.strftime("%d/%m/%Y")
 
+DB_FILE = "enderecos_logistica.db"
+
 # --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
 def aplicar_estilo_customizado():
     st.markdown("""
@@ -157,7 +159,91 @@ def aplicar_estilo_customizado():
     """, unsafe_allow_html=True)
 
 aplicar_estilo_customizado()
-# ---------------------------------------------------------------------
+
+# =====================================================================
+# INTERFACE MOBILE (LINK SECRETO DO DAVI: ?davi=true)
+# =====================================================================
+if st.query_params.get("davi") == "true":
+    st.markdown("""
+        <style>
+            [data-testid="stSidebar"] {display: none !important;}
+            [data-testid="stHeader"] {display: none !important;}
+            .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 100% !important;}
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<h2 style='text-align: center; color: #e4e8f4; margin-bottom: 0;'>📱 App do Motorista</h2>", unsafe_allow_html=True)
+    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px;'>Rota Oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
+
+    if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"):
+        st.rerun()
+
+    conn = sqlite3.connect(DB_FILE)
+    try:
+        res = conn.execute("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
+    except sqlite3.OperationalError:
+        res = None
+    conn.close()
+
+    if not res:
+        st.info("Nenhuma rota foi liberada pela Torre de Controle para hoje ainda. Aguarde a central calcular e tente atualizar a tela.")
+        st.stop()
+
+    route_steps = json.loads(res[0])
+    locais_dict = json.loads(res[1])
+    geometria_rota = json.loads(res[2])
+    enderecos_dict = json.loads(res[3])
+    total_km = res[4]
+
+    st.markdown(f"#### Roteiro Passo a Passo ({total_km:.1f} km)")
+    p_num = 1
+    p_saida = route_steps[0]['destino'] if route_steps else ""
+
+    for i, step in enumerate(route_steps):
+        if step['type'] == 'lunch':
+            st.warning(f"🍔 **Pausa para Almoço** ({step['chegada']} às {step['saida']})")
+            continue
+        if step['type'] == 'return':
+            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada: {step['chegada']})")
+            continue
+
+        is_start = (i == 0 and step['destino'] == p_saida)
+        
+        # Gera o Link do GPS
+        endereco_db = enderecos_dict.get(step['destino'], "")
+        if endereco_db.startswith("http"):
+            link_gps = endereco_db
+        elif endereco_db:
+            link_gps = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}"
+        else:
+            lat_f, lon_f = locais_dict[step['destino']]
+            link_gps = f"https://www.google.com/maps/dir/?api=1&destination={lat_f},{lon_f}"
+
+        with st.container(border=True):
+            if is_start:
+                st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}**")
+                st.caption(f"⏰ Das {step['chegada']} às {step['saida']}")
+            else:
+                st.markdown(f"**📍 PARADA {p_num}: {step['destino']}**")
+                st.caption(f"⏰ Das {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km")
+            
+            for acao, t in step['actions']:
+                cor = "orange" if acao == "COLETAR" else "green"
+                icone = "📦" if acao == "COLETAR" else "📬"
+                st.markdown(f":{cor}[**{icone} {acao}**] {t['Materiais']} <br>*(Obra: {t['Obra']})*", unsafe_allow_html=True)
+                
+            if not is_start:
+                st.markdown(f"<a href='{link_gps}' target='_blank'><button style='width:100%; padding:15px; background-color:#2563eb; color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
+                p_num += 1
+
+    st.divider()
+    st.caption("Central de Logística APROAR")
+    st.stop() # Interrompe o código aqui para o Davi não ver a Torre de Controle inteira
+
+
+# =====================================================================
+# CONTINUAÇÃO: TORRE DE CONTROLE (PC)
+# =====================================================================
 
 TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = [
@@ -165,7 +251,6 @@ RASTREADOR_LOGIN_URLS = [
     "http://portal.protegeexpress.com.br/sistema/login.aspx",
 ]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
-DB_FILE = "enderecos_logistica.db"
 VELOCIDADE_MEDIA_KMH = 25.0
 INICIO_EXPEDIENTE_MIN = 7 * 60
 INICIO_ROTA_MIN = 7 * 60 + 30  
@@ -285,6 +370,9 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
     
+    # Nova tabela para salvar a rota e enviar para o celular do Davi
+    c.execute('''CREATE TABLE IF NOT EXISTS rota_ativa (id INTEGER PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)''')
+    
     c.execute("INSERT OR IGNORE INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90)")
     c.execute("INSERT OR IGNORE INTO config_trello (id, api_key, token, id_lista_concluida) VALUES (1, '', '', '')")
     c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '')")
@@ -292,19 +380,13 @@ def inicializar_bd():
     for sup in set(SUPERVISORES_MAP.values()):
         c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES (?, '')", (sup,))
     
-    # Atualiza as rotas para garantir que as edições recentes sobrescrevam antigas erradas
     for apelido, end in ENDERECOS_PADRAO:
         registro = c.execute("SELECT endereco FROM locais WHERE apelido = ?", (apelido,)).fetchone()
         if registro:
             if registro[0] != end:
                 c.execute("UPDATE locais SET endereco = ?, lat = NULL, lon = NULL WHERE apelido = ?", (end, apelido))
         else:
-            c.execute(
-                "INSERT INTO locais (apelido, endereco) "
-                "SELECT ?, ? WHERE NOT EXISTS ("
-                "SELECT 1 FROM locais_removidos WHERE apelido = ?)",
-                (apelido, end, apelido)
-            )
+            c.execute("INSERT INTO locais (apelido, endereco) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM locais_removidos WHERE apelido = ?)", (apelido, end, apelido))
 
     c.execute("DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'")
 
@@ -337,8 +419,7 @@ def identificar_grupo_teams(destino, obra=""):
         (("PARANGABA", "ESCRITÓRIO"), "sede_parangaba"),
     ]
     for termos, chave in regras:
-        if any(termo in texto for termo in termos):
-            return chave
+        if any(termo in texto for termo in termos): return chave
     return ""
 
 def obter_webhook_teams(setor, supervisor=None, obra=""):
@@ -398,6 +479,22 @@ def disparar_teams(webhook_url, titulo, mensagem):
         if tentativa < 2: time.sleep(1 + tentativa)
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
+
+def mover_cartao_trello(card_id):
+    conn = sqlite3.connect(DB_FILE)
+    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
+    conn.close()
+    
+    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
+        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
+        
+    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
+    try:
+        req = urllib.request.Request(url, method='PUT')
+        urllib.request.urlopen(req, timeout=5)
+        return True, "Movido com sucesso!"
+    except Exception as e:
+        return False, f"Erro de comunicação com o Trello: {e}"
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -488,7 +585,7 @@ def buscar_geometria_rota(coords_ordenadas):
             res = json.loads(response.read())
         if res.get("code") == "Ok" and res.get("routes"):
             coordenadas = res["routes"][0]["geometry"]["coordinates"]
-            return [[lat, lon] for lon, lat in coordenadas], True
+            return [[lat, lon] for lat, lon in coordenadas], True
     except Exception: pass
 
     return [[lat, lon] for lat, lon in coords_limpas], False
@@ -721,7 +818,7 @@ def carregar_config_protege():
     except Exception: return "", "", RASTREADOR_VEICULOS_PADRAO
 
 # =====================================================================
-# INTERFACE STREAMLIT
+# INTERFACE STREAMLIT (TOPO / LOGO)
 # =====================================================================
 
 try:
@@ -747,6 +844,8 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     
+    st.info("📱 **Link do Motorista:** Adicione `?davi=true` no final do link do site e mande pro Davi para ele acessar o app no celular.")
+
     if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
             try:
@@ -796,10 +895,8 @@ with st.sidebar:
                                     )
                                     disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
 
-                            conn.execute(
-                                "INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
-                                (c['id'], short_name, origem, destino, materiais, data_conclusao)
-                            )
+                            conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
+                                (c['id'], short_name, origem, destino, materiais, data_conclusao))
                             ids_concluidos_validos_hoje.add(c['id'])
                         continue
                     
@@ -1192,18 +1289,23 @@ with tab_roteiro:
             pontos_necessarios = {canonicalizar_ponto_rota(p) for p in pontos_brutos if canonicalizar_ponto_rota(p) not in {"", "DESCONHECIDO", "NAN", "NONE"}}
             
             locais_dict = {}
+            enderecos_dict = {}
             for p in pontos_necessarios:
                 res = conn.execute("SELECT endereco, lat, lon FROM locais WHERE apelido = ?", (p,)).fetchone()
                 if res and res[1] is not None and res[2] is not None:
                     locais_dict[p] = (res[1], res[2])
+                    enderecos_dict[p] = res[0]
                     continue
                 if res and res[0]:
                     lat, lon = buscar_coordenadas(res[0])
                     if lat is not None and lon is not None:
                         conn.execute("UPDATE locais SET lat = ?, lon = ? WHERE apelido = ?", (lat, lon, p))
                         locais_dict[p] = (lat, lon)
+                        enderecos_dict[p] = res[0]
             conn.commit()
             conn.close()
+            
+            st.session_state['enderecos_dict'] = enderecos_dict
             
             faltando = sorted(p for p in pontos_necessarios if p not in locais_dict and p not in {"", "DESCONHECIDO", "NAN", "NONE"})
             if faltando:
@@ -1332,10 +1434,20 @@ with tab_roteiro:
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
 
+            # SALVA NO BD PARA O APP DO CELULAR LER
+            conn = sqlite3.connect(DB_FILE)
+            conn.execute(
+                "INSERT OR REPLACE INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km) VALUES (1, ?, ?, ?, ?, ?, ?)",
+                (DATA_REF_ROTA_STR, json.dumps(route_steps), json.dumps(locais_dict), json.dumps(geometria_rota), json.dumps(enderecos_dict), total_km)
+            )
+            conn.commit()
+            conn.close()
+
     if st.session_state.get('rota_gerada', False):
         route_steps = st.session_state['route_steps']
         total_km = st.session_state['total_km']
         locais_dict = st.session_state['locais_dict']
+        enderecos_dict = st.session_state.get('enderecos_dict', {})
         p_saida = st.session_state['p_saida']
         horario_conclusao_min = st.session_state.get('horario_conclusao_min')
         
@@ -1388,6 +1500,13 @@ with tab_roteiro:
                     continue
 
                 is_start = (i == 0 and step['destino'] == p_saida)
+                
+                endereco_db = enderecos_dict.get(step['destino'], "")
+                if endereco_db.startswith("http"): link_parada = endereco_db
+                elif endereco_db: link_parada = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}"
+                else:
+                    lat_f, lon_f = locais_dict[step['destino']]
+                    link_parada = f"https://www.google.com/maps/dir/?api=1&destination={lat_f},{lon_f}"
 
                 with st.container(border=True):
                     if is_start:
@@ -1398,6 +1517,7 @@ with tab_roteiro:
                         st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}** `⏰ {step['chegada']} às {step['saida']}`")
                         st.caption(f"🚘 Trecho: {step['dist']:.1f} km (~{step['travel_mins']:.0f} min) | Pátio: {step['tempo_local']} min")
                         texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
+                        texto_whatsapp += f"🧭 *GPS:* {link_parada}\n"
                     
                     for acao, t in step['actions']:
                         cor = "orange" if acao == "COLETAR" else "green"
@@ -1410,9 +1530,7 @@ with tab_roteiro:
                         texto_whatsapp += f" - {prefixo_status}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                         
                     texto_whatsapp += "\n"
-                    
-                    if not is_start:
-                        num_parada += 1
+                    if not is_start: num_parada += 1
 
             horario_conclusao = format_time(horario_conclusao_min)
             if horario_conclusao_min < FIM_EXPEDIENTE_MIN:
@@ -1434,21 +1552,24 @@ with tab_roteiro:
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km | 💰 **{desc_custo}:** R$ {custo_rota:.2f}")
             texto_whatsapp += f"🛣️ Total Planejado: {total_km:.1f} km\n"
 
-            # --- INÍCIO DO GERADOR DE LINK DO GOOGLE MAPS ---
-            if len(coords_ordenadas_rota) > 1:
-                origem_str = f"{coords_ordenadas_rota[0][0]},{coords_ordenadas_rota[0][1]}"
-                destino_str = f"{coords_ordenadas_rota[-1][0]},{coords_ordenadas_rota[-1][1]}"
-                waypoints_list = [f"{lat},{lon}" for lat, lon in coords_ordenadas_rota[1:-1]]
+            if len(route_steps) > 1:
+                waypts_addr = []
+                for s in route_steps:
+                    addr = enderecos_dict.get(s['destino'], "")
+                    if not addr or addr.startswith("http"):
+                        lat_f, lon_f = locais_dict[s['destino']]
+                        waypts_addr.append(f"{lat_f},{lon_f}")
+                    else: waypts_addr.append(urllib.parse.quote(addr))
                 
-                waypoints_str = "|".join(waypoints_list[:9]) 
+                origem_str = waypts_addr[0]
+                destino_str = waypts_addr[-1]
+                waypoints_str = "|".join(waypts_addr[1:-1][:9]) 
                 
                 link_maps = f"https://www.google.com/maps/dir/?api=1&origin={origem_str}&destination={destino_str}&travelmode=driving"
-                if waypoints_str:
-                    link_maps += f"&waypoints={waypoints_str}"
+                if waypoints_str: link_maps += f"&waypoints={waypoints_str}"
                 
-                texto_whatsapp += "\n🗺️ *LINK DO GPS PARA ESTA ROTA:*\n"
-                texto_whatsapp += f"Clique aqui para abrir no mapa: {link_maps}\n"
-            # --- FIM DO GERADOR DE LINK DO GOOGLE MAPS ---
+                texto_whatsapp += "\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n"
+                texto_whatsapp += f"{link_maps}\n"
 
             st.divider()
             with st.form("fechamento_km_rota"):
@@ -1482,7 +1603,7 @@ with tab_roteiro:
                         f"**Situação após a rota:** {status_expediente}\n\n"
                         f"**Total de paradas:** {num_parada-1}\n\n"
                         f"**Quilometragem Planejada:** {total_km:.1f} km\n\n"
-                        f"[Abrir GPS da Rota]({link_maps})"
+                        f"[Abrir GPS da Rota Completa]({link_maps})"
                     )
                     enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Liberado!", resumo)
                     if enviado: st.success("✅ Roteiro enviado para o grupo Geral!")
@@ -1547,7 +1668,6 @@ with tab_roteiro:
 
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
 
-            # O marcador principal de saída desenhado com a BANDEIRA XADREZ (🏁)
             if p_saida in locais_dict:
                 lat_s, lon_s = path_points[0]
                 folium.Marker(
