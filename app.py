@@ -16,6 +16,7 @@ import requests
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from streamlit_gsheets import GSheetsConnection
 
 # =====================================================================
 # CONFIGURAÇÕES DE TELA E RELÓGIO (VIRADA DE TURNO)
@@ -34,6 +35,22 @@ else:
 
 DATA_HOJE_REAL_STR = AGORA_REAL.strftime("%d/%m/%Y")
 DB_FILE = "enderecos_logistica.db"
+
+# --- CONEXÃO COM O GOOGLE SHEETS ---
+conn_sheets = st.connection("gsheets", type=GSheetsConnection)
+
+def ler_dados_sheets(worksheet_name):
+    try:
+        df = conn_sheets.read(worksheet=worksheet_name, ttl=0)
+        return df.dropna(how="all")
+    except:
+        return pd.DataFrame()
+
+def salvar_dados_sheets(df_novo, worksheet_name):
+    # Lê os dados atuais, adiciona a nova linha e atualiza a planilha inteira
+    df_atual = ler_dados_sheets(worksheet_name)
+    df_atualizado = pd.concat([df_atual, df_novo], ignore_index=True)
+    conn_sheets.update(worksheet=worksheet_name, data=df_atualizado)
 
 # --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
 def aplicar_estilo_customizado():
@@ -81,7 +98,7 @@ def aplicar_estilo_customizado():
 aplicar_estilo_customizado()
 
 # =====================================================================
-# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO Waze (COM ALMOÇO TRAVADO)
+# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO Waze
 # =====================================================================
 def parse_time_to_mins(time_str):
     if not time_str: return 0
@@ -99,7 +116,6 @@ def format_mins_to_time(mins):
 
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
-    
     agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
     
@@ -343,21 +359,6 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS locais_removidos (apelido TEXT PRIMARY KEY)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_frota (id INTEGER PRIMARY KEY, consumo REAL, preco_gasolina REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)''')
-    try: c.execute("ALTER TABLE historico_concluidos ADD COLUMN hora_conclusao TEXT")
-    except: pass 
-    
-    # ATUALIZAÇÃO DA SEPARAÇÃO DE VEÍCULOS (STRADA / L200)
-    try: c.execute("ALTER TABLE abastecimentos ADD COLUMN veiculo TEXT DEFAULT 'Strada'")
-    except: pass
-    try: c.execute("ALTER TABLE registro_km ADD COLUMN veiculo TEXT DEFAULT 'Strada'")
-    except: pass
-    
-    # Corrige os registros antigos da Borracharia pra L200 automaticamente
-    c.execute("UPDATE abastecimentos SET veiculo = 'L200' WHERE UPPER(obs) LIKE '%DEDÉ%' OR UPPER(obs) LIKE '%DEDE%' OR UPPER(obs) LIKE '%L200%'")
-    
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF-2123', ?, '08:44')", (DATA_HOJE_REAL_STR,))
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF2123', ?, '08:44')", (DATA_HOJE_REAL_STR,))
@@ -473,9 +474,11 @@ def normalizar_local(nome):
     if "ESPACO" in n: n = n.replace("ESPACO", "ESPAÇO")
     return n
 
-def canonicalizar_ponto_rota(nome):
+def def canonicalizar_ponto_rota(nome):
     texto = normalizar_local(str(nome or ""))
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
+    # Remove automaticamente artigos indesejados no começo (Ex: A BARRA -> BARRA, O MARACANAÚ -> MARACANAÚ)
+    texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
 
@@ -956,20 +959,29 @@ with tab_enderecos:
             st.success(f"✅ Local '{local_remover}' removido."); st.rerun()
 
 with tab_custos:
-    st.subheader("💰 Fechamento Mensal e Controle de Frota")
+    st.subheader("💰 Fechamento Mensal e Controle de Frota (Google Sheets)")
+    
+    # LEITURA DIRETA DO GOOGLE SHEETS
+    df_abastec = ler_dados_sheets("abastecimentos")
+    df_km = ler_dados_sheets("registro_km")
+    
     conn = sqlite3.connect(DB_FILE)
     cfg = pd.read_sql_query("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", conn).iloc[0]
+    conn.close()
     
     st.markdown("#### ⚙️ Estimativa Base do Carro")
     cc1, cc2 = st.columns(2)
     novo_consumo = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1)
     novo_preco = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01)
     if st.button("Atualizar Base"):
+        conn = sqlite3.connect(DB_FILE)
         conn.execute("UPDATE config_frota SET consumo=?, preco_gasolina=? WHERE id=1", (novo_consumo, novo_preco))
-        conn.commit(); st.success("✅ Base de cálculo atualizada!")
+        conn.commit()
+        conn.close()
+        st.success("✅ Base de cálculo atualizada!")
     
     st.divider()
-    col_recibo, col_km = st.columns(2)
+    col_recibo, col_km_form = st.columns(2)
     with col_recibo:
         st.markdown("#### ⛽ Lançar Recibo de Gasto")
         with st.form("form_recibo", clear_on_submit=True):
@@ -981,68 +993,65 @@ with tab_custos:
             f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
             f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
             if st.form_submit_button("Lançar no Caixa"):
-                conn.execute("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (?, ?, ?, ?, ?, ?)", (f_data.strftime("%d/%m/%Y"), f_litros, f_valor, f_manut, f_obs, fc_veic))
-                conn.commit(); st.success("Recibo salvo com sucesso!")
+                novo_reg = pd.DataFrame([{
+                    "data": f_data.strftime("%d/%m/%Y"),
+                    "veiculo": fc_veic,
+                    "litros": f_litros,
+                    "valor_litro": f_valor,
+                    "manutencao": f_manut,
+                    "obs": f_obs
+                }])
+                salvar_dados_sheets(novo_reg, "abastecimentos")
+                st.success("Recibo salvo com sucesso no Google Sheets!")
+                st.rerun()
 
-    with col_km:
-        st.markdown("#### 🛣️ Lançar KMs Avulsos")
+    with col_km_form:
+        st.markdown("#### 🛣️ Lançar KMs Avulsos / Período")
         with st.form("form_km", clear_on_submit=True):
-            k_data = st.date_input("Data da Corrida")
+            k_data = st.date_input("Data da Corrida / Fechamento")
             k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
             k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
-            k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
+            k_obs = st.text_input("Motivo / Período (Ex: 01/08 a 19/08)")
             if st.form_submit_button("Lançar KMs"):
-                conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (k_data.strftime("%d/%m/%Y"), k_km, k_obs, k_veic))
-                conn.commit(); st.success(f"{k_km} km salvos com sucesso!")
-
-    # BLOCO DE FECHAMENTO DE KM POR PERÍODO
-    st.divider()
-    st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
-    with st.form("form_fechamento_km", clear_on_submit=True):
-        col_f1, col_f2 = st.columns([1, 2])
-        f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
-        f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
-        
-        col_f3, col_f4, col_f5, col_f6 = st.columns(4)
-        f_data_ini = col_f3.date_input("Data Inicial")
-        f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
-        f_data_fin = col_f5.date_input("Data Final")
-        f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
-        
-        if st.form_submit_button("Calcular e Lançar Fechamento"):
-            km_rodado = f_km_fin - f_km_ini
-            if km_rodado > 0:
-                obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
-                conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (f_data_fin.strftime("%d/%m/%Y"), km_rodado, obs_final, f_veic))
-                conn.commit()
-                st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
-            else:
-                st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
+                novo_reg_km = pd.DataFrame([{
+                    "data": k_data.strftime("%d/%m/%Y"),
+                    "veiculo": k_veic,
+                    "km": k_km,
+                    "obs": k_obs
+                }])
+                salvar_dados_sheets(novo_reg_km, "registro_km")
+                st.success(f"{k_km} km salvos com sucesso no Google Sheets!")
+                st.rerun()
 
     st.divider()
     st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
     mes_atual_str = AGORA_REAL.strftime("%m/%Y")
     
-    df_km = pd.read_sql_query("SELECT * FROM registro_km", conn)
-    if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
-    df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
-    df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
-    
-    km_strada = df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'].sum() if not df_km_mes.empty else 0.0
-    km_l200 = df_km_mes[df_km_mes['veiculo'] == 'L200']['km'].sum() if not df_km_mes.empty else 0.0
-    
-    df_abastec = pd.read_sql_query("SELECT * FROM abastecimentos", conn)
-    if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
-    df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
-    df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
-    
-    df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
-    gas_strada = (df_gas_strada['litros'] * df_gas_strada['valor_litro']).sum() if not df_gas_strada.empty else 0.0
-    manut_strada = df_gas_strada['manutencao'].sum() if not df_gas_strada.empty else 0.0
+    # FILTRO KM MÊS
+    if not df_km.empty and 'data' in df_km.columns:
+        if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
+        df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
+        df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y'] == mes_atual_str].copy()
+        km_strada = pd.to_numeric(df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'], errors='coerce').sum()
+        km_l200 = pd.to_numeric(df_km_mes[df_km_mes['veiculo'] == 'L200']['km'], errors='coerce').sum()
+    else:
+        km_strada, km_l200 = 0.0, 0.0
 
-    df_gas_l200 = df_abastec_mes[df_abastec_mes['veiculo'] == 'L200']
-    gas_l200 = (df_gas_l200['litros'] * df_gas_l200['valor_litro']).sum() if not df_gas_l200.empty else 0.0
-    manut_l200 = df_gas_l200['manutencao'].sum() if not df_gas_l200.empty else 0.0
+    # FILTRO ABASTECIMENTOS MÊS
+    if not df_abastec.empty and 'data' in df_abastec.columns:
+        if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
+        df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
+        df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y'] == mes_atual_str].copy()
+        
+        df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
+        gas_strada = (pd.to_numeric(df_gas_strada['litros'], errors='coerce') * pd.to_numeric(df_gas_strada['valor_litro'], errors='coerce')).sum()
+        manut_strada = pd.to_numeric(df_gas_strada['manutencao'], errors='coerce').sum()
+
+        df_gas_l200 = df_abastec_mes[df_abastec_mes['veiculo'] == 'L200']
+        gas_l200 = (pd.to_numeric(df_gas_l200['litros'], errors='coerce') * pd.to_numeric(df_gas_l200['valor_litro'], errors='coerce')).sum()
+        manut_l200 = pd.to_numeric(df_gas_l200['manutencao'], errors='coerce').sum()
+    else:
+        gas_strada, manut_strada, gas_l200, manut_l200 = 0.0, 0.0, 0.0, 0.0
 
     custo_km_strada = (gas_strada + manut_strada) / km_strada if km_strada > 0 else 0.0
     custo_km_l200 = (gas_l200 + manut_l200) / km_l200 if km_l200 > 0 else 0.0
@@ -1066,28 +1075,24 @@ with tab_custos:
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8;'>⛽ Gasolina: <b>R$ {gas_l200:.2f}</b> &nbsp;|&nbsp; 🔧 Manutenção: <b>R$ {manut_l200:.2f}</b></p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # EXTRATO VISUAL DE REGISTROS (PARA VOCÊ CONFERIR TUDO O QUE FOI LANÇADO)
+    # EXTRATO VISUAL DO GOOGLE SHEETS
     st.divider()
-    st.markdown("#### 🗂️ Extrato Completo de Registros do Sistema")
+    st.markdown("#### 🗂️ Histórico Salvo na Planilha do Google")
     
     cx_abast, cx_km = st.columns(2)
     with cx_abast:
-        st.markdown("**⛽ Histórico de Abastecimentos / Gastos**")
-        df_abastec_all = pd.read_sql_query("SELECT data, veiculo, litros, valor_litro, manutencao, obs FROM abastecimentos ORDER BY id DESC", conn)
-        if not df_abastec_all.empty:
-            st.dataframe(df_abastec_all, use_container_width=True, hide_index=True)
+        st.markdown("**⛽ Abastecimentos e Gastos**")
+        if not df_abastec.empty:
+            st.dataframe(df_abastec, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum abastecimento registrado.")
+            st.info("Nenhum dado na planilha de abastecimentos.")
             
     with cx_km:
-        st.markdown("**🛣️ Histórico de Quilometragens**")
-        df_km_all = pd.read_sql_query("SELECT data, veiculo, km, obs FROM registro_km ORDER BY id DESC", conn)
-        if not df_km_all.empty:
-            st.dataframe(df_km_all, use_container_width=True, hide_index=True)
+        st.markdown("**🛣️ Quilometragens**")
+        if not df_km.empty:
+            st.dataframe(df_km, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum KM registrado.")
-
-    conn.close()
+            st.info("Nenhum dado na planilha de KM.")
 
 with tab_integ:
     st.subheader("⚙️ Configurações de Integrações e APIs")
@@ -1137,7 +1142,7 @@ with tab_roteiro:
             current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 44)
             current_point = ponto_saida
 
-            rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
+            rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_HOJE_REAL_STR,)).fetchone()
             if rota_salva and len(dict_concluidos_torre) > 0:
                 old_steps = json.loads(rota_salva[0])
                 for step in old_steps:
@@ -1291,7 +1296,6 @@ with tab_roteiro:
         if st.session_state.get('demandas_adiadas'): st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã.")
         
         conn = sqlite3.connect(DB_FILE)
-        
         df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
@@ -1382,10 +1386,15 @@ with tab_roteiro:
                 km_real = st.number_input("KM Efetivamente Rodado na Rota", value=float(total_km), step=1.0)
                 veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
                 if st.form_submit_button("Gravar KM no Painel de Custos"):
-                    conn = sqlite3.connect(DB_FILE)
-                    conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (DATA_REF_ROTA_STR, km_real, f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", veiculo_fechamento))
-                    conn.commit(); conn.close()
-                    st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento}!")
+                    novo_reg_auto = pd.DataFrame([{
+                        "data": DATA_REF_ROTA_STR,
+                        "veiculo": veiculo_fechamento,
+                        "km": km_real,
+                        "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})"
+                    }])
+                    salvar_dados_sheets(novo_reg_auto, "registro_km")
+                    st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento} no Google Sheets!")
+                    st.rerun()
 
             url_geral, _ = obter_webhook_teams("Geral / Logística")
             if url_geral:
