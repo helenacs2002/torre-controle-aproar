@@ -312,7 +312,7 @@ RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.asp
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
 INICIO_EXPEDIENTE_MIN = 7 * 60
-INICIO_ROTA_MIN = 7 * 60 + 30  
+INICIO_ROTA_MIN = 8 * 60 + 44  # TIF-2123 (Strada) iniciou às 08:44
 FIM_EXPEDIENTE_MIN = 17 * 60
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor"]
@@ -352,9 +352,11 @@ def inicializar_bd():
     except: pass 
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
     
-    # === INJEÇÃO DA HORA DE PARTIDA CONFORME SEU PEDIDO ===
-    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF', ?, '08:44')", (DATA_HOJE_REAL_STR,))
+    # === INJEÇÃO DA HORA DE PARTIDA COM A PLACA EXATA TIF-2123 ===
+    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF-2123', ?, '08:44')", (DATA_HOJE_REAL_STR,))
+    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('TIF2123', ?, '08:44')", (DATA_HOJE_REAL_STR,))
     c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC-3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
+    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
     
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
@@ -525,7 +527,6 @@ def buscar_geometria_rota(coords_ordenadas):
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
-# === EXTRAÇÃO INTELIGENTE (SUPORTE A TRANSBORDOS E PONTO) ===
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
@@ -719,7 +720,6 @@ def loop_automacoes_background():
                     url_webhook, _ = obter_webhook_teams(destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name)
                     hora_str = momento_conclusao.strftime("%H:%M")
 
-                    # ANTI-SPAM (MÁXIMO 5 MINUTOS DE ATRASO PARA AVISAR NO TEAMS)
                     if (agora_loop - momento_conclusao).total_seconds() / 60 <= 5 and url_webhook:
                         disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n" + f"**Obra:** {short_name}\n\n**Local:** {destino}\n\n**Materiais:** {materiais}\n\n**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}")
 
@@ -1188,6 +1188,7 @@ with tab_roteiro:
             st.session_state['total_km'] = total_km
             st.session_state['locais_dict'] = locais_dict
             st.session_state['p_saida'] = ponto_saida
+            st.session_state['horario_conclusao_min'] = current_time
             st.session_state['geometria_rota'] = geometria_rota
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
@@ -1228,8 +1229,8 @@ with tab_roteiro:
             num_parada = 1
             for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
-                    texto_whatsapp += f"🍔 Almoço: 12:00 às 13:00\n\n"
+                    st.warning(f"🍔 **Pausa para Almoço** (Previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
+                    texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
                     continue
                 if step['type'] == 'return':
                     st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
@@ -1303,7 +1304,7 @@ with tab_roteiro:
             url_geral, _ = obter_webhook_teams("Geral / Logística")
             if url_geral:
                 if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
+                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
                     enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
                     if enviado: st.success("✅ Roteiro enviado!")
                     else: st.error(f"Erro ao enviar: {detalhe}")
