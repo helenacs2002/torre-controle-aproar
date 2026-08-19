@@ -239,6 +239,69 @@ if modo_url == "true":
                 st.markdown(f"<a href='{link_gps}' target='_blank'><button style='width:100%; padding:15px; background-color:#2563eb; color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
                 p_num += 1
 
+    # --- MAPA VISUAL NO APP MOBILE ---
+    st.divider()
+    st.markdown("#### 🗺️ Visão Geral da Rota")
+    
+    m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12)
+    path_points_mobile = []
+    offsets_dict_mobile = {}
+    
+    def apply_offset_mobile(lat, lon):
+        key = (round(lat, 4), round(lon, 4))
+        offsets_dict_mobile[key] = offsets_dict_mobile.get(key, 0) + 1
+        cnt = offsets_dict_mobile[key]
+        if cnt > 1: return lat - 0.00035 * (cnt - 1), lon + 0.00035 * (cnt - 1)
+        return lat, lon
+
+    p_num_mapa = 1
+    if p_saida in locais_dict:
+        lat_s, lon_s = apply_offset_mobile(*locais_dict[p_saida])
+        path_points_mobile.append([lat_s, lon_s])
+
+    for i, step in enumerate(route_steps):
+        if step.get('destino') and step['destino'] in locais_dict:
+            if step['type'] in ['lunch', 'return']: continue
+            is_start = (i == 0 and step['destino'] == p_saida)
+            if is_start: continue 
+
+            lat_orig, lon_orig = locais_dict[step['destino']]
+            lat, lon = apply_offset_mobile(lat_orig, lon_orig)
+            path_points_mobile.append([lat, lon])
+
+            acoes = [a[0] for a in step.get('actions', [])]
+            tem_coleta = "COLETAR" in acoes
+            tem_entrega = "ENTREGAR" in acoes
+            if tem_coleta and tem_entrega: fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)"
+            elif tem_coleta: fundo_marcador = "#f59e0b"
+            else: fundo_marcador = "#16a34a"
+            
+            num_str = str(p_num_mapa)
+            popup_html = f"<b>Parada {p_num_mapa}: {html_escape(str(step['destino']))}</b>"
+            
+            folium.Marker(
+                [lat, lon], popup=folium.Popup(popup_html, max_width=280),
+                icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-family: sans-serif; font-size: 14px;">{num_str}</div>''')
+            ).add_to(m_mobile)
+            p_num_mapa += 1
+
+    if len(geometria_rota) > 1:
+        folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m_mobile)
+
+    if len(path_points_mobile) > 1: m_mobile.fit_bounds(path_points_mobile, padding=(30, 30), max_zoom=14)
+
+    if p_saida in locais_dict:
+        lat_s, lon_s = path_points_mobile[0]
+        folium.Marker(
+            [lat_s, lon_s], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280),
+            z_index_offset=1000,
+            icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')
+        ).add_to(m_mobile)
+
+    st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
+    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+    # --------------------------------------
+
     st.divider()
     st.caption("Central de Logística APROAR")
     st.stop() # Interrompe a renderização para não mostrar a Torre de Controle ao Davi
@@ -481,6 +544,22 @@ def disparar_teams(webhook_url, titulo, mensagem):
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
+def mover_cartao_trello(card_id):
+    conn = sqlite3.connect(DB_FILE)
+    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
+    conn.close()
+    
+    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
+        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
+        
+    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
+    try:
+        req = urllib.request.Request(url, method='PUT')
+        urllib.request.urlopen(req, timeout=5)
+        return True, "Movido com sucesso!"
+    except Exception as e:
+        return False, f"Erro de comunicação com o Trello: {e}"
+
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
@@ -721,7 +800,7 @@ def _montar_formulario_login(html, usuario, senha):
     campo_usuario = _escolher_campo(campos_usuario, ("usu", "user", "login", "email"))
     campo_senha = _escolher_campo(campos_senha, ("senha", "password", "pass"))
 
-    if not campo_usuario or not campo_senha: raise RuntimeError("Erro no portal.")
+    if not campo_usuario or not campo_senha: raise RuntimeError("Não foi possível identificar os campos de acesso do portal.")
 
     dados = {c["name"]: c.get("value", "") for c in campos_com_nome if c.get("type", "").lower() == "hidden"}
     dados[campo_usuario["name"]] = usuario
@@ -770,7 +849,7 @@ def consultar_posicoes_protege(sessao, pagina_atual, veiculos):
     resposta = sessao.post(url, params={"p1": veiculos}, headers={"X-Requested-With": "XMLHttpRequest", "Referer": pagina_atual}, timeout=20)
     resposta.raise_for_status()
     posicoes = _parsear_resposta_rastreador(resposta.text)
-    if not posicoes: raise RuntimeError("A sessão pode ter expirado.")
+    if not posicoes: raise RuntimeError("O portal não devolveu posições. A sessão pode ter expirado.")
     return posicoes
 
 def autenticar_protege(usuario, senha, veiculos):
@@ -789,7 +868,7 @@ def autenticar_protege(usuario, senha, veiculos):
             posicoes = consultar_posicoes_protege(sessao, pagina_atual, veiculos)
             return sessao, pagina_atual, posicoes
         except Exception as erro: ultimo_erro = erro
-    raise RuntimeError("Não foi possível autenticar no rastreador.") from ultimo_erro
+    raise RuntimeError("Não foi possível autenticar ou consultar o rastreador.") from ultimo_erro
 
 def carregar_config_protege():
     try:
@@ -833,6 +912,7 @@ with st.sidebar:
     st.markdown("📱 **App do Motorista**")
     st.caption("Clique no botão abaixo para copiar o link da rota e envie para o Davi no WhatsApp:")
     
+    # Script JavaScript que injeta a URL base com o sufixo secreto do Davi e copia para o clipboard
     html_copiar = """
     <script>
         function copyLink() {
@@ -1689,7 +1769,6 @@ with tab_roteiro:
 
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
 
-            # O marcador principal de saída desenhado com a BANDEIRA XADREZ (🏁)
             if p_saida in locais_dict:
                 lat_s, lon_s = path_points[0]
                 folium.Marker(
