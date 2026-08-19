@@ -492,7 +492,7 @@ def identificar_grupo_teams(destino, obra=""):
         (("PARANGABA", "ESCRITÓRIO"), "sede_parangaba"),
     ]
     for termos, chave in regras:
-        if any(termo in texto for termo in termos): return chave
+        if any(termo in texto for termos): return chave
     return ""
 
 def obter_webhook_teams(setor, supervisor=None, obra=""):
@@ -1063,7 +1063,10 @@ with st.sidebar:
                 conn.close()
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
-                if st.session_state.get('data_rota') != DATA_REF_ROTA_STR: st.session_state['rota_gerada'] = False
+                
+                # Cuidado para não apagar a rota gerada ao sincronizar
+                # if st.session_state.get('data_rota') != DATA_REF_ROTA_STR: st.session_state['rota_gerada'] = False
+                
                 st.success("✅ Trello Sincronizado e Demandas Importadas!")
             
             except Exception as e: st.error(f"⚠️ Erro ao acessar o Trello: {e}")
@@ -1408,10 +1411,16 @@ with tab_roteiro:
             st.warning(f"⚠️ Estas demandas estão sem origem ou destino legível no Trello e ficaram fora da rota: **{obras_incompletas}**.")
             df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
 
-    if df_ativos.empty:
-        st.info("Sincronize o Trello para carregar demandas antes de calcular a rota.")
-    
-    if st.button("🚀 Calcular Rota Otimizada", type="primary", disabled=df_ativos.empty):
+    # MUDANÇA IMPORTANTE: TRAVA DE SEGURANÇA PARA NÃO SOBRESCREVER A ROTA
+    rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
+
+    if rota_ativa_hoje:
+        st.warning("⚠️ **Atenção:** Já existe uma rota em andamento para hoje. Se você recalcular agora, o sistema apagará do mapa o histórico do que o motorista já entregou. Use este botão apenas no início do dia ou em caso de emergência total na rota.")
+        txt_botao = "⚠️ Recalcular Rota do Zero (Apaga o Histórico)"
+    else:
+        txt_botao = "🚀 Calcular Rota Otimizada"
+
+    if st.button(txt_botao, type="primary", disabled=df_ativos.empty):
         with st.spinner("Analisando limites de horário e traçando rota anti zigue-zague..."):
             
             st.session_state['demandas_adiadas'] = []
