@@ -258,8 +258,6 @@ if modo_url == "true":
     conn = sqlite3.connect(DB_FILE)
     try:
         res = conn.execute("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
-        
-        # Lê histórico com a HORA EXATA da baixa
         df_mobile = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
     except sqlite3.OperationalError:
@@ -518,12 +516,13 @@ def inicializar_bd():
     c.execute('''CREATE TABLE IF NOT EXISTS abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT)''')
     
-    # ATUALIZAÇÃO DA TABELA HISTÓRICO COM HORA_CONCLUSAO
     c.execute('''CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)''')
     try:
         c.execute("ALTER TABLE historico_concluidos ADD COLUMN hora_conclusao TEXT")
     except sqlite3.OperationalError:
-        pass # Coluna já existe
+        pass 
+
+    c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
         
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
@@ -555,7 +554,31 @@ def inicializar_bd():
     conn.commit()
     conn.close()
 
+# GARANTE QUE AO RECARREGAR (F5), A ROTA SALVA SEJA PUXADA DE VOLTA PARA O SESSION_STATE DA TORRE
 inicializar_bd()
+
+if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
+    conn = sqlite3.connect(DB_FILE)
+    try:
+        res_rota = conn.execute("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
+        if res_rota:
+            st.session_state['route_steps'] = json.loads(res_rota[0])
+            st.session_state['locais_dict'] = json.loads(res_rota[1])
+            st.session_state['geometria_rota'] = json.loads(res_rota[2])
+            st.session_state['enderecos_dict'] = json.loads(res_rota[3])
+            st.session_state['total_km'] = res_rota[4]
+            if st.session_state['route_steps']:
+                st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
+                last_saida = st.session_state['route_steps'][-1]['saida']
+                h, m = map(int, last_saida.split(':'))
+                st.session_state['horario_conclusao_min'] = h * 60 + m
+            st.session_state['geometria_viaria'] = True
+            st.session_state['rota_gerada'] = True
+            st.session_state['data_rota'] = DATA_REF_ROTA_STR
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 def identificar_grupo_teams(destino, obra=""):
     texto = normalizar_local(f"{obra} {destino}")
@@ -951,7 +974,12 @@ def carregar_config_protege():
         return usuario, senha, veiculos
     except Exception: return "", "", RASTREADOR_VEICULOS_PADRAO
 
-def varredura_silenciosa_trello():
+# =====================================================================
+# LOOP SILENCIOSO DE AUTOMAÇÃO (RODA NO FUNDO DA TORRE DE CONTROLE)
+# =====================================================================
+def loop_automacoes_background():
+    """Lê o Trello e o Rastreador de forma invisível para captar dados e auditar."""
+    # 1. VARREDURA TRELLO
     try:
         req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -980,7 +1008,6 @@ def varredura_silenciosa_trello():
                         supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
                         url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
                         
-                        # NOVIDADE: Capta a HORA e MINUTO da entrega no Trello
                         hora_str = momento_conclusao.strftime("%H:%M")
 
                         if url_webhook:
@@ -994,7 +1021,6 @@ def varredura_silenciosa_trello():
                             )
                             disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
 
-                        # Salva com a hora no BD
                         conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (c['id'], short_name, origem, destino, materiais, data_conclusao, hora_str))
                         novas_entregas += 1
@@ -1006,27 +1032,26 @@ def varredura_silenciosa_trello():
     except Exception:
         pass
 
-# =====================================================================
-# INTERFACE STREAMLIT (TOPO / LOGO)
-# =====================================================================
-
-try:
-    with open("logo.png", "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode()
-    
-    header_html = f"""
-    <div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;">
-        <img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;">
-        <h1 style="margin: 0; padding: 0; line-height: 1.2;">ORGANIZADOR DE ROTA - SUPRIMENTOS</h1>
-    </div>
-    """
-    st.markdown(header_html, unsafe_allow_html=True)
-except Exception:
-    st.title("🚚 ORGANIZADOR DE ROTA - SUPRIMENTOS")
-
-
-if "demandas" not in st.session_state:
-    st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
+    # 2. VARREDURA RASTREADOR (DEDO-DURO DE MOVIMENTO)
+    try:
+        sessao = st.session_state.get("protege_sessao")
+        pagina = st.session_state.get("protege_pagina")
+        usuario_protege, senha_protege, ids_veiculos = carregar_config_protege()
+        
+        if sessao and pagina and ids_veiculos:
+            posicoes = consultar_posicoes_protege(sessao, pagina, ids_veiculos)
+            conn = sqlite3.connect(DB_FILE)
+            for p in posicoes:
+                if p["Velocidade (km/h)"] > 0:
+                    res = conn.execute("SELECT hora_inicio FROM inicio_movimento WHERE placa=? AND data=?", (p["Placa"], DATA_HOJE_REAL_STR)).fetchone()
+                    if not res:
+                        match_time = re.search(r'(\d{2}:\d{2})', p['Última atualização'])
+                        hora_str = match_time.group(1) if match_time else datetime.now(FUSO_LOCAL).strftime("%H:%M")
+                        conn.execute("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (?, ?, ?)", (p["Placa"], DATA_HOJE_REAL_STR, hora_str))
+            conn.commit()
+            conn.close()
+    except Exception:
+        pass
 
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
@@ -1034,9 +1059,9 @@ with st.sidebar:
     
     if hasattr(st, "fragment"):
         @st.fragment(run_every="60s")
-        def _loop_trello():
-            varredura_silenciosa_trello()
-        _loop_trello()
+        def _loop_operacoes():
+            loop_automacoes_background()
+        _loop_operacoes()
 
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
@@ -1079,7 +1104,7 @@ with st.sidebar:
     if st.button("🔄 Sincronizar Manualmente com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
             try:
-                varredura_silenciosa_trello()
+                loop_automacoes_background()
 
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
@@ -1158,9 +1183,6 @@ with st.sidebar:
 if st.session_state.demandas.empty:
     st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
 
-# =====================================================================
-# ABAS PRINCIPAIS
-# =====================================================================
 tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_integ = st.tabs([
     "🗺️ Roteiro do Davi", 
     "📡 Rastreador ao Vivo",
@@ -1204,6 +1226,25 @@ with tab_rastreador:
                         st.session_state["protege_sessao"] = sessao
                         st.session_state["protege_pagina"] = pagina
 
+                conn = sqlite3.connect(DB_FILE)
+                try:
+                    for p in posicoes:
+                        if p["Velocidade (km/h)"] > 0:
+                            res = conn.execute("SELECT hora_inicio FROM inicio_movimento WHERE placa=? AND data=?", (p["Placa"], DATA_HOJE_REAL_STR)).fetchone()
+                            if not res:
+                                match_time = re.search(r'(\d{2}:\d{2})', p['Última atualização'])
+                                hora_str = match_time.group(1) if match_time else datetime.now(FUSO_LOCAL).strftime("%H:%M")
+                                conn.execute("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (?, ?, ?)", (p["Placa"], DATA_HOJE_REAL_STR, hora_str))
+                                conn.commit()
+                    start_times = {row[0]: row[1] for row in conn.execute("SELECT placa, hora_inicio FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchall()}
+                except Exception:
+                    start_times = {}
+                finally:
+                    conn.close()
+
+                for p in posicoes:
+                    p['🟢 Início (Hoje)'] = start_times.get(p['Placa'], "Ainda não andou")
+
                 velocidades = [p["Velocidade (km/h)"] for p in posicoes]
                 em_movimento = sum(1 for v in velocidades if v > 0)
 
@@ -1233,7 +1274,7 @@ with tab_rastreador:
 
                 st_folium(mapa, height=520, use_container_width=True, returned_objects=[], key="mapa_rastreador_protege")
 
-                tabela = pd.DataFrame(posicoes)[["Placa", "Última atualização", "Velocidade (km/h)", "Situação", "Endereço"]]
+                tabela = pd.DataFrame(posicoes)[["Placa", "🟢 Início (Hoje)", "Última atualização", "Velocidade (km/h)", "Situação", "Endereço"]]
                 st.dataframe(tabela, use_container_width=True, hide_index=True)
 
             except Exception:
@@ -1713,7 +1754,6 @@ with tab_roteiro:
                         cor = "orange" if acao == "COLETAR" else "green"
                         icone = "📦 COLETAR:" if acao == "COLETAR" else "📬 ENTREGAR:"
                         
-                        # NOVIDADE DA AUDITORIA AQUI!
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
                         hora_baixa_torre = dict_concluidos_torre.get(card_id_torre) or ""
