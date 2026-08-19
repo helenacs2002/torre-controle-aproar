@@ -184,8 +184,12 @@ if modo_url == "true":
     conn = sqlite3.connect(DB_FILE)
     try:
         res = conn.execute("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
+        
+        # Puxa as demandas que já foram dadas baixa hoje para colocar o ✅ no app dele
+        ids_concluidos_hoje = {str(r[0]) for r in conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()}
     except sqlite3.OperationalError:
         res = None
+        ids_concluidos_hoje = set()
     conn.close()
 
     if not res:
@@ -233,7 +237,12 @@ if modo_url == "true":
             for acao, t in step['actions']:
                 cor = "orange" if acao == "COLETAR" else "green"
                 icone = "📦" if acao == "COLETAR" else "📬"
-                st.markdown(f":{cor}[**{icone} {acao}**] {t['Materiais']} <br>*(Obra: {t['Obra']})*", unsafe_allow_html=True)
+                
+                # Regra do Checkmark (✅) visual no Celular do Motorista
+                concluida = str(t.get('id', '')) in ids_concluidos_hoje
+                texto_check = " &nbsp;<span style='font-size: 1.1em;'>✅</span>" if concluida else ""
+
+                st.markdown(f":{cor}[**{icone} {acao}**] {t['Materiais']} <br>*(Obra: {t['Obra']})*{texto_check}", unsafe_allow_html=True)
                 
             if not is_start:
                 st.markdown(f"<a href='{link_gps}' target='_blank'><button style='width:100%; padding:15px; background-color:#2563eb; color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
@@ -543,22 +552,6 @@ def disparar_teams(webhook_url, titulo, mensagem):
         if tentativa < 2: time.sleep(1 + tentativa)
 
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
-
-def mover_cartao_trello(card_id):
-    conn = sqlite3.connect(DB_FILE)
-    cfg = conn.execute("SELECT api_key, token, id_lista_concluida FROM config_trello WHERE id=1").fetchone()
-    conn.close()
-    
-    if not cfg or not cfg[0] or not cfg[1] or not cfg[2]:
-        return False, "Chaves da API ou Lista de Destino não configuradas na aba de Integrações."
-        
-    url = f"https://api.trello.com/1/cards/{card_id}?idList={cfg[2]}&key={cfg[0]}&token={cfg[1]}"
-    try:
-        req = urllib.request.Request(url, method='PUT')
-        urllib.request.urlopen(req, timeout=5)
-        return True, "Movido com sucesso!"
-    except Exception as e:
-        return False, f"Erro de comunicação com o Trello: {e}"
 
 def is_in_ceara(lat, lon):
     return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
@@ -881,6 +874,63 @@ def carregar_config_protege():
         return usuario, senha, veiculos
     except Exception: return "", "", RASTREADOR_VEICULOS_PADRAO
 
+
+# =====================================================================
+# NOVA AUTOMAÇÃO: RADAR CONTÍNUO DO TRELLO (Roda sozinho em 2º plano)
+# =====================================================================
+def varredura_silenciosa_trello():
+    """Lê o Trello invisivelmente a cada minuto, atualiza o BD e avisa no Teams."""
+    try:
+        req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read())
+        
+        trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
+        cards = data.get('cards', [])
+        acoes = data.get('actions', [])
+        
+        conn = sqlite3.connect(DB_FILE)
+        registros_antigos = conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()
+        ids_ja_notificados = {str(r[0]) for r in registros_antigos}
+        
+        novas_entregas = 0
+        for c in cards:
+            if c.get('closed'): continue
+            nome_lista = trello_lists.get(c.get('idList', ''), '').upper()
+            
+            if lista_esta_concluida(nome_lista):
+                momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
+                if momento_conclusao:
+                    data_conclusao = momento_conclusao.strftime("%d/%m/%Y")
+                    
+                    if str(c['id']) not in ids_ja_notificados and data_conclusao == DATA_HOJE_REAL_STR:
+                        short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
+                        supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
+                        url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
+                        
+                        if url_webhook:
+                            concluida_em = momento_conclusao.strftime("%d/%m/%Y às %H:%M")
+                            mensagem = (
+                                "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
+                                f"**Obra:** {short_name}\n\n"
+                                f"**Local:** {destino}\n\n"
+                                f"**Materiais:** {materiais}\n\n"
+                                f"**Data e Hora:** {concluida_em}"
+                            )
+                            disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
+
+                        conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
+                            (c['id'], short_name, origem, destino, materiais, data_conclusao))
+                        novas_entregas += 1
+        conn.commit()
+        conn.close()
+        
+        if novas_entregas > 0:
+            st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello detectada(s) automaticamente!", icon="✅")
+    except Exception:
+        pass  # Se a internet oscilar ou o Trello cair, ele engole o erro e tenta no próximo minuto.
+
+
 # =====================================================================
 # INTERFACE STREAMLIT (TOPO / LOGO)
 # =====================================================================
@@ -908,11 +958,17 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     
+    # ATIVAÇÃO DO RADAR CONTÍNUO (A cada 60s)
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="60s")
+        def _loop_trello():
+            varredura_silenciosa_trello()
+        _loop_trello()
+
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
     st.caption("Clique no botão abaixo para copiar o link da rota e envie para o Davi no WhatsApp:")
     
-    # Script JavaScript que injeta a URL base com o sufixo secreto do Davi e copia para o clipboard
     html_copiar = """
     <script>
         function copyLink() {
@@ -947,9 +1003,13 @@ with st.sidebar:
     st.components.v1.html(html_copiar, height=45)
     st.markdown("---")
 
-    if st.button("🔄 Sincronizar com Trello", use_container_width=True, type="primary"):
+    if st.button("🔄 Sincronizar Manualmente com Trello", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
             try:
+                # Dispara a varredura silenciosa manualmente para forçar agora se o usuário quiser
+                varredura_silenciosa_trello()
+
+                # Continua o carregamento dos cartões ativos para a tela de demandas
                 req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
                 with urllib.request.urlopen(req, timeout=60) as response:
                     data = json.loads(response.read())
@@ -957,49 +1017,20 @@ with st.sidebar:
                 st.session_state['trello_lists_raw'] = data.get('lists', [])
                 trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
                 cards = data.get('cards', [])
-                acoes = data.get('actions', [])
                 
                 demandas_extraidas = []
-                ids_concluidos_validos_hoje = set()
                 
                 conn = sqlite3.connect(DB_FILE)
                 df_antigo = st.session_state.demandas
                 
-                # Resgata quem já foi notificado hoje
-                registros_antigos = conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()
-                ids_ja_notificados = {str(r[0]) for r in registros_antigos}
-                
                 for c in cards:
                     if c.get('closed'): continue
                     nome_lista = trello_lists.get(c.get('idList', ''), '').upper()
+                    if lista_esta_concluida(nome_lista): continue
                     
                     short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
                     peso, status_prazo = classificar_prioridade(c.get('due'))
                     supervisor = SUPERVISORES_MAP.get(destino, "Sede / Logística")
-                    
-                    if lista_esta_concluida(nome_lista):
-                        momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
-                        if momento_conclusao:
-                            data_conclusao = momento_conclusao.strftime("%d/%m/%Y")
-                            
-                            # Dispara Teams Automático se for novo hoje!
-                            if str(c['id']) not in ids_ja_notificados and data_conclusao == DATA_HOJE_REAL_STR:
-                                url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
-                                if url_webhook:
-                                    concluida_em = momento_conclusao.strftime("%d/%m/%Y às %H:%M")
-                                    mensagem = (
-                                        "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
-                                        f"**Obra:** {short_name}\n\n"
-                                        f"**Local:** {destino}\n\n"
-                                        f"**Materiais:** {materiais}\n\n"
-                                        f"**Data e Hora:** {concluida_em}"
-                                    )
-                                    disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
-
-                            conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
-                                (c['id'], short_name, origem, destino, materiais, data_conclusao))
-                            ids_concluidos_validos_hoje.add(c['id'])
-                        continue
                     
                     endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
                     if endereco_card:
@@ -1033,7 +1064,7 @@ with st.sidebar:
                 
                 st.session_state.demandas = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
                 if st.session_state.get('data_rota') != DATA_REF_ROTA_STR: st.session_state['rota_gerada'] = False
-                st.success(f"✅ Sincronizado! Avisos automáticos disparados para as baixas de hoje.")
+                st.success("✅ Trello Sincronizado e Demandas Importadas!")
             
             except Exception as e: st.error(f"⚠️ Erro ao acessar o Trello: {e}")
     
@@ -1165,7 +1196,7 @@ with tab_demandas:
     
     st.divider()
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
-    st.caption("Acompanhe em tempo real as entregas da rota gerada. Para atualizar os status, clique em 'Sincronizar com Trello' no menu lateral.")
+    st.caption("Acompanhe em tempo real as entregas da rota gerada. Elas são atualizadas com base nas baixas do Trello.")
 
     conn = sqlite3.connect(DB_FILE)
     df_entregues_hoje = pd.read_sql_query(
@@ -1625,8 +1656,11 @@ with tab_roteiro:
                         icone = "📦 COLETAR:" if acao == "COLETAR" else "📬 ENTREGAR:"
                         concluida = str(t.get('id', '')) in ids_concluidos_hoje
                         col_demanda, col_status = st.columns([9, 1])
-                        col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*")
-                        if concluida: col_status.markdown("✅")
+                        
+                        # O ✅ gigante fica grudado na demanda na Torre também
+                        check_ui = "&nbsp;<span style='color: #16a34a; font-size: 1.1em;'>✅</span>" if concluida else ""
+                        col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*{check_ui}", unsafe_allow_html=True)
+                        
                         prefixo_status = "✅ " if concluida else ""
                         texto_whatsapp += f" - {prefixo_status}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                         
