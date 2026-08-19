@@ -122,7 +122,7 @@ def aplicar_estilo_customizado():
             border-radius: 7px !important;
         }
 
-        /* Estilização das Abas (Tabs) */
+        /* Estilização Abas (Tabs) */
         [data-testid="stTabs"] button[role="tab"] {
             font-family: 'Inter', sans-serif !important;
             font-weight: 600 !important;
@@ -134,21 +134,19 @@ def aplicar_estilo_customizado():
             border-bottom-color: #ffffff !important;
         }
 
-        /* Caixas de Alerta (Info, Success, Warning, Error) */
+        /* Caixas de Alerta */
         [data-testid="stAlert"] {
             border-radius: 7px !important;
             border: 1px solid rgba(64,116,146,.2) !important;
             background-color: #121530 !important;
         }
         
-        /* Esconder ícone do GitHub no canto superior */
         .css-1jc7ptx, .e1ewe7hr3, .viewerBadge_container__1QSob,
         .styles_viewerBadge__1yB5_, .viewerBadge_link__1S137,
         .viewerBadge_text__1JaDK {
             display: none !important;
         }
         
-        /* Deixar texto das métricas bonito */
         [data-testid="stMetricValue"] {
             color: #e4e8f4 !important;
             font-family: 'DM Mono', monospace !important;
@@ -523,6 +521,11 @@ def inicializar_bd():
         pass 
 
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
+    
+    # === INJEÇÃO MANUAL DO HORÁRIO DO CARRO PARA HOJE (08:35) ===
+    # Usa OR IGNORE para não sobrescrever caso o carro já tenha andado e o sistema tenha pego
+    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC-3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
+    c.execute("INSERT OR IGNORE INTO inicio_movimento (placa, data, hora_inicio) VALUES ('OSC3842', ?, '08:35')", (DATA_HOJE_REAL_STR,))
         
     c.execute('''CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS config_trello (id INTEGER PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)''')
@@ -554,7 +557,7 @@ def inicializar_bd():
     conn.commit()
     conn.close()
 
-# GARANTE QUE AO RECARREGAR (F5), A ROTA SALVA SEJA PUXADA DE VOLTA PARA O SESSION_STATE DA TORRE
+# GARANTE QUE AO RECARREGAR (F5), A ROTA SALVA SEJA PUXADA DE VOLTA PARA O SESSION_STATE DA TORRE E O BD ATUALIZE
 inicializar_bd()
 
 if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
@@ -979,6 +982,9 @@ def carregar_config_protege():
 # =====================================================================
 def loop_automacoes_background():
     """Lê o Trello e o Rastreador de forma invisível para captar dados e auditar."""
+    
+    agora_loop = datetime.now(FUSO_LOCAL)
+    
     # 1. VARREDURA TRELLO
     try:
         req = urllib.request.Request(TRELLO_JSON_URL, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
@@ -1010,16 +1016,23 @@ def loop_automacoes_background():
                         
                         hora_str = momento_conclusao.strftime("%H:%M")
 
-                        if url_webhook:
-                            concluida_em = momento_conclusao.strftime("%d/%m/%Y às %H:%M")
-                            mensagem = (
-                                "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
-                                f"**Obra:** {short_name}\n\n"
-                                f"**Local:** {destino}\n\n"
-                                f"**Materiais:** {materiais}\n\n"
-                                f"**Data e Hora:** {concluida_em}"
-                            )
-                            disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
+                        # --- TRAVA ANTI-SPAM DE SEGURANÇA (5 MINUTOS) ---
+                        # Se você atualizar a tela, o servidor apaga o DB temporário.
+                        # Para não mandar mensagens antigas, o robô só manda pro Teams se a 
+                        # entrega aconteceu nos últimos 5 minutos!
+                        minutos_passados = (agora_loop - momento_conclusao).total_seconds() / 60
+
+                        if minutos_passados <= 5: 
+                            if url_webhook:
+                                concluida_em = momento_conclusao.strftime("%d/%m/%Y às %H:%M")
+                                mensagem = (
+                                    "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
+                                    f"**Obra:** {short_name}\n\n"
+                                    f"**Local:** {destino}\n\n"
+                                    f"**Materiais:** {materiais}\n\n"
+                                    f"**Data e Hora:** {concluida_em}"
+                                )
+                                disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
 
                         conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (c['id'], short_name, origem, destino, materiais, data_conclusao, hora_str))
@@ -1028,7 +1041,7 @@ def loop_automacoes_background():
         conn.close()
         
         if novas_entregas > 0:
-            st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello detectada(s) automaticamente!", icon="✅")
+            st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
     except Exception:
         pass
 
@@ -1046,12 +1059,35 @@ def loop_automacoes_background():
                     res = conn.execute("SELECT hora_inicio FROM inicio_movimento WHERE placa=? AND data=?", (p["Placa"], DATA_HOJE_REAL_STR)).fetchone()
                     if not res:
                         match_time = re.search(r'(\d{2}:\d{2})', p['Última atualização'])
-                        hora_str = match_time.group(1) if match_time else datetime.now(FUSO_LOCAL).strftime("%H:%M")
+                        hora_str = match_time.group(1) if match_time else agora_loop.strftime("%H:%M")
                         conn.execute("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (?, ?, ?)", (p["Placa"], DATA_HOJE_REAL_STR, hora_str))
             conn.commit()
             conn.close()
     except Exception:
         pass
+
+
+# =====================================================================
+# INTERFACE STREAMLIT (TOPO / LOGO)
+# =====================================================================
+
+try:
+    with open("logo.png", "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode()
+    
+    header_html = f"""
+    <div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;">
+        <img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;">
+        <h1 style="margin: 0; padding: 0; line-height: 1.2;">ORGANIZADOR DE ROTA - SUPRIMENTOS</h1>
+    </div>
+    """
+    st.markdown(header_html, unsafe_allow_html=True)
+except Exception:
+    st.title("🚚 ORGANIZADOR DE ROTA - SUPRIMENTOS")
+
+
+if "demandas" not in st.session_state:
+    st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
