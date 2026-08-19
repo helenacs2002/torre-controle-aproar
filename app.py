@@ -244,31 +244,32 @@ ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "ESCRITÓRIO"}
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
     ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
-    ("ESCOLA CENTRO", "R. Agapito dos Santos, 750 - Centro, Fortaleza - CE"),
+    ("ESCOLA CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
     ("CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
-    ("NR SAÚDE", "R. Padre Ibiapina, 1449 - Jacarecanga, Fortaleza - CE"),
-    ("SESI BARRA DO CEARÁ", "R. Florêncio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
-    ("SENAI BARRA DO CEARÁ", "Av. Francisco Sá, 7221 - Barra do Ceará, Fortaleza - CE"),
+    ("NR SAÚDE", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"),
+    ("SESI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
+    ("SENAI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
     ("BARRA", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
-    ("SESI ALBANO FRANCO", "Av. Sen. Virgílio Távora, 1103 - Distrito Industrial, Maracanaú - CE"),
-    ("SESI CLUBE DA PARCERIA", "Av. Sen. Virgílio Távora, 1102 - Distrito Industrial, Maracanaú - CE"),
+    ("SESI ALBANO FRANCO", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
+    ("SESI CLUBE DA PARCERIA", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
     ("SENAI ISTEMM", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
     ("SENAI CETAFR", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
     ("MARACANAÚ", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
     ("SESI PARANGABA", "Av. João Pessoa, 6754 - Parangaba, Fortaleza - CE"),
     ("SENAI PARANGABA", "Av. João Pessoa, 6760 - Damas, Fortaleza - CE"),
     ("PARANGABA", "Av. João Pessoa, 6760 - Damas, Fortaleza - CE"),
-    ("SESI MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE"),
-    ("MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE"),
+    ("SESI MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE, 60030-000"),
+    ("MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE, 60030-000"),
     ("SESI SOBRAL", "Av. Dr. José Arimathéa Monte e Silva, 1003 - Junco, Sobral - CE"),
     ("ESCRITÓRIO", LOCAL_BASE_ENDERECO),
     ("ALMOXARIFADO", LOCAL_BASE_ENDERECO),
     ("ESPAÇO SMART", "BR-116, 9370 - Barroso, Fortaleza - CE, 60862-735"),
     ("ALDEOTA", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"),
     ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"),
-    ("FIEC", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"),
-    ("UNIFOR", "Av. Washington Soares, 1321 - Edson Queiroz, Fortaleza - CE"),
+    ("FIEC", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"),
+    ("UNIFOR", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"),
     ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE"),
+    ("SEBRAE", "Avenida Monsenhor Tabosa, 777 - Meireles, Fortaleza - CE"),
     ("LECI FERRAGENS", "Rua Gen. Clarindo de Queiroz, 1668 - Centro, Fortaleza - CE")
 ]
 
@@ -291,13 +292,19 @@ def inicializar_bd():
     for sup in set(SUPERVISORES_MAP.values()):
         c.execute("INSERT OR IGNORE INTO webhooks_teams (setor, url) VALUES (?, '')", (sup,))
     
+    # Atualiza as rotas para garantir que as edições recentes sobrescrevam antigas erradas
     for apelido, end in ENDERECOS_PADRAO:
-        c.execute(
-            "INSERT OR IGNORE INTO locais (apelido, endereco) "
-            "SELECT ?, ? WHERE NOT EXISTS ("
-            "SELECT 1 FROM locais_removidos WHERE apelido = ?)",
-            (apelido, end, apelido)
-        )
+        registro = c.execute("SELECT endereco FROM locais WHERE apelido = ?", (apelido,)).fetchone()
+        if registro:
+            if registro[0] != end:
+                c.execute("UPDATE locais SET endereco = ?, lat = NULL, lon = NULL WHERE apelido = ?", (end, apelido))
+        else:
+            c.execute(
+                "INSERT INTO locais (apelido, endereco) "
+                "SELECT ?, ? WHERE NOT EXISTS ("
+                "SELECT 1 FROM locais_removidos WHERE apelido = ?)",
+                (apelido, end, apelido)
+            )
 
     c.execute("DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'")
 
@@ -758,6 +765,7 @@ with st.sidebar:
                 conn = sqlite3.connect(DB_FILE)
                 df_antigo = st.session_state.demandas
                 
+                # Resgata quem já foi notificado hoje
                 registros_antigos = conn.execute("SELECT id FROM historico_concluidos WHERE data_conclusao = ?", (DATA_HOJE_REAL_STR,)).fetchall()
                 ids_ja_notificados = {str(r[0]) for r in registros_antigos}
                 
@@ -774,6 +782,7 @@ with st.sidebar:
                         if momento_conclusao:
                             data_conclusao = momento_conclusao.strftime("%d/%m/%Y")
                             
+                            # Dispara Teams Automático se for novo hoje!
                             if str(c['id']) not in ids_ja_notificados and data_conclusao == DATA_HOJE_REAL_STR:
                                 url_webhook, _ = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
                                 if url_webhook:
@@ -787,8 +796,10 @@ with st.sidebar:
                                     )
                                     disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
 
-                            conn.execute("INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
-                                (c['id'], short_name, origem, destino, materiais, data_conclusao))
+                            conn.execute(
+                                "INSERT OR REPLACE INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao) VALUES (?, ?, ?, ?, ?, ?)",
+                                (c['id'], short_name, origem, destino, materiais, data_conclusao)
+                            )
                             ids_concluidos_validos_hoje.add(c['id'])
                         continue
                     
@@ -1149,7 +1160,7 @@ with tab_integ:
     conn.close()
 
 # -------------------------------------------------------------
-# ABA: ROTEIRO E MAPA (COM LINK GOOGLE MAPS)
+# ABA: ROTEIRO E MAPA
 # -------------------------------------------------------------
 with tab_roteiro:
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR):
@@ -1328,7 +1339,6 @@ with tab_roteiro:
         p_saida = st.session_state['p_saida']
         horario_conclusao_min = st.session_state.get('horario_conclusao_min')
         
-        # Garante a reconstrução da ordem de coordenadas exatas
         coords_ordenadas_rota = [locais_dict[p_saida]]
         for step in route_steps:
             destino_step = step.get("destino")
@@ -1430,7 +1440,6 @@ with tab_roteiro:
                 destino_str = f"{coords_ordenadas_rota[-1][0]},{coords_ordenadas_rota[-1][1]}"
                 waypoints_list = [f"{lat},{lon}" for lat, lon in coords_ordenadas_rota[1:-1]]
                 
-                # O Google Maps aceita no máximo 9 paradas intermediárias num link via URL
                 waypoints_str = "|".join(waypoints_list[:9]) 
                 
                 link_maps = f"https://www.google.com/maps/dir/?api=1&origin={origem_str}&destination={destino_str}&travelmode=driving"
@@ -1441,7 +1450,6 @@ with tab_roteiro:
                 texto_whatsapp += f"Clique aqui para abrir no mapa: {link_maps}\n"
             # --- FIM DO GERADOR DE LINK DO GOOGLE MAPS ---
 
-            # FECHAMENTO REALISTA DE KM DA ROTA
             st.divider()
             with st.form("fechamento_km_rota"):
                 st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
@@ -1505,7 +1513,7 @@ with tab_roteiro:
                     if step['type'] in ['lunch', 'return']: continue
                     
                     is_start = (i == 0 and step['destino'] == p_saida)
-                    if is_start: continue # Pula desenhar um marcador numérico em cima do marcador de Início (Bandeira)
+                    if is_start: continue 
 
                     lat_orig, lon_orig = locais_dict[step['destino']]
                     lat, lon = apply_offset(lat_orig, lon_orig)
