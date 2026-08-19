@@ -477,6 +477,8 @@ def normalizar_local(nome):
 def canonicalizar_ponto_rota(nome):
     texto = normalizar_local(str(nome or ""))
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
+    # Remove automaticamente artigos indesejados no começo (Ex: A BARRA -> BARRA, O MARACANAÚ -> MARACANAÚ)
+    texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
 
