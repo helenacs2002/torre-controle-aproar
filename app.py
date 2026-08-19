@@ -81,7 +81,7 @@ def aplicar_estilo_customizado():
 aplicar_estilo_customizado()
 
 # =====================================================================
-# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO
+# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO (COM ALMOÇO 12h-13h)
 # =====================================================================
 def parse_time_to_mins(time_str):
     if not time_str: return 0
@@ -102,9 +102,16 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
     
     for step in route_steps:
-        if step['type'] in ['lunch', 'return']:
-            step['dyn_chegada'] = step['chegada']
-            step['dyn_saida'] = step['saida']
+        if step['type'] == 'lunch':
+            step['dyn_chegada'] = "12:00"
+            step['dyn_saida'] = "13:00"
+            step['is_concluded'] = False
+            current_min = max(current_min, 13 * 60)
+            continue
+            
+        if step['type'] == 'return':
+            step['dyn_chegada'] = format_mins_to_time(current_min + step.get('travel_mins', 0))
+            step['dyn_saida'] = step['dyn_chegada']
             step['is_concluded'] = False
             continue
             
@@ -121,11 +128,15 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             max_c = max(concluded_times)
             step['dyn_chegada'] = "Concluído"
             step['dyn_saida'] = format_mins_to_time(max_c)
-            current_min = max_c
+            current_min = max(current_min, max_c)
             step['is_concluded'] = True
         else:
             travel = step.get('travel_mins', 0)
             arr_min = current_min + travel
+            
+            # Trava estrita de almoço (12:00 às 13:00) se cruzar o meio-dia
+            if current_min < (12 * 60) and arr_min >= (12 * 60):
+                arr_min += 60
             
             if arr_min < agora_min: arr_min = agora_min
                 
@@ -238,10 +249,10 @@ if modo_url == "true":
 
     for i, step in enumerate(route_steps):
         if step['type'] == 'lunch':
-            st.warning(f"🍔 **Pausa para Almoço** ({step['chegada']} às {step['saida']})")
+            st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
             continue
         if step['type'] == 'return':
-            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada: {step['chegada']})")
+            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
             continue
 
         is_start = (i == 0 and step['destino'] == p_saida)
@@ -1136,9 +1147,13 @@ with tab_roteiro:
                     if d < 0.1: score = -1.0
                     if score < min_score: min_score, best_point, best_dist, best_dur = score, p, d, dur
 
-                if (current_time + best_dur) >= INICIO_ALMOCO_MIN and not lunch_taken:
-                    route_steps_new.append({"type": "lunch", "chegada": format_time(current_time + best_dur), "saida": format_time(current_time + best_dur + DURACAO_ALMOCO_MIN)})
-                    current_time += DURACAO_ALMOCO_MIN
+                # INSERÇÃO RIGOROSA DE ALMOÇO (12h-13h)
+                if current_time < (12 * 60) and (current_time + best_dur) >= (12 * 60) and not lunch_taken:
+                    route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
+                    current_time = 13 * 60
+                    lunch_taken = True
+                elif current_time >= (12 * 60) and current_time < (13 * 60) and not lunch_taken:
+                    current_time = 13 * 60
                     lunch_taken = True
 
                 current_time += best_dur
@@ -1220,8 +1235,8 @@ with tab_roteiro:
             num_parada = 1
             for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para Almoço** (Previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
-                    texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
+                    st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
+                    texto_whatsapp += f"🍔 Almoço: 12:00 às 13:00\n\n"
                     continue
                 if step['type'] == 'return':
                     st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
