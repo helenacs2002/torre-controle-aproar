@@ -1509,40 +1509,134 @@ if modo_url == "true":
     nova_previsao_str = format_mins_to_time(final_dyn_min)
     renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
-    st.markdown(f"<h4 style='color: #e4e8f4;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
-    p_num = 1
+    st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
+    st.caption("Deslize para o lado para avançar pelas etapas da rota.")
+    cartoes_mobile = []
+    numero_parada_mobile = 1
 
     for i, step in enumerate(route_steps):
-        if step['type'] == 'lunch':
-            st.warning(f"🍔 **Pausa para Almoço** (12:00 às 13:00)")
-            continue
-        if step['type'] == 'return':
-            st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
-            continue
+        tipo_step = step.get('type', '')
+        destino_step = str(step.get('destino', ''))
+        is_start = (i == 0 and destino_step == p_saida)
+        classe_card, selo, titulo_card, meta_card, botao_gps = "normal", "ETAPA", destino_step, "", ""
 
-        is_start = (i == 0 and step['destino'] == p_saida)
-        endereco_db = enderecos_dict.get(step['destino'], "")
-        link_gps = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
-
-        with st.container(border=True):
-            status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
-            
-            if is_start:
-                st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
-                st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']}", unsafe_allow_html=True)
+        if tipo_step == 'lunch':
+            classe_card, selo = "almoco", "PAUSA"
+            titulo_card = "🍔 Almoço"
+            meta_card = f"Horário previsto: {html_escape(str(step.get('dyn_chegada', '12:00')))} às {html_escape(str(step.get('dyn_saida', '13:00')))}"
+            corpo_acoes = "<div class='mensagem-etapa'>Pausa programada para descanso e alimentação.</div>"
+        elif tipo_step == 'return':
+            classe_card, selo = "retorno", "RETORNO"
+            titulo_card = f"🏁 Retorno à Base: {html_escape(destino_step)}"
+            meta_card = f"Chegada prevista: {html_escape(str(step.get('dyn_chegada', '')))}"
+            corpo_acoes = "<div class='mensagem-etapa'>Última etapa do roteiro. Retorne para a base indicada.</div>"
+        else:
+            endereco_db = enderecos_dict.get(destino_step, "")
+            coordenadas = locais_dict.get(destino_step, [None, None])
+            if str(endereco_db).startswith("http"):
+                link_gps = str(endereco_db)
+            elif endereco_db:
+                link_gps = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(str(endereco_db))}"
+            elif len(coordenadas) >= 2 and coordenadas[0] is not None:
+                link_gps = f"https://www.google.com/maps/dir/?api=1&destination={coordenadas[0]},{coordenadas[1]}"
             else:
-                st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {p_num}: {step['destino']}</h3>", unsafe_allow_html=True)
-                st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
-            
-            for acao, t in step['actions']:
-                cor, icone = ("orange", "📦") if acao == "COLETAR" else ("green", "📬")
-                card_id = str(t.get('id', ''))
-                texto_check = f" &nbsp;<span style='font-size: 1.1em; color: #16a34a;'>✅ {dict_concluidos_mobile[card_id]}</span>" if card_id in dict_concluidos_mobile else ""
-                st.markdown(f":{cor}[**{icone} {acao}**] {t['Materiais']} <br>*(Obra: {t['Obra']})*{texto_check}", unsafe_allow_html=True)
-                
+                link_gps = ""
+
+            if is_start:
+                classe_card, selo = "preparacao", "PREPARAÇÃO"
+                titulo_card = f"🏁 {html_escape(destino_step)}"
+                meta_card = f"Base: {html_escape(str(step.get('chegada', '')))} às {html_escape(str(step.get('saida', '')))}"
+            else:
+                selo = f"PARADA {numero_parada_mobile}"
+                titulo_card = f"📍 {html_escape(destino_step)}"
+                meta_card = f"Trecho: {float(step.get('dist', 0) or 0):.1f} km | Base: {html_escape(str(step.get('chegada', '')))} às {html_escape(str(step.get('saida', '')))}"
+
+            status_tempo = f"<span class='status concluido'>✅ Concluído às {html_escape(str(step.get('dyn_saida', '')))}</span>" if step.get('is_concluded') else f"<span class='status pendente'>⏳ Previsão: {html_escape(str(step.get('dyn_chegada', '')))} às {html_escape(str(step.get('dyn_saida', '')))}</span>"
+            blocos_acao = []
+            for acao, tarefa in step.get('actions', []):
+                eh_coleta = acao == "COLETAR"
+                classe_acao, icone = ("coleta", "📦") if eh_coleta else ("entrega", "📬")
+                card_id = str(tarefa.get('id', ''))
+                concluido = f"<div class='baixa'>✅ Baixa às {html_escape(str(dict_concluidos_mobile[card_id]))}</div>" if card_id in dict_concluidos_mobile else ""
+                blocos_acao.append(
+                    f"<div class='acao {classe_acao}'><div class='acao-titulo'>{icone} {html_escape(str(acao))}</div>"
+                    f"<div class='materiais'>{html_escape(str(tarefa.get('Materiais', '')))}</div>"
+                    f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}</div>"
+                )
+            corpo_acoes = status_tempo + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
             if not is_start:
-                st.markdown(f"<a href='{link_gps}' target='_blank' style='text-decoration:none;'><button style='width:100%; padding:15px; background:linear-gradient(135deg, #2563eb, #1d4ed8); color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer; box-shadow: 0 4px 10px rgba(37,99,235,0.3);'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
-                p_num += 1
+                if link_gps:
+                    botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
+                numero_parada_mobile += 1
+
+        cartoes_mobile.append(
+            f"<article class='cartao {classe_card}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
+            f"<h2>{titulo_card}</h2><div class='meta'>{meta_card}</div></div>"
+            f"<div class='conteudo-card'>{corpo_acoes}</div>{botao_gps}</article>"
+        )
+
+    if cartoes_mobile:
+        html_carrossel = """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+        <style>
+            * { box-sizing: border-box; }
+            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Inter, Arial, sans-serif; }
+            .barra { display:flex; justify-content:space-between; align-items:center; margin:0 4px 8px; color:#8da0b8; font-size:13px; }
+            .contador { color:#e4e8f4; font-weight:800; background:#151a31; border:1px solid #2b3654; padding:6px 10px; border-radius:999px; }
+            .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
+            .trilho::-webkit-scrollbar { display:none; }
+            .cartao { flex:0 0 calc(100% - 8px); height:430px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#121530,#0d1025); border:1px solid #303a59; border-radius:18px; box-shadow:0 10px 28px rgba(0,0,0,.32); }
+            .cartao.preparacao { border-color:#2563eb; }
+            .cartao.almoco { border-color:#f59e0b; }
+            .cartao.retorno { border-color:#16a34a; }
+            .topo-card { padding:18px 18px 13px; border-bottom:1px solid rgba(141,160,184,.18); }
+            .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
+            .almoco .selo { background:#92400e; color:#fef3c7; }
+            .retorno .selo { background:#166534; color:#dcfce7; }
+            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; }
+            .meta { color:#8da0b8; font-size:12px; line-height:1.45; }
+            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 8px; }
+            .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
+            .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
+            .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
+            .acao { margin-bottom:11px; padding:12px; border-radius:12px; border-left:4px solid; background:rgba(255,255,255,.035); }
+            .acao.coleta { border-color:#f59e0b; }
+            .acao.entrega { border-color:#16a34a; }
+            .acao-titulo { font-size:13px; font-weight:900; color:#f8fafc; margin-bottom:7px; }
+            .materiais { color:#e4e8f4; font-size:13px; line-height:1.45; }
+            .obra { color:#8da0b8; font-size:11.5px; font-style:italic; margin-top:7px; }
+            .baixa { color:#86efac; font-size:12px; font-weight:800; margin-top:7px; }
+            .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
+            .gps { display:block; margin:10px 14px 15px; padding:14px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
+            .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
+            .controle { border:1px solid #303a59; background:#151a31; color:#e4e8f4; border-radius:10px; padding:10px 8px; font-weight:800; cursor:pointer; }
+            .controle:disabled { opacity:.35; }
+            .pontos { display:flex; gap:5px; justify-content:center; max-width:130px; overflow:hidden; }
+            .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
+            .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
+        </style></head><body>
+            <div class="barra"><span>↔️ Deslize o cartão</span><span id="contador" class="contador">1 de __TOTAL__</span></div>
+            <div id="trilho" class="trilho">__CARTOES__</div>
+            <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
+        <script>
+            const trilho = document.getElementById('trilho');
+            const cartoes = Array.from(trilho.querySelectorAll('.cartao'));
+            const contador = document.getElementById('contador');
+            const anterior = document.getElementById('anterior');
+            const proxima = document.getElementById('proxima');
+            const pontos = document.getElementById('pontos');
+            let atual = 0;
+            cartoes.forEach((_, i) => { const p=document.createElement('button'); p.className='ponto'; p.onclick=()=>ir(i); pontos.appendChild(p); });
+            function atualizar(i) { atual=Math.max(0,Math.min(cartoes.length-1,i)); contador.textContent=`${atual+1} de ${cartoes.length}`; anterior.disabled=atual===0; proxima.disabled=atual===cartoes.length-1; Array.from(pontos.children).forEach((p,j)=>p.classList.toggle('ativo',j===atual)); }
+            function ir(i) { const indice=Math.max(0,Math.min(cartoes.length-1,i)); const alvo=cartoes[indice]; trilho.scrollTo({left:alvo.offsetLeft-trilho.offsetLeft,behavior:'smooth'}); atualizar(indice); }
+            function mover(delta) { ir(atual+delta); }
+            let timer; trilho.addEventListener('scroll',()=>{ clearTimeout(timer); timer=setTimeout(()=>{ const centro=trilho.scrollLeft+trilho.clientWidth/2; let melhor=0,dist=Infinity; cartoes.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-centro); if(d<dist){dist=d;melhor=i;} }); atualizar(melhor); },80); },{passive:true});
+            atualizar(0);
+        </script></body></html>
+        """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile)))
+        st.components.v1.html(html_carrossel, height=520, scrolling=False)
+    else:
+        st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
     st.markdown("#### 🗺️ Visão Geral da Rota")
