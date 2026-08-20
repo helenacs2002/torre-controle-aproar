@@ -1657,6 +1657,103 @@ def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto, material_fot
 
 
 # =====================================================================
+# ESTADO PERSISTENTE DOS COMPROVANTES DO DAVI
+# Mantém fotos/recebedor/finalização mesmo quando o swipe troca a demanda.
+# =====================================================================
+def garantir_tabela_comprovantes_davi():
+    execute_db(
+        """
+        CREATE TABLE IF NOT EXISTS comprovantes_entrega_davi (
+            id BIGSERIAL PRIMARY KEY,
+            data_rota TEXT NOT NULL,
+            demanda_id TEXT NOT NULL,
+            obra TEXT,
+            destino TEXT,
+            recebedor TEXT NOT NULL,
+            arquivo TEXT NOT NULL UNIQUE,
+            tipo_foto TEXT,
+            enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finalizado BOOLEAN NOT NULL DEFAULT FALSE
+        )
+        """
+    )
+
+
+def carregar_comprovantes_davi(data_rota):
+    estados = {}
+    linhas = fetch_all(
+        """
+        SELECT demanda_id, obra, destino, recebedor, arquivo, tipo_foto,
+               enviado_em, finalizado
+        FROM comprovantes_entrega_davi
+        WHERE data_rota = :data
+        ORDER BY enviado_em ASC, id ASC
+        """,
+        {"data": data_rota},
+    )
+    for linha in linhas:
+        m = linha._mapping if hasattr(linha, "_mapping") else linha
+        demanda_id = str(m["demanda_id"] or "")
+        chave = _nome_seguro_comprovante(demanda_id or "SEM-ID", 40)
+        estado = estados.setdefault(chave, {
+            "recebedor": str(m["recebedor"] or ""),
+            "fotos": [],
+            "finalizado": False,
+            "input_version": 0,
+        })
+        if not estado.get("recebedor"):
+            estado["recebedor"] = str(m["recebedor"] or "")
+        enviado_em = m["enviado_em"]
+        try:
+            hora = enviado_em.astimezone(FUSO_LOCAL).strftime("%H:%M")
+        except Exception:
+            hora = ""
+        estado["fotos"].append({
+            "arquivo": str(m["arquivo"] or ""),
+            "tipo": str(m["tipo_foto"] or "Foto"),
+            "hora": hora,
+        })
+        estado["finalizado"] = bool(estado.get("finalizado")) or bool(m["finalizado"])
+    return estados
+
+
+def registrar_foto_comprovante_davi(data_rota, tarefa, recebedor, arquivo, tipo_foto):
+    execute_db(
+        """
+        INSERT INTO comprovantes_entrega_davi
+            (data_rota, demanda_id, obra, destino, recebedor, arquivo, tipo_foto, enviado_em, finalizado)
+        VALUES
+            (:data, :demanda_id, :obra, :destino, :recebedor, :arquivo, :tipo_foto, NOW(), FALSE)
+        ON CONFLICT (arquivo) DO NOTHING
+        """,
+        {
+            "data": data_rota,
+            "demanda_id": str(tarefa.get("id", "") or ""),
+            "obra": str(tarefa.get("Obra", "") or ""),
+            "destino": str(tarefa.get("Destino", "") or ""),
+            "recebedor": str(recebedor or "").strip(),
+            "arquivo": str(arquivo or ""),
+            "tipo_foto": str(tipo_foto or "Foto"),
+        },
+    )
+
+
+def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
+    execute_db(
+        """
+        UPDATE comprovantes_entrega_davi
+        SET finalizado = :finalizado
+        WHERE data_rota = :data AND demanda_id = :demanda_id
+        """,
+        {
+            "finalizado": bool(finalizado),
+            "data": data_rota,
+            "demanda_id": str(demanda_id or ""),
+        },
+    )
+
+
+# =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
 modo_url = st.query_params.get("davi", "")
@@ -1699,6 +1796,7 @@ if modo_url == "true":
     # no servidor para que a mesma informação apareça no painel do escritório.
     etapa_param = st.query_params.get("etapa", "")
     feito_param = st.query_params.get("feito", "")
+    foco_param_atual = st.query_params.get("foco", "")
     if etapa_param != "" and feito_param in {"0", "1"}:
         try:
             etapa_indice = int(etapa_param)
@@ -1715,11 +1813,15 @@ if modo_url == "true":
             )
             st.query_params.clear()
             st.query_params["davi"] = "true"
+            if str(foco_param_atual).strip():
+                st.query_params["foco"] = str(foco_param_atual).strip()
             st.rerun()
         except Exception:
             erro_checkin_mobile = "Não foi possível salvar a marcação. Tente novamente."
             st.query_params.clear()
             st.query_params["davi"] = "true"
+            if str(foco_param_atual).strip():
+                st.query_params["foco"] = str(foco_param_atual).strip()
 
     try:
         dict_checkins_mobile = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
@@ -1738,14 +1840,30 @@ if modo_url == "true":
 
 
     # ---------------------------------------------------------------
-    # COMPROVANTE DE ENTREGA — FLUXO GUIADO PARA O MOTORISTA
-    # 1 recebedor por demanda, várias fotos e identificação do conteúdo.
+    # COMPROVANTE DE ENTREGA — SELEÇÃO AUTOMÁTICA PELO SWIPE
+    # O cartão em que o motorista para vira a parada ativa do comprovante.
+    # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
     # ---------------------------------------------------------------
+    st.markdown("<div id='comprovante'></div>", unsafe_allow_html=True)
+
     if "davi_comprovantes_estado" not in st.session_state:
         st.session_state["davi_comprovantes_estado"] = {}
     estados_comprovantes = st.session_state["davi_comprovantes_estado"]
 
-    entregas_para_comprovar = []
+    persistencia_comprovantes_ok = True
+    try:
+        garantir_tabela_comprovantes_davi()
+        estados_banco = carregar_comprovantes_davi(DATA_REF_ROTA_STR)
+        for chave_db, estado_db in estados_banco.items():
+            estado_local = estados_comprovantes.get(chave_db, {})
+            estado_db["input_version"] = int(estado_local.get("input_version", 0))
+            if estado_local.get("mensagem"):
+                estado_db["mensagem"] = estado_local["mensagem"]
+            estados_comprovantes[chave_db] = estado_db
+    except Exception:
+        persistencia_comprovantes_ok = False
+
+    entregas_por_etapa = {}
     numero_parada_comprovante = 0
     for indice_step, step_comprovante in enumerate(route_steps):
         if step_comprovante.get("type") != "stop":
@@ -1761,15 +1879,7 @@ if modo_url == "true":
 
             card_id_comprovante = str(tarefa_comprovante.get("id", "") or "")
             chave_estado = _nome_seguro_comprovante(card_id_comprovante or f"SEM-ID-{indice_step}", 40)
-            estado_existente = estados_comprovantes.get(chave_estado, {})
-            qtd_fotos = len(estado_existente.get("fotos", []))
-            finalizado = bool(estado_existente.get("finalizado"))
-            status = "✅" if finalizado else (f"📷 {qtd_fotos}" if qtd_fotos else "⬜")
-
-            obra_comprovante = str(tarefa_comprovante.get("Obra", "") or "").strip()
-            rotulo = f"{status} Parada {max(1, numero_parada_comprovante)} • {obra_comprovante or destino_comprovante}"
-            entregas_para_comprovar.append({
-                "rotulo": rotulo,
+            entregas_por_etapa.setdefault(indice_step, []).append({
                 "id": card_id_comprovante,
                 "tarefa": tarefa_comprovante,
                 "parada": max(1, numero_parada_comprovante),
@@ -1777,171 +1887,217 @@ if modo_url == "true":
                 "chave": chave_estado,
             })
 
-    if entregas_para_comprovar:
+    foco_comprovante = None
+    try:
+        foco_lido = str(st.query_params.get("foco", "") or "").strip()
+        if foco_lido != "":
+            foco_comprovante = int(foco_lido)
+            if not 0 <= foco_comprovante < len(route_steps):
+                foco_comprovante = None
+    except Exception:
+        foco_comprovante = None
+
+    if entregas_por_etapa:
         with st.expander("📸 COMPROVANTE DA ENTREGA", expanded=True):
-            st.caption("Faça em ordem: escolha a entrega → informe quem recebeu → envie uma ou mais fotos → finalize.")
+            st.caption("↔️ Não precisa escolher a demanda aqui. Deslize o roteiro e pare na parada desejada; ela é selecionada automaticamente.")
 
-            opcoes_comprovante = {item["rotulo"]: item for item in entregas_para_comprovar}
-            escolha_comprovante = st.selectbox(
-                "1️⃣ Qual entrega você está comprovando?",
-                list(opcoes_comprovante.keys()),
-                key="davi_comprovante_entrega",
-            )
-            entrega_sel = opcoes_comprovante[escolha_comprovante]
-            tarefa_sel = entrega_sel["tarefa"]
-            demanda_id_sel = entrega_sel["id"]
-            chave_comprovante = entrega_sel["chave"]
+            if not persistencia_comprovantes_ok:
+                st.warning("O comprovante continua funcionando, mas o histórico interno não pôde ser sincronizado agora. Evite recarregar a página até concluir a entrega.")
 
-            estado = estados_comprovantes.setdefault(chave_comprovante, {
-                "recebedor": "",
-                "fotos": [],
-                "finalizado": False,
-                "input_version": 0,
-            })
-            estado.setdefault("recebedor", "")
-            estado.setdefault("fotos", [])
-            estado.setdefault("finalizado", False)
-            estado.setdefault("input_version", 0)
+            entregas_foco = entregas_por_etapa.get(foco_comprovante, []) if foco_comprovante is not None else []
 
-            obra_sel = str(tarefa_sel.get("Obra", "") or "").strip()
-            materiais_sel = _separar_materiais_comprovante(tarefa_sel.get("Materiais", ""))
-            destino_sel = str(entrega_sel.get("destino", "") or "").strip()
-
-            materiais_html = "".join(
-                f"<div style='margin:3px 0;'>• {html_escape(item)}</div>"
-                for item in materiais_sel
-            ) or "<div style='color:#94a3b8;'>• Materiais não informados</div>"
-
-            st.markdown(
-                f"""
-                <div style="background:rgba(37,99,235,.08);border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:12px 14px;margin:6px 0 14px 0;">
-                    <div style="font-size:15px;font-weight:700;margin-bottom:5px;">📍 Parada {entrega_sel['parada']} — {html_escape(obra_sel or destino_sel)}</div>
-                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Trello: {html_escape(demanda_id_sel or 'sem ID')} • Destino: {html_escape(destino_sel or '-')}</div>
-                    <div style="font-size:13px;font-weight:600;margin-bottom:3px;">Materiais desta demanda:</div>
-                    <div style="font-size:13px;line-height:1.35;">{materiais_html}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            mensagem_pendente = estado.pop("mensagem", "") if estado.get("mensagem") else ""
-            if mensagem_pendente:
-                st.success(mensagem_pendente)
-
-            if estado["finalizado"]:
-                st.success(
-                    f"✅ Comprovante finalizado — {len(estado['fotos'])} foto(s) • "
-                    f"Recebedor: {estado['recebedor']}"
-                )
-                with st.expander("Ver fotos enviadas", expanded=False):
-                    for pos, foto_enviada in enumerate(estado["fotos"], start=1):
-                        st.write(f"{pos}. {foto_enviada['tipo']} • {foto_enviada['hora']}")
-                if st.button(
-                    "➕ ADICIONAR OUTRA FOTO",
-                    use_container_width=True,
-                    key=f"davi_reabrir_comprovante_{chave_comprovante}",
-                ):
-                    estado["finalizado"] = False
-                    st.rerun()
+            if not entregas_foco:
+                if foco_comprovante is None:
+                    st.info("👇 Deslize o roteiro abaixo até uma parada com **ENTREGA**. Ao soltar o dedo, o comprovante dessa parada abre automaticamente.")
+                else:
+                    destino_foco = str(route_steps[foco_comprovante].get("destino", "") or "")
+                    st.info(f"📍 **{destino_foco or 'Esta etapa'}** não possui entrega para comprovar. Continue deslizando até uma parada com entrega.")
             else:
-                if estado["fotos"]:
+                pendentes_foco = []
+                for item_foco in entregas_foco:
+                    estado_item = estados_comprovantes.get(item_foco["chave"], {})
+                    if not bool(estado_item.get("finalizado")):
+                        pendentes_foco.append(item_foco)
+
+                if not pendentes_foco:
+                    parada_num = entregas_foco[0]["parada"]
+                    destino_foco = entregas_foco[0]["destino"]
+                    st.success(f"✅ Todas as {len(entregas_foco)} entrega(s) da **Parada {parada_num} — {destino_foco}** já têm comprovante finalizado.")
+                    for item_pronto in entregas_foco:
+                        estado_pronto = estados_comprovantes.get(item_pronto["chave"], {})
+                        obra_pronta = str(item_pronto["tarefa"].get("Obra", "") or "")
+                        st.caption(
+                            f"✅ {obra_pronta} • Trello {item_pronto['id']} • "
+                            f"{len(estado_pronto.get('fotos', []))} foto(s) • {estado_pronto.get('recebedor', '')}"
+                        )
+                else:
+                    entrega_sel = pendentes_foco[0]
+                    tarefa_sel = entrega_sel["tarefa"]
+                    demanda_id_sel = entrega_sel["id"]
+                    chave_comprovante = entrega_sel["chave"]
+
+                    estado = estados_comprovantes.setdefault(chave_comprovante, {
+                        "recebedor": "",
+                        "fotos": [],
+                        "finalizado": False,
+                        "input_version": 0,
+                    })
+                    estado.setdefault("recebedor", "")
+                    estado.setdefault("fotos", [])
+                    estado.setdefault("finalizado", False)
+                    estado.setdefault("input_version", 0)
+
+                    obra_sel = str(tarefa_sel.get("Obra", "") or "").strip()
+                    materiais_sel = _separar_materiais_comprovante(tarefa_sel.get("Materiais", ""))
+                    destino_sel = str(entrega_sel.get("destino", "") or "").strip()
+                    indice_na_parada = entregas_foco.index(entrega_sel) + 1
+
+                    materiais_html = "".join(
+                        f"<div style='margin:3px 0;'>• {html_escape(item)}</div>"
+                        for item in materiais_sel
+                    ) or "<div style='color:#94a3b8;'>• Materiais não informados</div>"
+
+                    complemento_demanda = ""
+                    if len(entregas_foco) > 1:
+                        complemento_demanda = (
+                            f"<div style='margin-top:7px;color:#fbbf24;font-size:12px;font-weight:700;'>"
+                            f"Entrega {indice_na_parada} de {len(entregas_foco)} nesta parada • ao finalizar, a próxima entra automaticamente"
+                            f"</div>"
+                        )
+
                     st.markdown(
-                        f"**2️⃣ Quem recebeu?**  \n👤 **{estado['recebedor']}**",
-                    )
-                    st.caption("O recebedor fica fixo para todas as fotos desta demanda.")
-                    recebedor_comprovante = estado["recebedor"]
-                else:
-                    recebedor_comprovante = st.text_input(
-                        "2️⃣ Quem recebeu?",
-                        placeholder="Ex.: João da Silva",
-                        value=estado.get("recebedor", ""),
-                        key=f"davi_comprovante_recebedor_{chave_comprovante}",
-                        help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
-                    )
-
-                opcoes_material = ["📦 GERAL — todos os materiais"]
-                opcoes_material += [f"🔹 {material}" for material in materiais_sel]
-                escolha_material = st.selectbox(
-                    "3️⃣ O que aparece nesta foto?",
-                    opcoes_material,
-                    key=f"davi_comprovante_material_{chave_comprovante}",
-                )
-                material_foto = "GERAL" if escolha_material.startswith("📦 GERAL") else escolha_material[2:].strip()
-
-                modo_foto_comprovante = st.radio(
-                    "4️⃣ Como quer adicionar a foto?",
-                    ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
-                    horizontal=True,
-                    key=f"davi_comprovante_modo_foto_{chave_comprovante}",
-                )
-
-                versao_input = int(estado.get("input_version", 0))
-                if modo_foto_comprovante == "📷 Tirar foto agora":
-                    foto_comprovante = st.camera_input(
-                        "Foto do material entregue",
-                        key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
-                    )
-                else:
-                    foto_comprovante = st.file_uploader(
-                        "Selecione a foto do material",
-                        type=["jpg", "jpeg", "png", "webp"],
-                        accept_multiple_files=False,
-                        key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                        f"""
+                        <div style="background:rgba(37,99,235,.08);border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:12px 14px;margin:6px 0 14px 0;">
+                            <div style="font-size:15px;font-weight:700;margin-bottom:5px;">📍 Parada {entrega_sel['parada']} — {html_escape(obra_sel or destino_sel)}</div>
+                            <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Trello: {html_escape(demanda_id_sel or 'sem ID')} • Destino: {html_escape(destino_sel or '-')}</div>
+                            <div style="font-size:13px;font-weight:600;margin-bottom:3px;">Materiais desta demanda:</div>
+                            <div style="font-size:13px;line-height:1.35;">{materiais_html}</div>
+                            {complemento_demanda}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
                     )
 
-                numero_proxima_foto = len(estado["fotos"]) + 1
-                if st.button(
-                    f"📤 ENVIAR FOTO {numero_proxima_foto}",
-                    type="primary",
-                    use_container_width=True,
-                    key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
-                ):
-                    nome_recebedor = str(recebedor_comprovante or "").strip()
-                    if not nome_recebedor:
-                        st.error("Informe quem recebeu o material.")
-                    elif foto_comprovante is None:
-                        st.error("Tire ou selecione uma foto.")
+                    mensagem_pendente = estado.pop("mensagem", "") if estado.get("mensagem") else ""
+                    if mensagem_pendente:
+                        st.success(mensagem_pendente)
+
+                    if estado["fotos"]:
+                        st.markdown(
+                            f"**1️⃣ Quem recebeu?**  \n👤 **{estado['recebedor']}**",
+                        )
+                        st.caption("O recebedor fica fixo para todas as fotos desta demanda.")
+                        recebedor_comprovante = estado["recebedor"]
                     else:
-                        with st.spinner("Enviando foto para o OneDrive..."):
-                            sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
-                                tarefa_sel,
-                                nome_recebedor,
-                                foto_comprovante,
-                                material_foto=material_foto,
-                                numero_foto=numero_proxima_foto,
-                            )
-                        if sucesso_comprovante:
-                            estado["recebedor"] = nome_recebedor
-                            estado["fotos"].append({
-                                "arquivo": retorno_comprovante,
-                                "tipo": "Foto geral" if material_foto == "GERAL" else material_foto,
-                                "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
-                            })
-                            estado["input_version"] = versao_input + 1
-                            estado["mensagem"] = (
-                                f"Foto {numero_proxima_foto} enviada. "
-                                "Você pode adicionar outra ou finalizar o comprovante."
-                            )
-                            st.rerun()
-                        else:
-                            st.error(retorno_comprovante)
+                        recebedor_comprovante = st.text_input(
+                            "1️⃣ Quem recebeu?",
+                            placeholder="Ex.: João da Silva",
+                            value=estado.get("recebedor", ""),
+                            key=f"davi_comprovante_recebedor_{chave_comprovante}",
+                            help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
+                        )
 
-                if estado["fotos"]:
-                    st.markdown("**Fotos já enviadas nesta entrega:**")
-                    for pos, foto_enviada in enumerate(estado["fotos"], start=1):
-                        st.caption(f"✅ Foto {pos} • {foto_enviada['tipo']} • {foto_enviada['hora']}")
+                    opcoes_material = ["📦 GERAL — todos os materiais"]
+                    opcoes_material += [f"🔹 {material}" for material in materiais_sel]
+                    escolha_material = st.selectbox(
+                        "2️⃣ O que aparece nesta foto?",
+                        opcoes_material,
+                        key=f"davi_comprovante_material_{chave_comprovante}",
+                    )
+                    material_foto = "GERAL" if escolha_material.startswith("📦 GERAL") else escolha_material[2:].strip()
 
+                    modo_foto_comprovante = st.radio(
+                        "3️⃣ Foto",
+                        ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
+                        horizontal=True,
+                        key=f"davi_comprovante_modo_foto_{chave_comprovante}",
+                    )
+
+                    versao_input = int(estado.get("input_version", 0))
+                    if modo_foto_comprovante == "📷 Tirar foto agora":
+                        foto_comprovante = st.camera_input(
+                            "Foto do material entregue",
+                            key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
+                        )
+                    else:
+                        foto_comprovante = st.file_uploader(
+                            "Selecione a foto do material",
+                            type=["jpg", "jpeg", "png", "webp"],
+                            accept_multiple_files=False,
+                            key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                        )
+
+                    numero_proxima_foto = len(estado["fotos"]) + 1
                     if st.button(
-                        f"✅ FINALIZAR COMPROVANTE ({len(estado['fotos'])} FOTO(S))",
+                        f"📤 ENVIAR FOTO {numero_proxima_foto}",
                         type="primary",
                         use_container_width=True,
-                        key=f"davi_finalizar_comprovante_{chave_comprovante}",
+                        key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
                     ):
-                        estado["finalizado"] = True
-                        estado["mensagem"] = "Comprovante finalizado. As fotos já estão salvas no OneDrive."
-                        st.rerun()
-                else:
-                    st.caption("Envie pelo menos uma foto para liberar a finalização do comprovante.")
+                        nome_recebedor = str(recebedor_comprovante or "").strip()
+                        if not nome_recebedor:
+                            st.error("Informe quem recebeu o material.")
+                        elif foto_comprovante is None:
+                            st.error("Tire ou selecione uma foto.")
+                        else:
+                            with st.spinner("Enviando foto para o OneDrive..."):
+                                sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
+                                    tarefa_sel,
+                                    nome_recebedor,
+                                    foto_comprovante,
+                                    material_foto=material_foto,
+                                    numero_foto=numero_proxima_foto,
+                                )
+                            if sucesso_comprovante:
+                                tipo_registro = "Foto geral" if material_foto == "GERAL" else material_foto
+                                try:
+                                    registrar_foto_comprovante_davi(
+                                        DATA_REF_ROTA_STR,
+                                        tarefa_sel,
+                                        nome_recebedor,
+                                        retorno_comprovante,
+                                        tipo_registro,
+                                    )
+                                except Exception:
+                                    persistencia_comprovantes_ok = False
+
+                                estado["recebedor"] = nome_recebedor
+                                estado["fotos"].append({
+                                    "arquivo": retorno_comprovante,
+                                    "tipo": tipo_registro,
+                                    "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
+                                })
+                                estado["input_version"] = versao_input + 1
+                                estado["mensagem"] = (
+                                    f"Foto {numero_proxima_foto} enviada. "
+                                    "Você pode adicionar outra ou finalizar o comprovante."
+                                )
+                                st.rerun()
+                            else:
+                                st.error(retorno_comprovante)
+
+                    if estado["fotos"]:
+                        st.markdown("**Fotos já enviadas nesta entrega:**")
+                        for pos, foto_enviada in enumerate(estado["fotos"], start=1):
+                            st.caption(f"✅ Foto {pos} • {foto_enviada['tipo']} • {foto_enviada['hora']}")
+
+                        if st.button(
+                            f"✅ FINALIZAR ESTA ENTREGA ({len(estado['fotos'])} FOTO(S))",
+                            type="primary",
+                            use_container_width=True,
+                            key=f"davi_finalizar_comprovante_{chave_comprovante}",
+                        ):
+                            try:
+                                definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, demanda_id_sel, True)
+                            except Exception:
+                                if persistencia_comprovantes_ok:
+                                    st.error("Não consegui registrar a finalização. Tente novamente.")
+                                    st.stop()
+                            estado["finalizado"] = True
+                            estado["mensagem"] = "Comprovante finalizado."
+                            st.rerun()
+                    else:
+                        st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
 
 
     st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
@@ -1953,6 +2109,7 @@ if modo_url == "true":
         tipo_step = step.get('type', '')
         destino_step = str(step.get('destino', ''))
         is_start = (i == 0 and destino_step == p_saida)
+        tem_entrega_no_cartao = any(acao == "ENTREGAR" for acao, _ in step.get('actions', []))
         classe_card, selo, titulo_card, meta_card, botao_gps, botao_feito = "normal", "ETAPA", destino_step, "", "", ""
         etapa_marcada = False
 
@@ -2012,7 +2169,7 @@ if modo_url == "true":
                     f"✅ Marcada às {html_escape(checkin_etapa['hora'])} • toque para desfazer"
                     if checkin_etapa else f"☐ Marcar {rotulo_lembrete} como feita"
                 )
-                link_marcacao = html_escape(f"?davi=true&etapa={i}&feito={novo_estado}", quote=True)
+                link_marcacao = html_escape(f"?davi=true&foco={i}&etapa={i}&feito={novo_estado}", quote=True)
                 botao_feito = (
                     f"<a class='marcar-feita{classe_marcacao}' data-feita='{'1' if checkin_etapa else '0'}' "
                     f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
@@ -2024,7 +2181,7 @@ if modo_url == "true":
 
         rodape_card = f"<div class='rodape-card'>{botao_feito}{botao_gps}</div>" if botao_feito or botao_gps else ""
         cartoes_mobile.append(
-            f"<article class='cartao {classe_card}{' feita' if etapa_marcada else ''}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
+            f"<article class='cartao {classe_card}{' feita' if etapa_marcada else ''}' data-etapa='{i}' data-entrega='{'1' if tem_entrega_no_cartao else '0'}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
             f"<h2>{titulo_card}</h2><div class='meta'>{meta_card}</div></div>"
             f"<div class='conteudo-card'>{corpo_acoes}</div>{rodape_card}</article>"
         )
@@ -2047,6 +2204,7 @@ if modo_url == "true":
             .cartao.retorno { border-color:#16a34a; }
             .cartao.feita { border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.18),0 10px 28px rgba(0,0,0,.32); }
             .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
+            .cartao.selecionada { box-shadow:0 0 0 2px rgba(37,99,235,.32),0 10px 28px rgba(0,0,0,.32); }
             .topo-card { padding:18px 18px 13px; border-bottom:1px solid rgba(141,160,184,.18); }
             .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
             .almoco .selo { background:#92400e; color:#fef3c7; }
@@ -2077,7 +2235,7 @@ if modo_url == "true":
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
             .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
         </style></head><body>
-            <div class="barra"><span>↔️ Deslize • sincronizado</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
+            <div class="barra"><span>↔️ Deslize • a parada seleciona a entrega</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
             <div id="trilho" class="trilho">__CARTOES__</div>
             <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
         <script>
@@ -2088,17 +2246,110 @@ if modo_url == "true":
             const proxima = document.getElementById('proxima');
             const pontos = document.getElementById('pontos');
             const feitasEl = document.getElementById('feitas');
+            const focoServidor = String('__FOCO__');
             let atual = 0;
-            cartoes.forEach((_, i) => { const p=document.createElement('button'); p.className='ponto'; p.onclick=()=>ir(i); pontos.appendChild(p); });
-            function atualizarFeitas() { const botoes=Array.from(document.querySelectorAll('.marcar-feita')); const total=botoes.length; const feitas=botoes.filter(b=>b.dataset.feita==='1').length; feitasEl.textContent=`${feitas}/${total} ${feitas===1?'feita':'feitas'}`; }
+            let gestoAtivo = false;
+            let navegando = false;
+
+            function indiceMaisProximo() {
+                const centro = trilho.scrollLeft + trilho.clientWidth / 2;
+                let melhor = 0, dist = Infinity;
+                cartoes.forEach((c, i) => {
+                    const d = Math.abs(c.offsetLeft + c.offsetWidth / 2 - centro);
+                    if (d < dist) { dist = d; melhor = i; }
+                });
+                return melhor;
+            }
+
+            function abrirFoco(i) {
+                if (navegando || !cartoes[i]) return;
+                const etapa = String(cartoes[i].dataset.etapa || '');
+                if (!etapa || etapa === focoServidor) return;
+                navegando = true;
+                try {
+                    const url = new URL(window.top.location.href);
+                    url.searchParams.set('davi', 'true');
+                    url.searchParams.set('foco', etapa);
+                    url.searchParams.delete('etapa');
+                    url.searchParams.delete('feito');
+                    url.hash = 'comprovante';
+                    window.top.location.href = url.toString();
+                } catch (e) {
+                    const link = document.createElement('a');
+                    link.href = `?davi=true&foco=${encodeURIComponent(etapa)}#comprovante`;
+                    link.target = '_top';
+                    document.body.appendChild(link);
+                    link.click();
+                }
+            }
+
+            cartoes.forEach((_, i) => {
+                const p = document.createElement('button');
+                p.className = 'ponto';
+                p.type = 'button';
+                p.addEventListener('click', () => ir(i, true));
+                pontos.appendChild(p);
+            });
+
+            function atualizarFeitas() {
+                const botoes = Array.from(document.querySelectorAll('.marcar-feita'));
+                const total = botoes.length;
+                const feitas = botoes.filter(b => b.dataset.feita === '1').length;
+                feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
+            }
             function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
-            function atualizar(i) { atual=Math.max(0,Math.min(cartoes.length-1,i)); contador.textContent=`${atual+1} de ${cartoes.length}`; anterior.disabled=atual===0; proxima.disabled=atual===cartoes.length-1; Array.from(pontos.children).forEach((p,j)=>p.classList.toggle('ativo',j===atual)); }
-            function ir(i) { const indice=Math.max(0,Math.min(cartoes.length-1,i)); const alvo=cartoes[indice]; trilho.scrollTo({left:alvo.offsetLeft-trilho.offsetLeft,behavior:'smooth'}); atualizar(indice); }
-            function mover(delta) { ir(atual+delta); }
-            let timer; trilho.addEventListener('scroll',()=>{ clearTimeout(timer); timer=setTimeout(()=>{ const centro=trilho.scrollLeft+trilho.clientWidth/2; let melhor=0,dist=Infinity; cartoes.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-centro); if(d<dist){dist=d;melhor=i;} }); atualizar(melhor); },80); },{passive:true});
-            atualizarFeitas(); atualizar(0);
+            function atualizar(i) {
+                atual = Math.max(0, Math.min(cartoes.length - 1, i));
+                contador.textContent = `${atual + 1} de ${cartoes.length}`;
+                anterior.disabled = atual === 0;
+                proxima.disabled = atual === cartoes.length - 1;
+                Array.from(pontos.children).forEach((p, j) => p.classList.toggle('ativo', j === atual));
+                cartoes.forEach((c, j) => c.classList.toggle('selecionada', j === atual));
+            }
+            function ir(i, selecionar = false) {
+                const indice = Math.max(0, Math.min(cartoes.length - 1, i));
+                const alvo = cartoes[indice];
+                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'smooth'});
+                atualizar(indice);
+                if (selecionar) abrirFoco(indice);
+            }
+            function mover(delta) { ir(atual + delta, true); }
+
+            trilho.addEventListener('pointerdown', () => { gestoAtivo = true; }, {passive:true});
+            trilho.addEventListener('pointerup', () => {
+                if (!gestoAtivo) return;
+                const melhor = indiceMaisProximo();
+                atualizar(melhor);
+                gestoAtivo = false;
+                abrirFoco(melhor);
+            }, {passive:true});
+            trilho.addEventListener('pointercancel', () => { gestoAtivo = false; }, {passive:true});
+            trilho.addEventListener('touchstart', () => { gestoAtivo = true; }, {passive:true});
+            trilho.addEventListener('touchend', () => {
+                if (!gestoAtivo) return;
+                const melhor = indiceMaisProximo();
+                atualizar(melhor);
+                gestoAtivo = false;
+                abrirFoco(melhor);
+            }, {passive:true});
+
+            let timer;
+            trilho.addEventListener('scroll', () => {
+                clearTimeout(timer);
+                timer = setTimeout(() => atualizar(indiceMaisProximo()), 90);
+            }, {passive:true});
+
+            atualizarFeitas();
+            const indiceInicial = cartoes.findIndex(c => String(c.dataset.etapa || '') === focoServidor);
+            if (indiceInicial >= 0) {
+                const alvo = cartoes[indiceInicial];
+                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
+                atualizar(indiceInicial);
+            } else {
+                atualizar(0);
+            }
         </script></body></html>
-        """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile)))
+        """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile))).replace("__FOCO__", "" if foco_comprovante is None else str(foco_comprovante))
         st.components.v1.html(html_carrossel, height=520, scrolling=False)
     else:
         st.info("A rota ainda não possui etapas para exibir.")
