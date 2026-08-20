@@ -18,7 +18,6 @@ import requests
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from streamlit_gsheets import GSheetsConnection
 
 # =====================================================================
 # CONFIGURAÇÕES DE TELA E RELÓGIO (VIRADA DE TURNO)
@@ -39,9 +38,8 @@ DATA_HOJE_REAL_STR = AGORA_REAL.strftime("%d/%m/%Y")
 DB_FILE = "enderecos_logistica.db"
 
 # =====================================================================
-# DICIONÁRIO INTELIGENTE DE SINÔNIMOS (APELIDOS)
+# DICIONÁRIO INTELIGENTE DE SINÔNIMOS E ERROS DE DIGITAÇÃO
 # =====================================================================
-# Adicione aqui apelidos da rua/Trello para mapear com os oficiais do banco
 DICIONARIO_SINONIMOS = {
     "DEPOSITO JP": "JP CONSTRUÇÃO",
     "DEPÓSITO JP": "JP CONSTRUÇÃO",
@@ -52,21 +50,6 @@ DICIONARIO_SINONIMOS = {
 def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
-
-# --- CONEXÃO COM O GOOGLE SHEETS ---
-conn_sheets = st.connection("gsheets", type=GSheetsConnection)
-
-def ler_dados_sheets(worksheet_name):
-    try:
-        df = conn_sheets.read(worksheet=worksheet_name, ttl=0)
-        return df.dropna(how="all")
-    except:
-        return pd.DataFrame()
-
-def salvar_dados_sheets(df_novo, worksheet_name):
-    df_atual = ler_dados_sheets(worksheet_name)
-    df_atualizado = pd.concat([df_atual, df_novo], ignore_index=True)
-    conn_sheets.update(worksheet=worksheet_name, data=df_atualizado)
 
 # --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
 def aplicar_estilo_customizado():
@@ -511,7 +494,6 @@ def canonicalizar_ponto_rota(nome):
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
     texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     
-    # Busca por Dicionário Fixo (Substitui apelidos absurdos por nome real)
     texto_limpo = remover_acentos(texto)
     for sin, oficial in DICIONARIO_SINONIMOS.items():
         if texto_limpo == remover_acentos(sin):
