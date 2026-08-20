@@ -1910,6 +1910,7 @@ def inicializar_bd():
         "CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))",
         "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
         "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
+        "CREATE TABLE IF NOT EXISTS trello_cache (id SMALLINT PRIMARY KEY, dados JSONB NOT NULL DEFAULT '{}'::jsonb, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         "CREATE TABLE IF NOT EXISTS rota_ativa (id SERIAL PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)",
         SQL_TABELA_CHECKINS_DAVI,
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
@@ -1982,12 +1983,54 @@ except:
 # =====================================================================
 # LÓGICA DE EXTRAÇÃO E AUTOMAÇÃO DO TRELLO
 # =====================================================================
-@st.cache_data(ttl=60, show_spinner=False)
-def obter_dados_trello():
+INTERVALO_TRELLO_SEGUNDOS = 5 * 60
+
+def ler_cache_trello_supabase():
+    """Lê a cópia mantida pelo Cron, inclusive quando o Streamlit esteve dormindo."""
+    try:
+        registro = fetch_one("SELECT dados FROM trello_cache WHERE id = 1")
+        if not registro or registro[0] is None:
+            return None
+        dados = registro[0]
+        if isinstance(dados, str):
+            dados = json.loads(dados)
+        if isinstance(dados, dict) and isinstance(dados.get("cards"), list) and isinstance(dados.get("lists"), list):
+            return dados
+    except Exception:
+        pass
+    return None
+
+def salvar_cache_trello_supabase(dados):
+    """Mantém o botão manual compatível com a mesma fonte usada pelo Cron."""
+    execute_db(
+        """
+        INSERT INTO trello_cache (id, dados, atualizado_em)
+        VALUES (1, CAST(:dados AS JSONB), NOW())
+        ON CONFLICT (id)
+        DO UPDATE SET dados=EXCLUDED.dados, atualizado_em=EXCLUDED.atualizado_em
+        """,
+        {"dados": json.dumps(dados, ensure_ascii=False)},
+    )
+
+def obter_dados_trello(forcar=False):
+    if not forcar:
+        dados_cache = ler_cache_trello_supabase()
+        if dados_cache is not None:
+            return dados_cache
+
+    # Reserva para a primeira instalação e para o botão manual.
     try:
         resposta = requests.get(TRELLO_JSON_URL, timeout=20)
-        return resposta.json()
-    except Exception as e:
+        resposta.raise_for_status()
+        dados = resposta.json()
+        if not isinstance(dados, dict) or not isinstance(dados.get("cards"), list) or not isinstance(dados.get("lists"), list):
+            return None
+        try:
+            salvar_cache_trello_supabase(dados)
+        except Exception:
+            pass
+        return dados
+    except Exception:
         return None
 
 def identificar_grupo_teams(destino, obra=""):
@@ -2842,8 +2885,8 @@ def encontrar_conclusao_de_hoje(card_id, acoes):
         except: continue
     return max(conclusoes) if conclusoes else None
 
-def sincronizar_demandas(manual=False):
-    data = obter_dados_trello()
+def sincronizar_demandas(manual=False, forcar=False):
+    data = obter_dados_trello(forcar=forcar)
     if not data:
         if manual: st.error("⚠️ Erro ao acessar o Trello.")
         return False
@@ -3055,7 +3098,8 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     
-    # Atualiza as demandas silenciosamente a cada 10 min
+    # Copia silenciosamente para a sessão os dados que o servidor consulta
+    # no Trello a cada 5 minutos. O fragmento não escurece nem recarrega a tela.
     if "ultima_sincronizacao" not in st.session_state:
         st.session_state.ultima_sincronizacao = 0
         sincronizar_demandas()
@@ -3064,13 +3108,8 @@ with st.sidebar:
         @st.fragment(run_every="60s")
         def _loop_operacoes():
             loop_automacoes_background()
-            if time.time() - st.session_state.get("ultima_sincronizacao", 0) > 600:
-                demandas_antes = st.session_state.demandas.copy(deep=True)
-                if sincronizar_demandas():
-                    # O Trello continua sendo consultado a cada 10 minutos, mas
-                    # a tela inteira só recarrega quando os dados realmente mudam.
-                    if not demandas_antes.equals(st.session_state.demandas):
-                        st.rerun()
+            if time.time() - st.session_state.get("ultima_sincronizacao", 0) > INTERVALO_TRELLO_SEGUNDOS:
+                sincronizar_demandas()
         _loop_operacoes()
 
     st.markdown("---")
@@ -3080,8 +3119,7 @@ with st.sidebar:
 
     if st.button("🔄 Sincronizar Manualmente (Trello)", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
-            obter_dados_trello.clear() # Limpa o cache para forçar a versão mais nova
-            if sincronizar_demandas(manual=True):
+            if sincronizar_demandas(manual=True, forcar=True):
                 st.success("✅ Trello Sincronizado e Demandas Importadas!")
     
     @fragmento_independente
