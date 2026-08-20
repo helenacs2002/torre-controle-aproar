@@ -314,6 +314,7 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         total = len(principal)
         adicionar("Veículos monitorados", total, "Quantidade de veículos com leitura atual.")
         adicionar("Veículos em movimento", len(em_movimento), f"{numero_br(100 * len(em_movimento) / total, 1)}% da frota monitorada." if total else "")
+        adicionar("Veículos parados", total - len(em_movimento), "Veículos com velocidade igual a zero na última leitura.")
         adicionar("Velocidade média geral", f"{numero_br(velocidades.mean(), 1)} km/h" if len(velocidades) else None, "Inclui veículos parados.")
         adicionar("Velocidade média em movimento", f"{numero_br(em_movimento.mean(), 1)} km/h" if len(em_movimento) else None, "Considera somente velocidades acima de zero.")
         inicio_col = localizar_coluna(principal, "Início da rota (hoje)")
@@ -360,6 +361,7 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         adicionar("Paradas operacionais", len(paradas_operacionais), "Não inclui almoço nem retorno à base.")
         adicionar("Demandas previstas", total_demandas)
         adicionar("Taxa de conclusão da rota", f"{numero_br(100 * concluidas / total_demandas, 1)}%" if total_demandas else "0,0%", "Percentual de entregas previstas que tiveram baixa.")
+        adicionar("Demandas concluídas", concluidas)
         adicionar("Demandas pendentes", total_demandas - concluidas)
         adicionar("Distância planejada", f"{numero_br(km_total, 1)} km" if km_total is not None else None)
         adicionar("Distância média por parada", f"{numero_br(km_total / len(paradas_operacionais), 1)} km" if km_total is not None and paradas_operacionais else None, "Indicador de dispersão da rota.")
@@ -440,6 +442,49 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
             adicionar(f"Média de {coluna}", numero_br(serie.mean(), 2) if len(serie) else None)
 
     return pd.DataFrame(indicadores, columns=["Indicador", "Resultado", "Leitura para análise"])
+
+def _dados_grafico_resumo(df):
+    """Seleciona apenas comparações com unidades compatíveis e leitura gerencial clara."""
+    if df is None or df.empty or "Indicador" not in df.columns or "Resultado" not in df.columns:
+        return None, []
+
+    def normalizar(valor):
+        return re.sub(r"[^a-z0-9]+", " ", remover_acentos(str(valor or "")).lower()).strip()
+
+    def valor_numerico(valor):
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            return float(valor) if math.isfinite(float(valor)) else None
+        texto = str(valor or "").strip()
+        encontrado = re.search(r"-?[0-9][0-9.]*([,][0-9]+)?", texto)
+        if not encontrado:
+            return None
+        numero = encontrado.group(0)
+        if "," in numero:
+            numero = numero.replace(".", "").replace(",", ".")
+        try:
+            return float(numero)
+        except (TypeError, ValueError):
+            return None
+
+    valores = {
+        normalizar(linha["Indicador"]): (str(linha["Indicador"]), valor_numerico(linha["Resultado"]))
+        for _, linha in df.iterrows()
+    }
+    comparacoes = [
+        ("Demandas concluídas", "Demandas pendentes", "Conclusão das demandas"),
+        ("Veículos em movimento", "Veículos parados", "Situação da frota"),
+        ("Total de combustível", "Total de manutenção", "Composição dos custos"),
+        ("Saídas registradas", "Paradas rastreadas", "Atividade operacional registrada"),
+        ("Obras atendidas", "Destinos atendidos", "Cobertura das entregas"),
+    ]
+    for primeiro, segundo, titulo in comparacoes:
+        chave_a, chave_b = normalizar(primeiro), normalizar(segundo)
+        if chave_a not in valores or chave_b not in valores:
+            continue
+        itens = [valores[chave_a], valores[chave_b]]
+        if all(valor is not None and valor >= 0 for _, valor in itens) and sum(valor for _, valor in itens) > 0:
+            return titulo, itens
+    return None, []
 
 def _criar_csv_relatorio(tabelas):
     secoes = []
@@ -594,14 +639,94 @@ def _criar_excel_relatorio(tabelas):
             numero_fmt = workbook.add_format({"num_format": '#,##0.00', "valign": "top"})
             data_fmt = workbook.add_format({"num_format": 'dd/mm/yyyy', "valign": "top"})
             identificador_fmt = workbook.add_format({"num_format": "@", "valign": "top", "text_wrap": True})
+            cartao_rotulo_fmt = workbook.add_format({"bold": True, "font_size": 9, "font_color": "#173B72", "bg_color": "#DBEAFE", "align": "center", "valign": "vcenter", "border": 1, "border_color": "#BFDBFE"})
+            cartao_valor_fmt = workbook.add_format({"bold": True, "font_size": 18, "font_color": "#0F172A", "bg_color": "#FFFFFF", "align": "center", "valign": "vcenter", "border": 1, "border_color": "#BFDBFE"})
+            subtitulo_fmt = workbook.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "left", "valign": "vcenter"})
             usados = set()
 
             for nome, df_original in tabelas:
                 df = preparar_datas_excel(df_original)
                 nome_aba = _nome_aba_excel(nome, usados)
-                df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=3)
+                eh_resumo_analitico = nome_aba == "Resumo Analítico"
+                inicio_tabela = 18 if eh_resumo_analitico else 3
+                df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=inicio_tabela)
                 worksheet = escritor.sheets[nome_aba]
                 ultima_coluna = max(0, len(df.columns) - 1)
+                if eh_resumo_analitico:
+                    worksheet.merge_range(0, 0, 0, 13, str(nome), titulo_fmt)
+                    worksheet.merge_range(1, 0, 1, 13, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} indicador(es)", meta_fmt)
+                    worksheet.set_row(0, 29)
+                    worksheet.set_row(1, 19)
+                    worksheet.hide_gridlines(2)
+                    worksheet.set_landscape()
+                    worksheet.fit_to_pages(1, 0)
+                    worksheet.set_margins(0.35, 0.35, 0.55, 0.55)
+                    worksheet.set_footer("&LAPROAR Engenharia&CResumo analítico&R Página &P de &N")
+                    worksheet.set_column(0, 5, 14)
+                    worksheet.set_column(6, 6, 2)
+                    worksheet.set_column(7, 13, 11)
+
+                    for indice, (_, indicador) in enumerate(df.head(6).iterrows()):
+                        linha = 3 + (indice // 2) * 4
+                        coluna = 0 if indice % 2 == 0 else 3
+                        worksheet.merge_range(linha, coluna, linha, coluna + 2, str(indicador.get("Indicador", "Indicador")), cartao_rotulo_fmt)
+                        worksheet.merge_range(linha + 1, coluna, linha + 2, coluna + 2, str(indicador.get("Resultado", "-")), cartao_valor_fmt)
+                        worksheet.set_row(linha, 22)
+                        worksheet.set_row(linha + 1, 23)
+                        worksheet.set_row(linha + 2, 23)
+
+                    titulo_grafico, dados_grafico = _dados_grafico_resumo(df)
+                    if dados_grafico:
+                        linha_auxiliar = 2
+                        worksheet.write(linha_auxiliar, 15, "Categoria")
+                        worksheet.write(linha_auxiliar, 16, "Valor")
+                        for posicao, (rotulo, valor) in enumerate(dados_grafico, start=1):
+                            indice_df = next((i for i, texto_indicador in enumerate(df["Indicador"].astype(str)) if texto_indicador == rotulo), None)
+                            linha_origem_excel = inicio_tabela + 2 + indice_df if indice_df is not None else None
+                            linha_destino = linha_auxiliar + posicao
+                            if linha_origem_excel:
+                                worksheet.write_formula(linha_destino, 15, f"=A{linha_origem_excel}", None, rotulo)
+                                formula_valor = f'=IFERROR(NUMBERVALUE(SUBSTITUTE(SUBSTITUTE(B{linha_origem_excel},"R$ ",""),"%",""),",","."),B{linha_origem_excel})'
+                                worksheet.write_formula(linha_destino, 16, formula_valor, None, valor)
+                            else:
+                                worksheet.write(linha_destino, 15, rotulo)
+                                worksheet.write_number(linha_destino, 16, valor)
+                        worksheet.set_column(15, 16, None, None, {"hidden": True})
+                        grafico = workbook.add_chart({"type": "doughnut"})
+                        pontos = [{"fill": {"color": "#16A34A"}}, {"fill": {"color": "#F59E0B"}}]
+                        if "custos" in remover_acentos(titulo_grafico).lower(): pontos = [{"fill": {"color": "#2563EB"}}, {"fill": {"color": "#F59E0B"}}]
+                        grafico.add_series({
+                            "name": titulo_grafico,
+                            "categories": [nome_aba, linha_auxiliar + 1, 15, linha_auxiliar + len(dados_grafico), 15],
+                            "values": [nome_aba, linha_auxiliar + 1, 16, linha_auxiliar + len(dados_grafico), 16],
+                            "points": pontos[:len(dados_grafico)],
+                            "data_labels": {"percentage": True, "leader_lines": True},
+                        })
+                        grafico.set_title({"name": titulo_grafico, "name_font": {"size": 12, "bold": True, "color": "#173B72"}})
+                        grafico.set_hole_size(58)
+                        grafico.set_legend({"position": "bottom", "font": {"size": 9}})
+                        grafico.set_chartarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
+                        grafico.set_plotarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
+                        grafico.set_size({"width": 500, "height": 265})
+                        worksheet.insert_chart(3, 7, grafico)
+
+                    worksheet.merge_range(16, 0, 16, 13, "Leituras gerenciais e indicadores complementares", subtitulo_fmt)
+                    worksheet.set_row(16, 23)
+                    if len(df):
+                        worksheet.add_table(inicio_tabela, 0, inicio_tabela + len(df), ultima_coluna, {
+                            "name": f"Tabela_{len(usados)}_ResumoAnalitico",
+                            "style": "Table Style Medium 2",
+                            "columns": [{"header": str(coluna)} for coluna in df.columns],
+                        })
+                    worksheet.set_column(0, 0, 34, texto_fmt)
+                    worksheet.set_column(1, 1, 22, texto_fmt)
+                    worksheet.set_column(2, 2, 52, texto_fmt)
+                    worksheet.set_row(inicio_tabela, 26)
+                    for linha in range(inicio_tabela + 1, inicio_tabela + 1 + len(df)):
+                        worksheet.set_row(linha, 32)
+                    worksheet.freeze_panes(inicio_tabela + 1, 0)
+                    continue
+
                 aba_de_dados = nome_aba in {"Base Completa", "OCs Fora do Prazo", "OCs Ignoradas"}
                 if ultima_coluna and not aba_de_dados:
                     worksheet.merge_range(0, 0, 0, ultima_coluna, str(nome), titulo_fmt)
@@ -769,7 +894,9 @@ def _criar_pdf_relatorio(titulo, tabelas):
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.graphics.charts.piecharts import Pie
+        from reportlab.graphics.shapes import Drawing, Rect, String
+        from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except (ImportError, ModuleNotFoundError):
         return _criar_pdf_textual(titulo, tabelas)
 
@@ -791,13 +918,16 @@ def _criar_pdf_relatorio(titulo, tabelas):
     estilos = getSampleStyleSheet()
     estilo_titulo = ParagraphStyle("TituloAproar", parent=estilos["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=azul_escuro, alignment=TA_LEFT, spaceAfter=5)
     estilo_meta = ParagraphStyle("MetaAproar", parent=estilos["Normal"], fontName="Helvetica", fontSize=8.5, leading=11, textColor=cinza_texto, spaceAfter=12)
-    estilo_secao = ParagraphStyle("SecaoAproar", parent=estilos["Heading2"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=colors.white, backColor=azul, borderPadding=(6, 8, 6, 8), spaceBefore=5, spaceAfter=7)
+    estilo_secao = ParagraphStyle("SecaoAproar", parent=estilos["Heading2"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=colors.white, backColor=azul, borderPadding=(6, 8, 6, 8), spaceBefore=5, spaceAfter=7, keepWithNext=1)
     estilo_cabecalho = ParagraphStyle("CabecalhoTabela", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.5, leading=9, textColor=colors.white, alignment=TA_CENTER)
     estilo_celula = ParagraphStyle("CelulaTabela", parent=estilos["Normal"], fontName="Helvetica", fontSize=7.3, leading=9.2, textColor=colors.HexColor("#1E293B"))
     estilo_rotulo = ParagraphStyle("RotuloCard", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.3, leading=9, textColor=azul_escuro)
     estilo_valor = ParagraphStyle("ValorCard", parent=estilos["Normal"], fontName="Helvetica", fontSize=7.8, leading=10, textColor=colors.HexColor("#1E293B"))
     estilo_card_titulo = ParagraphStyle("TituloCard", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=9, leading=11, textColor=colors.white)
     estilo_vazio = ParagraphStyle("Vazio", parent=estilos["Normal"], fontName="Helvetica-Oblique", fontSize=8.5, textColor=cinza_texto)
+    estilo_kpi_rotulo = ParagraphStyle("RotuloKPI", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=8.2, leading=10, textColor=azul_escuro, alignment=TA_CENTER)
+    estilo_kpi_valor = ParagraphStyle("ValorKPI", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=16, leading=19, textColor=colors.HexColor("#0F172A"), alignment=TA_CENTER)
+    estilo_subsecao = ParagraphStyle("SubsecaoAnalitica", parent=estilos["Heading3"], fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=azul_escuro, spaceBefore=6, spaceAfter=5)
 
     titulo_limpo = texto_pdf_limpo(titulo)
     total_registros = sum(len(df) for nome, df in tabelas if remover_acentos(str(nome)).lower() != "resumo analitico")
@@ -836,14 +966,99 @@ def _criar_pdf_relatorio(titulo, tabelas):
 
     for nome, df in tabelas:
         tipo_linha = "indicador(es)" if remover_acentos(str(nome)).lower() == "resumo analitico" else "registro(s)"
-        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome))} &nbsp; • &nbsp; {len(df)} {tipo_linha}", estilo_secao))
+        cabecalho_secao = Paragraph(f"{html_escape(texto_pdf_limpo(nome))} &nbsp; • &nbsp; {len(df)} {tipo_linha}", estilo_secao)
+        elementos.append(cabecalho_secao)
         if df.empty or not len(df.columns):
             elementos.extend([Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio), Spacer(1, 8)])
             continue
 
-        maximo_texto = max([len(str(valor)) for valor in df.astype(str).head(100).values.flatten()] + [0])
         eh_resumo_analitico = remover_acentos(str(nome)).lower() == "resumo analitico"
-        usar_tabela = eh_resumo_analitico or (len(df.columns) <= 6 and maximo_texto <= 45)
+        if eh_resumo_analitico:
+            largura_cartao = (largura_util - 8) / 2
+            cartoes, linha_cartoes = [], []
+            for _, indicador in df.head(6).iterrows():
+                cartao = Table([
+                    [paragrafo(indicador.get("Indicador", "Indicador"), estilo_kpi_rotulo)],
+                    [paragrafo(indicador.get("Resultado", "-"), estilo_kpi_valor)],
+                ], colWidths=[largura_cartao], rowHeights=[24, 35])
+                cartao.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (0, 0), azul_claro),
+                    ("BACKGROUND", (0, 1), (0, 1), colors.white),
+                    ("BOX", (0, 0), (-1, -1), 0.7, cinza_borda),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]))
+                linha_cartoes.append(cartao)
+                if len(linha_cartoes) == 2:
+                    cartoes.append(linha_cartoes)
+                    linha_cartoes = []
+            if linha_cartoes:
+                linha_cartoes.append("")
+                cartoes.append(linha_cartoes)
+            painel_kpis = Table(cartoes, colWidths=[largura_cartao, largura_cartao], hAlign="LEFT")
+            painel_kpis.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            elementos.extend([painel_kpis, Spacer(1, 6)])
+
+            titulo_grafico, dados_grafico = _dados_grafico_resumo(df)
+            if dados_grafico:
+                desenho = Drawing(largura_util, 118)
+                grafico = Pie()
+                grafico.x, grafico.y, grafico.width, grafico.height = 16, 7, 103, 103
+                grafico.data = [valor for _, valor in dados_grafico]
+                grafico.labels = None
+                grafico.slices.strokeColor = colors.white
+                grafico.slices.strokeWidth = 1
+                cores_grafico = [colors.HexColor("#16A34A"), colors.HexColor("#F59E0B")]
+                if "custos" in remover_acentos(titulo_grafico).lower():
+                    cores_grafico = [azul, colors.HexColor("#F59E0B")]
+                for indice_cor, cor in enumerate(cores_grafico[:len(dados_grafico)]):
+                    grafico.slices[indice_cor].fillColor = cor
+                desenho.add(grafico)
+                desenho.add(String(145, 94, titulo_grafico, fontName="Helvetica-Bold", fontSize=11, fillColor=azul_escuro))
+                for indice_item, ((rotulo, valor), cor) in enumerate(zip(dados_grafico, cores_grafico)):
+                    y = 68 - indice_item * 30
+                    desenho.add(Rect(146, y - 2, 10, 10, fillColor=cor, strokeColor=cor))
+                    valor_legenda = f"{valor:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    if "custos" in remover_acentos(titulo_grafico).lower(): valor_legenda = f"R$ {valor_legenda}"
+                    desenho.add(String(164, y, f"{rotulo}: {valor_legenda}", fontName="Helvetica", fontSize=9, fillColor=cinza_texto))
+                elementos.extend([desenho, Spacer(1, 2)])
+
+            complementares = df.iloc[6:][["Indicador", "Resultado"]] if len(df) > 6 else pd.DataFrame()
+            if not complementares.empty:
+                elementos.append(Paragraph("Indicadores complementares", estilo_subsecao))
+                dados_complementares = [[paragrafo("Indicador", estilo_cabecalho), paragrafo("Resultado", estilo_cabecalho)]]
+                dados_complementares.extend([[paragrafo(linha["Indicador"], estilo_celula), paragrafo(linha["Resultado"], estilo_celula)] for _, linha in complementares.iterrows()])
+                tabela_complementares = Table(dados_complementares, colWidths=[largura_util * 0.68, largura_util * 0.32], repeatRows=1)
+                tabela_complementares.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), azul_escuro), ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]))
+                elementos.extend([tabela_complementares, Spacer(1, 5)])
+
+            leituras = df[df["Leitura para análise"].astype(str).str.strip() != ""][["Indicador", "Leitura para análise"]]
+            if not leituras.empty:
+                elementos.append(Paragraph("Leituras gerenciais", estilo_subsecao))
+                dados_leituras = [[paragrafo("Indicador", estilo_cabecalho), paragrafo("Interpretação", estilo_cabecalho)]]
+                dados_leituras.extend([[paragrafo(linha["Indicador"], estilo_celula), paragrafo(linha["Leitura para análise"], estilo_celula)] for _, linha in leituras.iterrows()])
+                tabela_leituras = Table(dados_leituras, colWidths=[largura_util * 0.36, largura_util * 0.64], repeatRows=1)
+                tabela_leituras.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), azul), ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
+                    ("BACKGROUND", (0, 1), (-1, -1), cinza_fundo), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]))
+                elementos.extend([tabela_leituras, Spacer(1, 10)])
+            continue
+
+        maximo_texto = max([len(str(valor)) for valor in df.astype(str).head(100).values.flatten()] + [0])
+        usar_tabela = len(df.columns) <= 6 and maximo_texto <= 45
 
         if usar_tabela:
             pesos = []
@@ -870,6 +1085,10 @@ def _criar_pdf_relatorio(titulo, tabelas):
 
         chaves_titulo = ["Obra", "Placa", "Veículo", "Local", "Data", "Destino"]
         campos_longos = ("material", "endereco", "observacao", "motivo", "descrição")
+        # Nos relatórios em cartões, o título da seção acompanha obrigatoriamente
+        # o primeiro registro, evitando um cabeçalho isolado no fim da página.
+        if elementos and elementos[-1] is cabecalho_secao:
+            elementos.pop()
         for numero, (_, registro) in enumerate(df.iterrows(), start=1):
             chave_principal = next((chave for chave in chaves_titulo if chave in df.columns and str(registro.get(chave, "")).strip()), None)
             titulo_registro = f"Registro {numero:02d}"
@@ -915,7 +1134,10 @@ def _criar_pdf_relatorio(titulo, tabelas):
                     ("BACKGROUND", (1, indice_longo), (3, indice_longo), cinza_fundo),
                 ])
             tabela_card.setStyle(TableStyle(comandos))
-            elementos.extend([tabela_card, Spacer(1, 7)])
+            conteudo_card = [tabela_card, Spacer(1, 7)]
+            if numero == 1:
+                conteudo_card.insert(0, cabecalho_secao)
+            elementos.append(KeepTogether(conteudo_card))
         elementos.append(Spacer(1, 4))
 
     documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
