@@ -81,7 +81,7 @@ def aplicar_estilo_customizado():
 aplicar_estilo_customizado()
 
 # =====================================================================
-# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO Waze (COM ALMOÇO TRAVADO)
+# FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO Waze
 # =====================================================================
 def parse_time_to_mins(time_str):
     if not time_str: return 0
@@ -99,7 +99,6 @@ def format_mins_to_time(mins):
 
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
-    
     agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
     current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
     
@@ -198,11 +197,11 @@ if modo_url == "true":
     conn = sqlite3.connect(DB_FILE)
     try:
         res = conn.execute("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
-        df_mobile = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
+        df_mobile = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_REF_ROTA_STR,))
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
-        res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:44"
-    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "08:44"
+        res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_REF_ROTA_STR,)).fetchone()
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
+    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "08:00"
     conn.close()
 
     if not res:
@@ -349,13 +348,14 @@ def inicializar_bd():
     try: c.execute("ALTER TABLE historico_concluidos ADD COLUMN hora_conclusao TEXT")
     except: pass 
     
-    # ATUALIZAÇÃO DA SEPARAÇÃO DE VEÍCULOS (STRADA / L200)
+    # Tabela para medir tempo gasto com base no GPS do Rastreador
+    c.execute('''CREATE TABLE IF NOT EXISTS rastreio_paradas (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, placa TEXT, local TEXT, hora_chegada TEXT, hora_saida TEXT)''')
+    
     try: c.execute("ALTER TABLE abastecimentos ADD COLUMN veiculo TEXT DEFAULT 'Strada'")
     except: pass
     try: c.execute("ALTER TABLE registro_km ADD COLUMN veiculo TEXT DEFAULT 'Strada'")
     except: pass
     
-    # Corrige os registros antigos da Borracharia pra L200 automaticamente
     c.execute("UPDATE abastecimentos SET veiculo = 'L200' WHERE UPPER(obs) LIKE '%DEDÉ%' OR UPPER(obs) LIKE '%DEDE%' OR UPPER(obs) LIKE '%L200%'")
     
     c.execute('''CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))''')
@@ -476,6 +476,7 @@ def normalizar_local(nome):
 def canonicalizar_ponto_rota(nome):
     texto = normalizar_local(str(nome or ""))
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
+    texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
 
@@ -752,6 +753,48 @@ def loop_automacoes_background():
                     if not conn.execute("SELECT hora_inicio FROM inicio_movimento WHERE placa=? AND data=?", (p["Placa"], DATA_HOJE_REAL_STR)).fetchone():
                         match_time = re.search(r'(\d{2}:\d{2})', p['Última atualização'])
                         conn.execute("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (?, ?, ?)", (p["Placa"], DATA_HOJE_REAL_STR, match_time.group(1) if match_time else agora_loop.strftime("%H:%M")))
+            
+            # --- INTELIGÊNCIA DE GEOFENCE (MEDIDOR DE TEMPO NAS PARADAS) ---
+            try:
+                res_rota = conn.execute("SELECT json_locais FROM rota_ativa WHERE id=1 AND data_rota=?", (DATA_HOJE_REAL_STR,)).fetchone()
+                if res_rota and posicoes:
+                    locais_rota = json.loads(res_rota[0])
+                    for p in posicoes:
+                        lat_v, lon_v = p['Latitude'], p['Longitude']
+                        placa_v = p['Placa']
+                        vel_v = p['Velocidade (km/h)']
+                        
+                        local_proximo = None
+                        menor_dist = 999
+                        for nome_loc, coords in locais_rota.items():
+                            dLat = math.radians(coords[0] - lat_v)
+                            dLon = math.radians(coords[1] - lon_v)
+                            a = math.sin(dLat/2)**2 + math.cos(math.radians(lat_v)) * math.cos(math.radians(coords[0])) * math.sin(dLon/2)**2
+                            c_math = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+                            dist_km = 6371.0 * c_math
+                            
+                            # Se o carro está a menos de 250 metros do destino da rota
+                            if dist_km <= 0.25 and dist_km < menor_dist: 
+                                local_proximo = nome_loc
+                                menor_dist = dist_km
+                        
+                        agora_hm = agora_loop.strftime("%H:%M")
+                        parada_ativa = conn.execute("SELECT id, local, hora_chegada FROM rastreio_paradas WHERE data=? AND placa=? AND hora_saida IS NULL ORDER BY id DESC LIMIT 1", (DATA_HOJE_REAL_STR, placa_v)).fetchone()
+                        
+                        if local_proximo and vel_v < 5:
+                            if parada_ativa:
+                                if parada_ativa[1] != local_proximo:
+                                    conn.execute("UPDATE rastreio_paradas SET hora_saida=? WHERE id=?", (agora_hm, parada_ativa[0]))
+                                    conn.execute("INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (?, ?, ?, ?)", (DATA_HOJE_REAL_STR, placa_v, local_proximo, agora_hm))
+                            else:
+                                conn.execute("INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (?, ?, ?, ?)", (DATA_HOJE_REAL_STR, placa_v, local_proximo, agora_hm))
+                        else:
+                            if parada_ativa and (not local_proximo or vel_v >= 5):
+                                conn.execute("UPDATE rastreio_paradas SET hora_saida=? WHERE id=?", (agora_hm, parada_ativa[0]))
+            except Exception as e:
+                pass
+            # --- FIM INTELIGÊNCIA GEOFENCE ---
+
             conn.commit()
             conn.close()
     except: pass
@@ -898,7 +941,7 @@ with tab_demandas:
     st.caption("Acompanhe em tempo real as entregas da rota gerada.")
 
     conn = sqlite3.connect(DB_FILE)
-    df_entregues_hoje = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
+    df_entregues_hoje = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_REF_ROTA_STR,))
     conn.close()
 
     dict_concluidos_monitor = dict(zip(df_entregues_hoje['id'].astype(str), df_entregues_hoje['hora_conclusao']))
@@ -1128,13 +1171,13 @@ with tab_roteiro:
             conn = sqlite3.connect(DB_FILE)
             garantir_gps_local_base(conn)
             
-            df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
+            df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_REF_ROTA_STR,))
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
             
-            res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-            current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 44)
+            res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_REF_ROTA_STR,)).fetchone()
+            current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 0) # Início padrão às 08:00
             current_point = ponto_saida
 
             rota_salva = conn.execute("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = ?", (DATA_REF_ROTA_STR,)).fetchone()
@@ -1292,10 +1335,14 @@ with tab_roteiro:
         
         conn = sqlite3.connect(DB_FILE)
         
-        df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_HOJE_REAL_STR,))
+        df_torre = pd.read_sql_query("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = ?", conn, params=(DATA_REF_ROTA_STR,))
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
-        res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_HOJE_REAL_STR,)).fetchone()
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:44"
+        res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_REF_ROTA_STR,)).fetchone()
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
+        
+        # Puxar o extrato real de paradas baseado no rastreador
+        df_paradas = pd.read_sql_query("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=?", conn, params=(DATA_REF_ROTA_STR,))
+        
         conn.close()
 
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
@@ -1347,6 +1394,23 @@ with tab_roteiro:
                         col_demanda, col_status = st.columns([9, 1])
                         col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*{check_ui}", unsafe_allow_html=True)
                         texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
+                    
+                    # --- BLOCO DE EXIBIÇÃO DO TEMPO REAL NA PARADA (GEOFENCE) ---
+                    texto_paradas_reais = ""
+                    paradas_local = df_paradas[df_paradas['local'] == step['destino']]
+                    if not paradas_local.empty:
+                        for _, rp in paradas_local.iterrows():
+                            h_c = rp['hora_chegada']
+                            h_s = rp['hora_saida'] if rp['hora_saida'] else ""
+                            if h_s:
+                                duracao = max(0, parse_time_to_mins(h_s) - parse_time_to_mins(h_c))
+                                texto_paradas_reais += f"⏱️ **Tempo no local:** Chegou às {h_c} • Saiu às {h_s} <b>({duracao} min)</b><br>"
+                            else:
+                                texto_paradas_reais += f"📡 **Rastreador:** Chegou às {h_c} • (Ainda descarregando)<br>"
+                                
+                    if texto_paradas_reais:
+                        st.markdown(f"<div style='background-color:rgba(37, 99, 235, 0.1); border-left:3px solid #2563eb; padding:8px 12px; margin-top:10px; margin-bottom:5px; font-size:13px; border-radius:4px; color:#93c5fd;'>{texto_paradas_reais}</div>", unsafe_allow_html=True)
+                    # -------------------------------------------------------------
                         
                     texto_whatsapp += "\n"
                     if not is_start: num_parada += 1
