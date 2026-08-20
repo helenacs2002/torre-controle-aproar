@@ -967,6 +967,7 @@ def loop_automacoes_background():
                         vel_v = p['Velocidade (km/h)']
                         
                         local_proximo = None
+                        menor_dist = 999
                         for nome_loc, coords in locais_rota.items():
                             if nome_loc == "ESCRITÓRIO": continue # Ignora o escritório, ele não é parada
                             dist_km = calcular_distancia_km(coords[0], coords[1], lat_v, lon_v)
@@ -1094,7 +1095,8 @@ with tab_rastreador:
                 met2.metric("Em movimento", sum(1 for v in velocidades if v > 0))
                 met3.metric("Última leitura", datetime.now(FUSO_LOCAL).strftime("%H:%M:%S"))
 
-                mapa = folium.Map(location=[sum(p["Latitude"] for p in posicoes) / len(posicoes), sum(p["Longitude"] for p in posicoes) / len(posicoes)], zoom_start=11, tiles="CartoDB dark_matter")
+                # MAPA ALTERADO PARA OPENSTREETMAP (CLARO)
+                mapa = folium.Map(location=[sum(p["Latitude"] for p in posicoes) / len(posicoes), sum(p["Longitude"] for p in posicoes) / len(posicoes)], zoom_start=11, tiles="OpenStreetMap")
                 limites = []
                 for p in posicoes:
                     cor, icone = ("green", "play") if p["Velocidade (km/h)"] > 0 else ("red", "stop")
@@ -1592,7 +1594,7 @@ with tab_roteiro:
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
                 with st.container(border=True):
-                    status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
+                    status_tempo = f"<span style='color: #16a34a;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
 
                     if is_start:
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
@@ -1679,7 +1681,8 @@ with tab_roteiro:
 
         with col_dir:
             st.subheader("🗺️ Mapa da Rota")
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="CartoDB dark_matter")
+            # MAPA ALTERADO PARA OPENSTREETMAP (CLARO)
+            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
             path_points, offsets_dict = [], {}
             
             def apply_offset(lat, lon):
