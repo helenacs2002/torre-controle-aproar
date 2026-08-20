@@ -338,7 +338,7 @@ if modo_url == "true":
 
     if len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m_mobile)
     if len(path_points_mobile) > 1: m_mobile.fit_bounds(path_points_mobile, padding=(30, 30), max_zoom=14)
-    if p_saida in locais_dict: folium.Marker([path_points_mobile[0][0], path_points_mobile[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m_mobile)
+    if p_saida in locais_dict: folium.Marker([path_points_mobile[0][0], path_points_mobile[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
     st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
@@ -371,7 +371,6 @@ LOCAL_BASE_ENDERECO = "Rua Professor Mário Rocha, 84 - Joaquim Távora, Fortale
 LOCAL_BASE_COORDS = (-3.752270016704, -38.51537298342)
 ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "ESCRITÓRIO", "ESCRITORIO", "ESCRITÓRIO PROVISÓRIO", "ESCRITORIO PROVISORIO"}
 
-# LISTA COMPLETA DE FORNECEDORES EXTRAÍDA DO SEU PDF + UNIDADES
 ENDERECOS_PADRAO = [
     ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"), 
     ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), 
@@ -402,258 +401,13 @@ ENDERECOS_PADRAO = [
     ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE"), 
     ("SEBRAE", "Avenida Monsenhor Tabosa, 777 - Meireles, Fortaleza - CE"), 
     ("LECI FERRAGENS", "Rua Gen. Clarindo de Queiroz, 1668 - Centro, Fortaleza - CE"),
-    
-    # FORNECEDORES DO PDF (BAIRROS REAIS)
-    ("55 ENERGY", "Meireles, Fortaleza - CE"),
-    ("USINA 6M", "Passaré, Fortaleza - CE"),
-    ("A MADEREIRA", "Fortaleza - CE"),
-    ("A PORQUINHA", "Parque Manibura, Fortaleza - CE"),
-    ("ACAL", "Centro, Fortaleza - CE"),
-    ("AÇO BOM PREÇO", "Cidade Nova, Maracanaú - CE"),
-    ("AÇO CEARENSE", "Monte Castelo, Fortaleza - CE"),
-    ("AÇO COMERCIAL", "Jacarecanga, Fortaleza - CE"),
-    ("AÇO NORONHA", "Canindezinho, Fortaleza - CE"),
-    ("AÇO SHOPPING", "Farias Brito, Fortaleza - CE"),
-    ("ACPA ALUMINIO", "Engenheiro Luciano Cavalcante, Fortaleza - CE"),
-    ("ACQ COMERCIO", "Vila União, Fortaleza - CE"),
-    ("ACTOS COMUNICACAO", "Cajazeiras, Fortaleza - CE"),
-    ("AFC INOX", "Serrinha, Fortaleza - CE"),
-    ("AGATEK", "Centro, Fortaleza - CE"),
-    ("AGLUTINA", "Centro, Fortaleza - CE"),
-    ("AGS CALHAS", "Siqueira, Fortaleza - CE"),
-    ("AGUA VIVA", "Paupina, Fortaleza - CE"),
-    ("AIRTECH", "Pajuçara, Maracanaú - CE"),
-    ("ALCONORT", "Boa Vista, Fortaleza - CE"),
-    ("ALED ILUMINACAO", "Aldeota, Fortaleza - CE"),
-    ("ALO MADEIRAS", "Centro, Horizonte - CE"),
-    ("ALUMETAL", "Barra do Ceará, Fortaleza - CE"),
-    ("ALUMIL", "Farias Brito, Fortaleza - CE"),
-    ("AMBIENTAR", "Centro, Fortaleza - CE"),
-    ("AMPEC", "Centro, Fortaleza - CE"),
-    ("AMPLA CORES", "Fortaleza - CE"),
-    ("ANMAP BORRACHA", "Fortaleza - CE"),
-    ("APIGUANA MARACANAU", "Maracanaú - CE"),
-    ("APIGUANA CENTRO", "Centro, Fortaleza - CE"),
-    ("ARCELORMITTAL", "Novo Oriente, Maracanaú - CE"),
-    ("ARCO IRIS", "Vila Velha, Fortaleza - CE"),
-    ("AREIA PARENTE VIANA", "Aningás, Horizonte - CE"),
-    ("REJUNTAMIX", "Parque Guadalajara, Caucaia - CE"),
-    ("SUPERMASSA", "Henrique Jorge, Fortaleza - CE"),
-    ("ARMAZEM CANINDE", "Centro, Fortaleza - CE"),
-    ("ARTEPISO", "Aldeota, Fortaleza - CE"),
-    ("ATACADAO DA MADEIRA", "João XXIII, Fortaleza - CE"),
-    ("ATACADAO DO COMPENSADO", "Montese, Fortaleza - CE"),
-    ("ATACADAO DOS VIDROS", "Floresta, Fortaleza - CE"),
-    ("ATB PISO DE BORRACHA", "Paupina, Fortaleza - CE"),
-    ("AURABRASIL", "Aerolândia, Fortaleza - CE"),
-    ("AURORENSE FERRAGENS", "Parangaba, Fortaleza - CE"),
-    ("AURORENSE TINTAS ALDEOTA", "Meireles, Fortaleza - CE"),
-    ("AURORENSE TINTAS BARRA", "Álvaro Weyne, Fortaleza - CE"),
-    ("CIMENTACO", "Granja Portugal, Fortaleza - CE"),
-    ("QUALITY CASA & CONSTRUCAO", "Centro, Fortaleza - CE"),
-    ("BARRA CONSTRUCOES", "Barra do Ceará, Fortaleza - CE"),
-    ("BARREIRINHA CONSTRUCOES", "Industrial, Maracanaú - CE"),
-    ("BATISTA PALLET", "Boa Esperança, Maracanaú - CE"),
-    ("BELGO CERCAS", "Messejana, Fortaleza - CE"),
-    ("BETON TECNOLOGIA", "Cocó, Fortaleza - CE"),
-    ("BEZERRA E OLIVEIRA", "Centro, Fortaleza - CE"),
-    ("BLOCO K", "Planalto Horizonte, Horizonte - CE"),
-    ("BRASIL METAIS", "Aerolândia, Fortaleza - CE"),
-    ("BRASIL MIX EPI", "Aerolândia, Fortaleza - CE"),
-    ("BRINEL", "Bom Futuro, Fortaleza - CE"),
-    ("C'ART", "Aldeota, Fortaleza - CE"),
-    ("CACTUS ELETRICA", "Dom Lustosa, Fortaleza - CE"),
-    ("CARGA RAPIDA", "Engenheiro Luciano Cavalcante, Fortaleza - CE"),
-    ("CARMEHIL BEZERRA", "São Gerardo, Fortaleza - CE"),
-    ("CARMEHIL ANTONIO SALES", "Joaquim Távora, Fortaleza - CE"),
-    ("CASA DA CONSTRUCAO", "José Bonifácio, Fortaleza - CE"),
-    ("CASA DO CONSTRUTOR BEZERRA", "São Gerardo, Fortaleza - CE"),
-    ("CASA DO PINUS", "Boa Vista, Fortaleza - CE"),
-    ("CDA ACO CEARENSE", "Distrito Industrial, Maracanaú - CE"),
-    ("CDC DISTRIBUIDORA", "Conjunto Ceará, Fortaleza - CE"),
-    ("CEARA CIMENTOS", "Luzardo Viana, Maracanaú - CE"),
-    ("CEARA ALUMINIO", "Passaré, Fortaleza - CE"),
-    ("CEARA FORROS", "Messejana, Fortaleza - CE"),
-    ("CEFORSE", "Jardim das Oliveiras, Fortaleza - CE"),
-    ("CERBRAS", "Distrito Industrial III, Maracanaú - CE"),
-    ("CIMEX CIMENTOS", "Barroso, Fortaleza - CE"),
-    ("CLARUS EPIS", "Cajazeiras, Fortaleza - CE"),
-    ("COFEMIL", "Centro, Fortaleza - CE"),
-    ("COMAG GRANITOS", "Bonsucesso, Fortaleza - CE"),
-    ("COMERCIAL ALUMINENSE", "Cristo Redentor, Fortaleza - CE"),
-    ("COMERCIAL F MENEZES", "Bom Sucesso, Fortaleza - CE"),
-    ("SUPER PARAFUSOS", "Serrinha, Fortaleza - CE"),
-    ("CIMENTO APODI", "Edson Queiroz, Fortaleza - CE"),
-    ("CONCEITO FORROS", "Parque Iracema, Fortaleza - CE"),
-    ("CONSTRULED", "Demócrito Rocha, Fortaleza - CE"),
-    ("CONSTRUMIX", "Conjunto Jereissati I, Maracanaú - CE"),
-    ("CONSTRUSOLDA", "Lagoa Redonda, Fortaleza - CE"),
-    ("CONSTRUTOP HORIZONTE", "Diadema, Horizonte - CE"),
-    ("CONSTRUTORA IMPACTO", "Aldeota, Fortaleza - CE"),
-    ("DP BARBOSA", "Bom Futuro, Fortaleza - CE"),
-    ("DALWAN TELHAS", "São João do Tauape, Fortaleza - CE"),
-    ("DAVIDPREL", "Centro, Caucaia - CE"),
-    ("DCS DISTRIBUIDORA", "Mondubim, Fortaleza - CE"),
-    ("DECOGESSO", "Centro, Fortaleza - CE"),
-    ("DEPOSITO DNU", "Alto Alegre II, Maracanaú - CE"),
-    ("DEPOSITO E MADEIREIRA VIANA", "Centro, Horizonte - CE"),
-    ("DEPOSITO JP", "Edson Queiroz, Fortaleza - CE"),
+    ("ELÉTRICA FORTALEZA", "Centro, Fortaleza - CE"), 
+    ("ELETRICA FORTALEZA", "Centro, Fortaleza - CE"), 
     ("DEPÓSITO JP", "Edson Queiroz, Fortaleza - CE"),
+    ("DEPOSITO JP", "Edson Queiroz, Fortaleza - CE"),
     ("JP CONSTRUÇÃO", "Edson Queiroz, Fortaleza - CE"),
     ("JP CONSTRUCOES", "Edson Queiroz, Fortaleza - CE"),
-    ("DEPOSITO NALAJE", "Edson Queiroz, Fortaleza - CE"),
-    ("DEPOSITO NOVO LAR", "Engenheiro Luciano Cavalcante, Fortaleza - CE"),
-    ("DEPOSITO O ELIZEU", "Distrito Industrial I, Maracanaú - CE"),
-    ("DEPOSITO SUED", "Barra do Ceará, Fortaleza - CE"),
-    ("DIBRANT ANDAIMES", "Joaquim Távora, Fortaleza - CE"),
-    ("DIMALI LIMPEZA", "Centro, Fortaleza - CE"),
-    ("DISMONZA TINTAS", "Dionisio Torres, Fortaleza - CE"),
-    ("DISTRI-FORRO", "Parque Iracema, Fortaleza - CE"),
-    ("DOIS IRMAOS ELETRICA", "Centro, Fortaleza - CE"),
-    ("DRAGAO DOS PARAFUSOS", "Centro, Fortaleza - CE"),
-    ("DTS SEGURANCA", "Farias Brito, Fortaleza - CE"),
-    ("ELÉTRICA FORTALEZA", "Centro, Fortaleza - CE"),
-    ("ELETRICA FORTALEZA", "Centro, Fortaleza - CE"),
-    ("ELETRICA PRADO", "Centro, Fortaleza - CE"),
-    ("ELETRICA TALES", "Centro, Fortaleza - CE"),
-    ("ELETROHOME", "Messejana, Fortaleza - CE"),
-    ("ELETRONICA SINAI", "Centro, Fortaleza - CE"),
-    ("ESTRUTURAL COMERCIO", "Jacarecanga, Fortaleza - CE"),
-    ("EUREKA PAINT", "Praia de Belas, Porto Alegre - RS"),
-    ("FAST DRYWALL", "Centro, Fortaleza - CE"),
-    ("FINO INOX", "Parangaba, Fortaleza - CE"),
-    ("FONTE DOS PARAFUSOS", "Cajazeiras, Fortaleza - CE"),
-    ("FORTAL GLASS", "Padre Andrade, Fortaleza - CE"),
-    ("FORTEMETAL", "Pacatuba - CE"),
-    ("FORTVIGAS", "Luciano Cavalcante, Fortaleza - CE"),
-    ("FRIGELAR", "Cajazeiras, Fortaleza - CE"),
-    ("GALPAO FERRIACO", "Parque São João, Maranguape - CE"),
-    ("GALVAO CORREIAS", "Mondubim, Fortaleza - CE"),
-    ("GERLOC", "Fortaleza - CE"),
-    ("GESDRALL", "Boa Vista, Fortaleza - CE"),
-    ("GMB PREMOLDADOS", "Boa Vista, Fortaleza - CE"),
-    ("GRAFICA MAIS", "Messejana, Fortaleza - CE"),
-    ("GRAFICA VELOZ", "Jardim América, Fortaleza - CE"),
-    ("GUERRA METAIS", "Aerolândia, Fortaleza - CE"),
-    ("GUERREIRA TINTAS", "Centro, Fortaleza - CE"),
-    ("HBR LOCACOES", "Parangaba, Fortaleza - CE"),
-    ("HIDROFORTAL", "Aerolândia, Fortaleza - CE"),
-    ("HIPERFERRO", "Mondubim, Fortaleza - CE"),
-    ("HORUS", "Aldeota, Fortaleza - CE"),
-    ("IBF TELHAS", "Cristo Redentor, Fortaleza - CE"),
-    ("JAGUAR TINTAS", "Joaquim Távora, Fortaleza - CE"),
-    ("JMX LED", "Damas, Fortaleza - CE"),
-    ("JN MARMORE", "Prefeito José Walter, Fortaleza - CE"),
-    ("KAZAS GANESHA", "Joaquim Távora, Fortaleza - CE"),
-    ("KPS MENEZES", "Centro, Fortaleza - CE"),
-    ("KSA DO PERFIL", "Parangaba, Fortaleza - CE"),
-    ("LAGOTELA", "Autran Nunes, Fortaleza - CE"),
-    ("LED LEGAL", "Centro, Fortaleza - CE"),
-    ("LED TOP", "Aldeota, Fortaleza - CE"),
-    ("LEDS DO BRASIL", "Cidade dos Funcionários, Fortaleza - CE"),
-    ("LOCFACIL", "Prefeito José Walter, Fortaleza - CE"),
-    ("LOJAO DAS TELHAS", "Fátima, Fortaleza - CE"),
-    ("LOJAO DOS PARAFUSOS", "Messejana, Fortaleza - CE"),
-    ("LOJAS ALVES", "Bom Futuro, Fortaleza - CE"),
-    ("LOQUICENTER", "Passaré, Fortaleza - CE"),
-    ("LUMINACO", "Cajazeiras, Fortaleza - CE"),
-    ("MADEIREIRA MARAPONGA", "Parangaba, Fortaleza - CE"),
-    ("MADEIREIRA QUIXADA", "Centro, Pacajus - CE"),
-    ("MADEREIRA GEOVANE", "Bonsucesso, Fortaleza - CE"),
-    ("MAGAZINE FERRO & ACO", "Novo Maranguape II, Maranguape - CE"),
-    ("MAGNA LOCACOES", "Fátima, Fortaleza - CE"),
-    ("MAQLOC", "Aerolândia, Fortaleza - CE"),
-    ("MATERCOL EPIS", "Cidade dos Funcionários, Fortaleza - CE"),
-    ("MAVI CONSTRUCOES", "São João do Tauape, Fortaleza - CE"),
-    ("MEFRASA TELHAS", "Benfica, Fortaleza - CE"),
-    ("MEGA LUX", "Centro, Fortaleza - CE"),
-    ("MEGAMIX", "Distrito Industrial I, Maracanaú - CE"),
-    ("METALSEG", "Boa Vista, Fortaleza - CE"),
-    ("METALURGICA HISPANO", "Centro, Fortaleza - CE"),
-    ("METALURGICA SOMETAL", "Jangurussu, Fortaleza - CE"),
-    ("MG ANDRADE PREMOLDADOS", "Passaré, Fortaleza - CE"),
-    ("MJ FERRAGENS", "Prefeito José Walter, Fortaleza - CE"),
-    ("MONTEIRO E COSTA", "Farias Brito, Fortaleza - CE"),
-    ("MR CALHAS", "Bonsucesso, Fortaleza - CE"),
-    ("MURACO", "Pavuna, Pacatuba - CE"),
-    ("NALED ILUMINACAO", "Centro, Fortaleza - CE"),
-    ("NILO MAIA", "Distrito Industrial I, Maracanaú - CE"),
-    ("NOE DE BRITO", "Presidente Kennedy, Fortaleza - CE"),
-    ("NORDESTE DISTRIBUIDORA", "Aerolândia, Fortaleza - CE"),
-    ("NORMATEL BEZERRA", "São Gerardo, Fortaleza - CE"),
-    ("NORMATEL ANTONIO SALES", "Dionisio Torres, Fortaleza - CE"),
-    ("O CHEFE DAS CALHAS", "Papicu, Fortaleza - CE"),
-    ("O HOMEM DO CIMENTO", "Grilo, Caucaia - CE"),
-    ("PARENTE FERRAGENS", "Centro, Fortaleza - CE"),
-    ("PERFECTTO FORROS", "Boa Vista, Fortaleza - CE"),
-    ("PINZON EXTINTORES", "Dias Macedo, Fortaleza - CE"),
-    ("PISO NOVO", "Cágado, Maracanaú - CE"),
-    ("PLATINUM METAIS", "Jacarecanga, Fortaleza - CE"),
-    ("PLENO MADEIRAS", "Carlito Pamplona, Fortaleza - CE"),
-    ("POLARTECH", "Padre Andrade, Fortaleza - CE"),
-    ("POLO MOVEIS", "Henrique Jorge, Fortaleza - CE"),
-    ("PONTUAL ACOS", "Passaré, Fortaleza - CE"),
-    ("POTENCIAL TAPETES", "Boa Vista, Fortaleza - CE"),
-    ("POWER EPI", "Praia de Iracema, Fortaleza - CE"),
-    ("PRAMACON", "Presidente Kennedy, Fortaleza - CE"),
-    ("PREFABRICK", "Distrito Industrial do Pecém, São Gonçalo do Amarante - CE"),
-    ("PREMOLAJE", "José de Alencar, Fortaleza - CE"),
-    ("PRIMME ALUMINIOS", "José Bonifácio, Fortaleza - CE"),
-    ("PRIMOR LOCACOES", "Alto Alegre II, Maracanaú - CE"),
-    ("PRIMOS FERRAGENS", "Parangaba, Fortaleza - CE"),
-    ("PROACO INOX", "Jacarecanga, Fortaleza - CE"),
-    ("PROLUX COMERCIO", "Mondubim, Fortaleza - CE"),
-    ("PROPOSTES", "Distrito Industrial III, Maracanaú - CE"),
-    ("PROSERVICOS TI", "Granja Lisboa, Fortaleza - CE"),
-    ("PROTECAO ENGENHARIA", "São João do Tauape, Fortaleza - CE"),
-    ("PSICOR TINTAS", "Conjunto Ceará, Fortaleza - CE"),
-    ("QUALITY OFFICE", "Jacarecanga, Fortaleza - CE"),
-    ("RAMACON", "Mondubim, Fortaleza - CE"),
-    ("REDE MAQUINAS", "Cajazeiras, Fortaleza - CE"),
-    ("REVESTIR HOME CENTER", "Dionisio Torres, Fortaleza - CE"),
-    ("RMC CASA & CONSTRUCAO", "Papicu, Fortaleza - CE"),
-    ("ROMA PISOS", "Cocó, Fortaleza - CE"),
-    ("RP COMERCIO", "Aldeota, Fortaleza - CE"),
-    ("RTR MAQUINAS", "José Bonifácio, Fortaleza - CE"),
-    ("SV ELETRICA EXPRESS", "Farias Brito, Fortaleza - CE"),
-    ("SAMUEL ALMEIDA", "Aracapé, Fortaleza - CE"),
-    ("SBRAS TINTAS", "Acarape - CE"),
-    ("SDR NORDESTE", "Engenheiro Luciano Cavalcante, Fortaleza - CE"),
-    ("SERRARIA ALMEIDA", "Itaperi, Fortaleza - CE"),
-    ("SETE ELETRONICA", "Joaquim Távora, Fortaleza - CE"),
-    ("SH FORMAS", "Cajazeiras, Fortaleza - CE"),
-    ("SILICONTECH", "Aldeota, Fortaleza - CE"),
-    ("SIMAG", "Centro, Fortaleza - CE"),
-    ("SM MARMORES", "Barra do Ceará, Fortaleza - CE"),
-    ("SO ENTULHO", "Barra do Ceará, Fortaleza - CE"),
-    ("SOU ENERGY", "Edson Queiroz, Fortaleza - CE"),
-    ("SS PISOS", "Barra do Ceará, Fortaleza - CE"),
-    ("STOCK EQUIPAMENTOS", "Joaquim Távora, Fortaleza - CE"),
-    ("SUSTENTA TIJOLOS", "Barroso, Fortaleza - CE"),
-    ("SV ELETRICA", "Farias Brito, Fortaleza - CE"),
-    ("TRULY NOLEN", "Jóquei Clube, Fortaleza - CE"),
-    ("T&A PRE FABRICADOS", "Luzardo Viana, Maracanaú - CE"),
-    ("TALISCA MADEIRAS", "Jacarecanga, Fortaleza - CE"),
-    ("TATAMES ART & EVA", "Parque Manibura, Fortaleza - CE"),
-    ("TB INOX", "São João do Tauape, Fortaleza - CE"),
-    ("TECH TINTAS", "Messejana, Fortaleza - CE"),
-    ("TECNOGERA", "Distrito Industrial I, Maracanaú - CE"),
-    ("TELAS PINHEIRO", "Centro, Fortaleza - CE"),
-    ("TELE ENTULHO", "Cidade dos Funcionários, Fortaleza - CE"),
-    ("TELEPORT", "Padre Andrade, Fortaleza - CE"),
-    ("TINTAS MC", "Aldeota, Fortaleza - CE"),
-    ("TOC DE LIMPEZA", "Aldeota, Fortaleza - CE"),
-    ("TOP HOME CENTER", "Messejana, Fortaleza - CE"),
-    ("TUDO OFFICE", "Barra do Ceará, Fortaleza - CE"),
-    ("UNIAO TINTAS", "Parque Araxá, Fortaleza - CE"),
-    ("UNIVERSO ELETRONICO", "Centro, Fortaleza - CE"),
-    ("UNIWORK UNIFORMES", "Acaracuzinho, Maracanaú - CE"),
-    ("VELEIRO TINTAS", "Jardim das Oliveiras, Fortaleza - CE"),
-    ("VILLAREJO PISOS", "Aldeota, Fortaleza - CE"),
-    ("VJ PRE-MOLDADOS", "Lagoa Redonda, Fortaleza - CE"),
-    ("WING DISTRIBUIDORA", "Conjunto Metropolitano, Caucaia - CE"),
-    ("WJ INOX", "Farias Brito, Fortaleza - CE"),
-    ("ZEP UNIFORMES", "Parque Araxá, Fortaleza - CE")
+    ("CLARUS EPIs", "Centro, Fortaleza - CE")
 ]
 
 @st.cache_resource(show_spinner=False)
@@ -693,7 +447,6 @@ def inicializar_bd():
     except Exception as e:
         pass
 
-# Garante a inicialização segura do banco Supabase apenas 1x
 try:
     inicializar_bd()
     if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
@@ -1280,14 +1033,13 @@ with tab_demandas:
 
 with tab_historico:
     st.subheader(f"📋 Entregas Fisicamente Concluídas ({DATA_HOJE_REAL_STR})")
-    df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_HOJE_REAL_STR}, cache_ttl=15)
+    df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_REF_ROTA_STR}, cache_ttl=15)
     if df_hist.empty: st.info("Nenhuma entrega foi registrada como finalizada no Trello no dia de hoje.")
     else: st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 with tab_enderecos:
     st.subheader("Locais e Coordenadas GPS")
     
-    # BOTÃO PARA RESTAURAR O BANCO COM TODOS OS FORNECEDORES DO PDF SE PRECISAR
     col_rest, _ = st.columns([2, 1])
     if col_rest.button("📥 Carregar/Restaurar Todos os Fornecedores do PDF", use_container_width=True):
         with st.spinner("Populando o Supabase com todos os fornecedores do PDF..."):
@@ -1564,7 +1316,6 @@ with tab_roteiro:
                     p_sem_acento = remover_acentos(p)
                     encontrado = next((loc for loc in locais_db.keys() if remover_acentos(loc) == p_sem_acento), None)
                     if not encontrado:
-                        # TOLERÂNCIA APRIMORADA PARA 72%
                         matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.72)
                         if matches: encontrado = matches[0]
                     if encontrado: alvo = encontrado
@@ -1589,7 +1340,15 @@ with tab_roteiro:
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
             dist_matrix, dur_matrix = calcular_matriz_rotas(coords)
-            def get_dist_dur(p1, p2): return (0.0, 0.0) if p1 == p2 else (dist_matrix[pontos_unicos.index(p1)][pontos_unicos.index(p2)], dur_matrix[pontos_unicos.index(p1)][pontos_unicos.index(p2)])
+            def get_dist_dur(p1, p2):
+                try:
+                    idx1 = pontos_unicos.index(p1)
+                    idx2 = pontos_unicos.index(p2)
+                    return (dist_matrix[idx1][idx2], dur_matrix[idx1][idx2])
+                except ValueError:
+                    # Rota de segurança caso o ponto não esteja na matriz exata
+                    d = calcular_distancia_km(locais_dict[p1][0], locais_dict[p1][1], locais_dict[p2][0], locais_dict[p2][1]) * 1.3
+                    return (d, (d / VELOCIDADE_MEDIA_KMH) * 60)
 
             carrying = []
             current = current_point
@@ -1848,7 +1607,7 @@ with tab_roteiro:
 
             if geometria_viaria and len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m)
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
-            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
+            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
             st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
