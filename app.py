@@ -2092,6 +2092,23 @@ def carregar_chave_google_routes():
             pass
     return ""
 
+def carregar_chave_tomtom():
+    """Lê a chave gratuita da TomTom sem expô-la no código."""
+    try:
+        chave = str(st.secrets["tomtom"]["api_key"]).strip()
+        if chave:
+            return chave
+    except Exception:
+        pass
+    for campo in ("TOMTOM_API_KEY", "tomtom_api_key"):
+        try:
+            chave = str(st.secrets[campo]).strip()
+            if chave:
+                return chave
+        except Exception:
+            pass
+    return ""
+
 def _duracao_google_minutos(valor):
     try:
         return float(str(valor).rstrip("s")) / 60.0
@@ -2184,7 +2201,70 @@ def calcular_matriz_google_trafego(coords, horario_partida):
     except Exception:
         return None
 
+def calcular_matriz_tomtom_trafego(coords, horario_partida):
+    """Matriz de distâncias e tempos com trânsito ao vivo no plano gratuito TomTom."""
+    chave = carregar_chave_tomtom()
+    quantidade = len(coords)
+    if not chave or quantidade < 2:
+        return None
+
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    partida_rfc3339 = partida.isoformat(timespec="seconds")
+
+    pontos = [
+        {"point": {"latitude": float(lat), "longitude": float(lon)}}
+        for lat, lon in coords
+    ]
+    payload = {
+        "origins": pontos,
+        "destinations": pontos,
+        "options": {
+            "departAt": partida_rfc3339,
+            "routeType": "fastest",
+            "traffic": "live",
+            "travelMode": "car",
+        },
+    }
+
+    try:
+        resposta = requests.post(
+            "https://api.tomtom.com/routing/matrix/2",
+            params={"key": chave},
+            headers={"Content-Type": "application/json", "Accept-Encoding": "gzip"},
+            json=payload,
+            timeout=35,
+        )
+        resposta.raise_for_status()
+        dados = resposta.json().get("data", [])
+        distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+        duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+
+        for celula in dados:
+            resumo = celula.get("routeSummary") or {}
+            origem = int(celula.get("originIndex", -1))
+            destino = int(celula.get("destinationIndex", -1))
+            distancia_m = resumo.get("lengthInMeters")
+            duracao_s = resumo.get("travelTimeInSeconds")
+            if 0 <= origem < quantidade and 0 <= destino < quantidade and distancia_m is not None and duracao_s is not None:
+                distancias[origem][destino] = float(distancia_m) / 1000.0
+                duracoes[origem][destino] = float(duracao_s) / 60.0
+
+        for i in range(quantidade):
+            distancias[i][i], duracoes[i][i] = 0.0, 0.0
+        if any(valor is None for linha in distancias for valor in linha):
+            return None
+        if any(valor is None for linha in duracoes for valor in linha):
+            return None
+        return distancias, duracoes
+    except Exception:
+        return None
+
 def calcular_matriz_rotas(coords, horario_partida=None):
+    matriz_tomtom = calcular_matriz_tomtom_trafego(coords, horario_partida)
+    if matriz_tomtom:
+        return matriz_tomtom[0], matriz_tomtom[1], "TomTom Routing — trânsito ao vivo e histórico (gratuito)"
+
     matriz_google = calcular_matriz_google_trafego(coords, horario_partida)
     if matriz_google:
         return matriz_google[0], matriz_google[1], "Google Routes — trânsito ao vivo e preditivo"
@@ -2594,11 +2674,51 @@ def buscar_geometria_google_trafego(coords_limpas, horario_partida=None):
     except Exception:
         return None
 
+def buscar_geometria_tomtom_trafego(coords_limpas, horario_partida=None):
+    """Desenha o percurso viário na ordem já otimizada, considerando trânsito TomTom."""
+    chave = carregar_chave_tomtom()
+    if not chave or len(coords_limpas) < 2 or len(coords_limpas) > 152:
+        return None
+
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    locais = ":".join(f"{float(lat)},{float(lon)}" for lat, lon in coords_limpas)
+    url = f"https://api.tomtom.com/routing/1/calculateRoute/{locais}/json"
+    parametros = {
+        "key": chave,
+        "routeType": "fastest",
+        "traffic": "true",
+        "travelMode": "car",
+        "departAt": partida.isoformat(timespec="seconds"),
+        "routeRepresentation": "polyline",
+        "computeTravelTimeFor": "all",
+        "language": "pt-BR",
+    }
+    try:
+        resposta = requests.get(url, params=parametros, timeout=35)
+        resposta.raise_for_status()
+        rotas = resposta.json().get("routes", [])
+        if not rotas:
+            return None
+        pontos = []
+        for perna in rotas[0].get("legs", []):
+            for ponto in perna.get("points", []):
+                coordenada = [float(ponto["latitude"]), float(ponto["longitude"])]
+                if not pontos or coordenada != pontos[-1]:
+                    pontos.append(coordenada)
+        return pontos if len(pontos) > 1 else None
+    except Exception:
+        return None
+
 def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
     coords_limpas = []
     for coord in coords_ordenadas:
         if not coords_limpas or coord != coords_limpas[-1]: coords_limpas.append(coord)
     if len(coords_limpas) < 2: return [[lat, lon] for lat, lon in coords_limpas], False
+
+    geometria_tomtom = buscar_geometria_tomtom_trafego(coords_limpas, horario_partida)
+    if geometria_tomtom:
+        return geometria_tomtom, True
 
     geometria_google = buscar_geometria_google_trafego(coords_limpas, horario_partida)
     if geometria_google:
@@ -3618,10 +3738,10 @@ with tab_roteiro:
 
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
-            if "Google Routes" in fonte_matriz_exibicao:
+            if "Google Routes" in fonte_matriz_exibicao or "TomTom Routing" in fonte_matriz_exibicao:
                 st.caption(f"🚦 Otimização viária: **{fonte_matriz_exibicao}** • referência {horario_matriz_exibicao}")
             else:
-                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • para trânsito real, configure `google_routes.api_key` nos Secrets.")
+                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • para trânsito real gratuito, configure `tomtom.api_key` nos Secrets.")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
