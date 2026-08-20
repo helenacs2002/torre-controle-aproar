@@ -116,7 +116,7 @@ def format_mins_to_time(mins):
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
     agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
-    current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
+    current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 0)
     
     for step in route_steps:
         if step['type'] == 'lunch':
@@ -324,9 +324,6 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-INICIO_EXPEDIENTE_MIN = 7 * 60
-INICIO_ROTA_MIN = 8 * 60 + 44  
-FIM_EXPEDIENTE_MIN = 17 * 60
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor"]
 UNIDADES_PROPRIAS = ["FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", "UNIFOR", "PARANGABA", "HORIZONTE", "MUSEU", "BARRA", "ESCRITÓRIO", "CASA DA INDÚSTRIA"]
@@ -345,11 +342,45 @@ LOCAL_BASE_ENDERECO = "Rua Professor Mário Rocha, 84 - Joaquim Távora, Fortale
 LOCAL_BASE_COORDS = (-3.752270016704, -38.51537298342)
 ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "ESCRITÓRIO"}
 
+# ENDEREÇOS FIXOS DO SISTEMA (Para impedir que a nuvem apague)
 ENDERECOS_PADRAO = [
-    ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"), ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), ("ESCOLA CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), ("CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), ("NR SAÚDE", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), ("SESI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"), ("SENAI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"), ("BARRA", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
-    ("SESI ALBANO FRANCO", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), ("SESI CLUBE DA PARCERIA", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), ("SENAI ISTEMM", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), ("SENAI CETAFR", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), ("MARACANAÚ", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
-    ("SESI PARANGABA", "Av. João Pessoa, 6754 - Parangaba, Fortaleza - CE"), ("SENAI PARANGABA", "Av. João Pessoa, 6760 - Damas, Fortaleza - CE"), ("PARANGABA", "Av. João Pessoa, 6760 - Damas, Fortaleza - CE"),
-    ("SESI MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE, 60030-000"), ("MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE, 60030-000"), ("SESI SOBRAL", "Av. Dr. José Arimathéa Monte e Silva, 1003 - Junco, Sobral - CE"), ("ESCRITÓRIO", LOCAL_BASE_ENDERECO), ("ALMOXARIFADO", LOCAL_BASE_ENDERECO), ("ESPAÇO SMART", "BR-116, 9370 - Barroso, Fortaleza - CE, 60862-735"), ("ALDEOTA", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"), ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"), ("FIEC", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"), ("UNIFOR", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"), ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE"), ("SEBRAE", "Avenida Monsenhor Tabosa, 777 - Meireles, Fortaleza - CE"), ("LECI FERRAGENS", "Rua Gen. Clarindo de Queiroz, 1668 - Centro, Fortaleza - CE")
+    ("CASA DA INDÚSTRIA", "Av. Barão de Studart, 1980 - Aldeota, Fortaleza - CE"), 
+    ("SENAI CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), 
+    ("ESCOLA CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), 
+    ("CENTRO", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), 
+    ("NR SAÚDE", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), 
+    ("SESI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"), 
+    ("SENAI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"), 
+    ("BARRA", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
+    ("SESI ALBANO FRANCO", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), 
+    ("SESI CLUBE DA PARCERIA", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), 
+    ("SENAI ISTEMM", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), 
+    ("SENAI CETAFR", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), 
+    ("MARACANAÚ", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"),
+    ("SESI PARANGABA", "Av. João Pessoa, 6754 - Parangaba, Fortaleza - CE"), 
+    ("SENAI PARANGABA", "Av. João Pessoa, 6760 - Damas, Fortaleza - CE"), 
+    ("PARANGABA", "Av. João Pessoa, 6760 - Damas, Fortaleza - CE"),
+    ("SESI MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE, 60030-000"), 
+    ("MUSEU", "R. Dr. João Moreira, 143 - Centro, Fortaleza - CE, 60030-000"), 
+    ("SESI SOBRAL", "Av. Dr. José Arimathéa Monte e Silva, 1003 - Junco, Sobral - CE"), 
+    ("ESCRITÓRIO", LOCAL_BASE_ENDERECO), 
+    ("ALMOXARIFADO", LOCAL_BASE_ENDERECO), 
+    ("ESPAÇO SMART", "BR-116, 9370 - Barroso, Fortaleza - CE, 60862-735"), 
+    ("ALDEOTA", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"), 
+    ("EDSON QUEIROZ", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"), 
+    ("FIEC", "Rua Dr. José Lourenço, 1990 - Aldeota, Fortaleza - CE"), 
+    ("UNIFOR", "Av. Dr. Valmir Pontes, 675 - Edson Queiroz, Fortaleza - CE"), 
+    ("HORIZONTE", "R. Raimunda Pontes - Planalto Horizonte, Horizonte - CE"), 
+    ("SEBRAE", "Avenida Monsenhor Tabosa, 777 - Meireles, Fortaleza - CE"), 
+    ("LECI FERRAGENS", "Rua Gen. Clarindo de Queiroz, 1668 - Centro, Fortaleza - CE"),
+    
+    # FORNECEDORES EXTRAÍDOS DO PDF (Blindados contra perda de dados)
+    ("ELÉTRICA FORTALEZA", "Centro, Fortaleza - CE"), 
+    ("ELETRICA FORTALEZA", "Centro, Fortaleza - CE"), 
+    ("DEPÓSITO JP", "Edson Queiroz, Fortaleza - CE"),
+    ("DEPOSITO JP", "Edson Queiroz, Fortaleza - CE"),
+    ("JP CONSTRUÇÃO", "Edson Queiroz, Fortaleza - CE"),
+    ("JP CONSTRUCOES", "Edson Queiroz, Fortaleza - CE")
 ]
 
 def inicializar_bd():
@@ -494,6 +525,7 @@ def canonicalizar_ponto_rota(nome):
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
     texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     
+    # Tenta usar o banco de sinônimos antes de retornar
     texto_limpo = remover_acentos(texto)
     for sin, oficial in DICIONARIO_SINONIMOS.items():
         if texto_limpo == remover_acentos(sin):
