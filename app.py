@@ -1551,7 +1551,7 @@ def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
 
 # =====================================================================
 # COMPROVANTE DE ENTREGA — POWER AUTOMATE / ONEDRIVE
-# Implementação isolada: não altera banco, Trello, rota ou check-ins.
+# Fluxo simples para o motorista: 1 recebedor por demanda + várias fotos.
 # =====================================================================
 def _nome_seguro_comprovante(valor, limite=45):
     texto = remover_acentos(str(valor or "")).upper().strip()
@@ -1559,8 +1559,28 @@ def _nome_seguro_comprovante(valor, limite=45):
     return (texto[:limite] or "SEM-NOME")
 
 
-def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto):
-    """Envia uma foto para o fluxo do Power Automate configurado em st.secrets."""
+def _separar_materiais_comprovante(valor):
+    """Transforma o campo Materiais em opções curtas para o motorista."""
+    texto = str(valor or "").strip()
+    if not texto:
+        return []
+
+    # O Trello normalmente separa itens por |. Também aceita quebras de linha.
+    partes = re.split(r"\s*\|\s*|[\r\n]+", texto)
+    itens, vistos = [], set()
+    for parte in partes:
+        item = re.sub(r"\s+", " ", str(parte or "")).strip(" •-\t")
+        if not item:
+            continue
+        chave = remover_acentos(item).upper()
+        if chave not in vistos:
+            vistos.add(chave)
+            itens.append(item)
+    return itens
+
+
+def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto, material_foto="GERAL", numero_foto=1):
+    """Envia uma foto para o Power Automate e retorna o nome salvo no OneDrive."""
     recebedor = str(recebedor or "").strip()
     if not recebedor:
         return False, "Informe quem recebeu o material."
@@ -1593,17 +1613,23 @@ def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto):
     obra = str(tarefa.get("Obra", "") or "").strip()
     agora = datetime.now(FUSO_LOCAL)
 
-    # Nome da pasta da obra enviado ao Power Automate.
-    # Remove apenas caracteres que podem invalidar nomes/caminhos no OneDrive.
+    # Pasta única por obra. A criação/uso da pasta fica a cargo do fluxo já configurado.
     obra_pasta = re.sub(r'[\\/:*?"<>|#%]+', '-', obra).strip(' .-')
     obra_pasta = re.sub(r'\s+', ' ', obra_pasta)[:100] or "OBRA-SEM-NOME"
 
-    # Identificação curta e clara no Explorer/OneDrive:
-    # ID do Trello + recebedor + data e hora.
+    material_foto = str(material_foto or "GERAL").strip()
+    if material_foto.upper() == "GERAL":
+        sufixo_foto = "GERAL"
+    else:
+        sufixo_foto = f"MAT-{_nome_seguro_comprovante(material_foto, 38)}"
+
+    # Mantém o que foi combinado como identificação principal e acrescenta
+    # apenas o número/tipo da foto para facilitar várias imagens na mesma demanda.
     nome_arquivo = (
         f"ID-{_nome_seguro_comprovante(demanda_id or 'SEM-ID', 32)}__"
         f"REC-{_nome_seguro_comprovante(recebedor, 32)}__"
-        f"{agora.strftime('%d-%m-%Y_%H-%M-%S')}.{extensao}"
+        f"{agora.strftime('%d-%m-%Y_%H-%M-%S')}__"
+        f"FOTO-{int(numero_foto):02d}__{sufixo_foto}.{extensao}"
     )
 
     payload = {
@@ -1712,15 +1738,19 @@ if modo_url == "true":
 
 
     # ---------------------------------------------------------------
-    # COMPROVANTE DE ENTREGA
-    # Fica somente no modo mobile e só faz chamada externa ao clicar.
+    # COMPROVANTE DE ENTREGA — FLUXO GUIADO PARA O MOTORISTA
+    # 1 recebedor por demanda, várias fotos e identificação do conteúdo.
     # ---------------------------------------------------------------
+    if "davi_comprovantes_estado" not in st.session_state:
+        st.session_state["davi_comprovantes_estado"] = {}
+    estados_comprovantes = st.session_state["davi_comprovantes_estado"]
+
     entregas_para_comprovar = []
     numero_parada_comprovante = 0
     for indice_step, step_comprovante in enumerate(route_steps):
         if step_comprovante.get("type") != "stop":
             continue
-        destino_comprovante = str(step_comprovante.get("destino", ""))
+        destino_comprovante = str(step_comprovante.get("destino", "") or "")
         is_inicio_comprovante = (indice_step == 0 and destino_comprovante == p_saida)
         if not is_inicio_comprovante:
             numero_parada_comprovante += 1
@@ -1728,82 +1758,190 @@ if modo_url == "true":
         for acao_comprovante, tarefa_comprovante in step_comprovante.get("actions", []):
             if acao_comprovante != "ENTREGAR":
                 continue
+
             card_id_comprovante = str(tarefa_comprovante.get("id", "") or "")
-            rotulo = (
-                f"Parada {max(1, numero_parada_comprovante)} • "
-                f"{str(tarefa_comprovante.get('Obra', '') or '')} • "
-                f"{str(tarefa_comprovante.get('Materiais', '') or '')[:70]}"
-            )
-            entregas_para_comprovar.append(
-                (rotulo, card_id_comprovante, tarefa_comprovante)
-            )
+            chave_estado = _nome_seguro_comprovante(card_id_comprovante or f"SEM-ID-{indice_step}", 40)
+            estado_existente = estados_comprovantes.get(chave_estado, {})
+            qtd_fotos = len(estado_existente.get("fotos", []))
+            finalizado = bool(estado_existente.get("finalizado"))
+            status = "✅" if finalizado else (f"📷 {qtd_fotos}" if qtd_fotos else "⬜")
+
+            obra_comprovante = str(tarefa_comprovante.get("Obra", "") or "").strip()
+            rotulo = f"{status} Parada {max(1, numero_parada_comprovante)} • {obra_comprovante or destino_comprovante}"
+            entregas_para_comprovar.append({
+                "rotulo": rotulo,
+                "id": card_id_comprovante,
+                "tarefa": tarefa_comprovante,
+                "parada": max(1, numero_parada_comprovante),
+                "destino": destino_comprovante,
+                "chave": chave_estado,
+            })
 
     if entregas_para_comprovar:
-        with st.expander("📷 Registrar comprovante de entrega", expanded=False):
-            opcoes_comprovante = {
-                f"{indice + 1}. {item[0]}": item
-                for indice, item in enumerate(entregas_para_comprovar)
-            }
+        with st.expander("📸 COMPROVANTE DA ENTREGA", expanded=True):
+            st.caption("Faça em ordem: escolha a entrega → informe quem recebeu → envie uma ou mais fotos → finalize.")
+
+            opcoes_comprovante = {item["rotulo"]: item for item in entregas_para_comprovar}
             escolha_comprovante = st.selectbox(
-                "Entrega",
+                "1️⃣ Qual entrega você está comprovando?",
                 list(opcoes_comprovante.keys()),
                 key="davi_comprovante_entrega",
             )
-            _, demanda_id_escolhida_comprovante, tarefa_escolhida_comprovante = opcoes_comprovante[escolha_comprovante]
-            chave_comprovante = _nome_seguro_comprovante(demanda_id_escolhida_comprovante or "SEM-ID", 20)
+            entrega_sel = opcoes_comprovante[escolha_comprovante]
+            tarefa_sel = entrega_sel["tarefa"]
+            demanda_id_sel = entrega_sel["id"]
+            chave_comprovante = entrega_sel["chave"]
 
-            st.caption(
-                f"Obra: {tarefa_escolhida_comprovante.get('Obra', '')} • "
-                f"Material: {tarefa_escolhida_comprovante.get('Materiais', '')}"
+            estado = estados_comprovantes.setdefault(chave_comprovante, {
+                "recebedor": "",
+                "fotos": [],
+                "finalizado": False,
+                "input_version": 0,
+            })
+            estado.setdefault("recebedor", "")
+            estado.setdefault("fotos", [])
+            estado.setdefault("finalizado", False)
+            estado.setdefault("input_version", 0)
+
+            obra_sel = str(tarefa_sel.get("Obra", "") or "").strip()
+            materiais_sel = _separar_materiais_comprovante(tarefa_sel.get("Materiais", ""))
+            destino_sel = str(entrega_sel.get("destino", "") or "").strip()
+
+            materiais_html = "".join(
+                f"<div style='margin:3px 0;'>• {html_escape(item)}</div>"
+                for item in materiais_sel
+            ) or "<div style='color:#94a3b8;'>• Materiais não informados</div>"
+
+            st.markdown(
+                f"""
+                <div style="background:rgba(37,99,235,.08);border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:12px 14px;margin:6px 0 14px 0;">
+                    <div style="font-size:15px;font-weight:700;margin-bottom:5px;">📍 Parada {entrega_sel['parada']} — {html_escape(obra_sel or destino_sel)}</div>
+                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Trello: {html_escape(demanda_id_sel or 'sem ID')} • Destino: {html_escape(destino_sel or '-')}</div>
+                    <div style="font-size:13px;font-weight:600;margin-bottom:3px;">Materiais desta demanda:</div>
+                    <div style="font-size:13px;line-height:1.35;">{materiais_html}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-            recebedor_comprovante = st.text_input(
-                "👤 Quem recebeu?",
-                placeholder="Ex.: João da Silva",
-                key=f"davi_comprovante_recebedor_{chave_comprovante}",
-            )
+            mensagem_pendente = estado.pop("mensagem", "") if estado.get("mensagem") else ""
+            if mensagem_pendente:
+                st.success(mensagem_pendente)
 
-            modo_foto_comprovante = st.radio(
-                "Foto",
-                ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
-                horizontal=True,
-                key=f"davi_comprovante_modo_foto_{chave_comprovante}",
-            )
-
-            if modo_foto_comprovante == "📷 Tirar foto agora":
-                foto_comprovante = st.camera_input(
-                    "Foto do material entregue",
-                    key=f"davi_comprovante_camera_{chave_comprovante}",
+            if estado["finalizado"]:
+                st.success(
+                    f"✅ Comprovante finalizado — {len(estado['fotos'])} foto(s) • "
+                    f"Recebedor: {estado['recebedor']}"
                 )
+                with st.expander("Ver fotos enviadas", expanded=False):
+                    for pos, foto_enviada in enumerate(estado["fotos"], start=1):
+                        st.write(f"{pos}. {foto_enviada['tipo']} • {foto_enviada['hora']}")
+                if st.button(
+                    "➕ ADICIONAR OUTRA FOTO",
+                    use_container_width=True,
+                    key=f"davi_reabrir_comprovante_{chave_comprovante}",
+                ):
+                    estado["finalizado"] = False
+                    st.rerun()
             else:
-                foto_comprovante = st.file_uploader(
-                    "Selecione a foto do material",
-                    type=["jpg", "jpeg", "png", "webp"],
-                    accept_multiple_files=False,
-                    key=f"davi_comprovante_arquivo_{chave_comprovante}",
+                if estado["fotos"]:
+                    st.markdown(
+                        f"**2️⃣ Quem recebeu?**  \n👤 **{estado['recebedor']}**",
+                    )
+                    st.caption("O recebedor fica fixo para todas as fotos desta demanda.")
+                    recebedor_comprovante = estado["recebedor"]
+                else:
+                    recebedor_comprovante = st.text_input(
+                        "2️⃣ Quem recebeu?",
+                        placeholder="Ex.: João da Silva",
+                        value=estado.get("recebedor", ""),
+                        key=f"davi_comprovante_recebedor_{chave_comprovante}",
+                        help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
+                    )
+
+                opcoes_material = ["📦 GERAL — todos os materiais"]
+                opcoes_material += [f"🔹 {material}" for material in materiais_sel]
+                escolha_material = st.selectbox(
+                    "3️⃣ O que aparece nesta foto?",
+                    opcoes_material,
+                    key=f"davi_comprovante_material_{chave_comprovante}",
+                )
+                material_foto = "GERAL" if escolha_material.startswith("📦 GERAL") else escolha_material[2:].strip()
+
+                modo_foto_comprovante = st.radio(
+                    "4️⃣ Como quer adicionar a foto?",
+                    ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
+                    horizontal=True,
+                    key=f"davi_comprovante_modo_foto_{chave_comprovante}",
                 )
 
-            if st.button(
-                "✅ ENVIAR COMPROVANTE",
-                type="primary",
-                use_container_width=True,
-                key=f"davi_enviar_comprovante_{chave_comprovante}",
-            ):
-                if not str(recebedor_comprovante or "").strip():
-                    st.error("Informe quem recebeu o material.")
-                elif foto_comprovante is None:
-                    st.error("Tire ou selecione uma foto.")
+                versao_input = int(estado.get("input_version", 0))
+                if modo_foto_comprovante == "📷 Tirar foto agora":
+                    foto_comprovante = st.camera_input(
+                        "Foto do material entregue",
+                        key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
+                    )
                 else:
-                    with st.spinner("Enviando comprovante para o OneDrive..."):
-                        sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
-                            tarefa_escolhida_comprovante,
-                            recebedor_comprovante,
-                            foto_comprovante,
-                        )
-                    if sucesso_comprovante:
-                        st.success(f"✅ Foto enviada com sucesso: {retorno_comprovante}")
+                    foto_comprovante = st.file_uploader(
+                        "Selecione a foto do material",
+                        type=["jpg", "jpeg", "png", "webp"],
+                        accept_multiple_files=False,
+                        key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                    )
+
+                numero_proxima_foto = len(estado["fotos"]) + 1
+                if st.button(
+                    f"📤 ENVIAR FOTO {numero_proxima_foto}",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
+                ):
+                    nome_recebedor = str(recebedor_comprovante or "").strip()
+                    if not nome_recebedor:
+                        st.error("Informe quem recebeu o material.")
+                    elif foto_comprovante is None:
+                        st.error("Tire ou selecione uma foto.")
                     else:
-                        st.error(retorno_comprovante)
+                        with st.spinner("Enviando foto para o OneDrive..."):
+                            sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
+                                tarefa_sel,
+                                nome_recebedor,
+                                foto_comprovante,
+                                material_foto=material_foto,
+                                numero_foto=numero_proxima_foto,
+                            )
+                        if sucesso_comprovante:
+                            estado["recebedor"] = nome_recebedor
+                            estado["fotos"].append({
+                                "arquivo": retorno_comprovante,
+                                "tipo": "Foto geral" if material_foto == "GERAL" else material_foto,
+                                "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
+                            })
+                            estado["input_version"] = versao_input + 1
+                            estado["mensagem"] = (
+                                f"Foto {numero_proxima_foto} enviada. "
+                                "Você pode adicionar outra ou finalizar o comprovante."
+                            )
+                            st.rerun()
+                        else:
+                            st.error(retorno_comprovante)
+
+                if estado["fotos"]:
+                    st.markdown("**Fotos já enviadas nesta entrega:**")
+                    for pos, foto_enviada in enumerate(estado["fotos"], start=1):
+                        st.caption(f"✅ Foto {pos} • {foto_enviada['tipo']} • {foto_enviada['hora']}")
+
+                    if st.button(
+                        f"✅ FINALIZAR COMPROVANTE ({len(estado['fotos'])} FOTO(S))",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"davi_finalizar_comprovante_{chave_comprovante}",
+                    ):
+                        estado["finalizado"] = True
+                        estado["mensagem"] = "Comprovante finalizado. As fotos já estão salvas no OneDrive."
+                        st.rerun()
+                else:
+                    st.caption("Envie pelo menos uma foto para liberar a finalização do comprovante.")
 
 
     st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
