@@ -860,7 +860,6 @@ def loop_automacoes_background():
         if sessao and pagina and ids_veiculos:
             posicoes = consultar_posicoes_protege(sessao, pagina, ids_veiculos)
             
-            # 1. Inteligência de Início de Rota (>500m do escritório)
             lat_base, lon_base = LOCAL_BASE_COORDS
             for p in posicoes:
                 if p["Velocidade (km/h)"] > 0:
@@ -870,7 +869,6 @@ def loop_automacoes_background():
                             match_time = re.search(r'(\d{2}:\d{2})', p['Última atualização'])
                             execute_db("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (:placa, :data, :hora) ON CONFLICT (placa, data) DO NOTHING", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR, "hora": match_time.group(1) if match_time else agora_loop.strftime("%H:%M")})
             
-            # 2. Inteligência de GEOFENCE (Medidor de tempo nas paradas ativas da Rota)
             try:
                 res_rota = fetch_one("SELECT json_locais FROM rota_ativa WHERE id=1 AND data_rota=:data", {"data": DATA_HOJE_REAL_STR})
                 if res_rota and posicoes:
@@ -920,7 +918,6 @@ with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     
-    # Atualiza as demandas silenciosamente a cada 10 min
     if "ultima_sincronizacao" not in st.session_state:
         st.session_state.ultima_sincronizacao = 0
         sincronizar_demandas()
@@ -941,7 +938,7 @@ with st.sidebar:
 
     if st.button("🔄 Sincronizar Manualmente (Trello)", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
-            obter_dados_trello.clear() # Limpa o cache para forçar a versão mais nova
+            obter_dados_trello.clear()
             if sincronizar_demandas(manual=True):
                 st.success("✅ Trello Sincronizado e Demandas Importadas!")
     
@@ -992,7 +989,6 @@ with tab_rastreador:
                 met2.metric("Em movimento", sum(1 for v in velocidades if v > 0))
                 met3.metric("Última leitura", datetime.now(FUSO_LOCAL).strftime("%H:%M:%S"))
 
-                # MAPA CLARO (OPENSTREETMAP) NO RASTREADOR
                 mapa = folium.Map(location=[sum(p["Latitude"] for p in posicoes) / len(posicoes), sum(p["Longitude"] for p in posicoes) / len(posicoes)], zoom_start=11, tiles="OpenStreetMap")
                 limites = []
                 for p in posicoes:
@@ -1346,7 +1342,6 @@ with tab_roteiro:
                     idx2 = pontos_unicos.index(p2)
                     return (dist_matrix[idx1][idx2], dur_matrix[idx1][idx2])
                 except ValueError:
-                    # Rota de segurança caso o ponto não esteja na matriz exata
                     d = calcular_distancia_km(locais_dict[p1][0], locais_dict[p1][1], locais_dict[p2][0], locais_dict[p2][1]) * 1.3
                     return (d, (d / VELOCIDADE_MEDIA_KMH) * 60)
 
@@ -1607,7 +1602,7 @@ with tab_roteiro:
 
             if geometria_viaria and len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m)
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
-            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
+            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
             st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
