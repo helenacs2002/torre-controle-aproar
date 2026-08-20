@@ -4,6 +4,9 @@ import json
 import math
 import time
 import base64
+import io
+import textwrap
+import zipfile
 import urllib.request
 import urllib.parse
 import unicodedata
@@ -12,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from html import escape as html_escape
 from html.parser import HTMLParser
+from xml.sax.saxutils import escape as xml_escape
 from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
@@ -154,6 +158,236 @@ def format_time(minutes):
 
 def format_mins_to_time(mins):
     return f"{int(mins) // 60:02d}:{int(mins) % 60:02d}"
+
+def _normalizar_tabelas_relatorio(dados):
+    """Padroniza uma ou várias tabelas para exportação sem alterar os dados da tela."""
+    itens = [("Dados", dados)] if isinstance(dados, pd.DataFrame) else list((dados or {}).items())
+    tabelas = []
+    for nome, tabela in itens:
+        if tabela is None:
+            continue
+        df = tabela.copy() if isinstance(tabela, pd.DataFrame) else pd.DataFrame(tabela)
+        for coluna in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[coluna]):
+                df[coluna] = df[coluna].dt.strftime("%d/%m/%Y %H:%M").fillna("")
+            elif df[coluna].dtype == "object":
+                df[coluna] = df[coluna].map(
+                    lambda valor: json.dumps(valor, ensure_ascii=False, default=str)
+                    if isinstance(valor, (dict, list, tuple, set)) else valor
+                )
+        tabelas.append((str(nome), df.fillna("")))
+    return tabelas or [("Dados", pd.DataFrame({"Informação": ["Nenhum registro disponível."]}))]
+
+def _criar_csv_relatorio(tabelas):
+    secoes = []
+    for nome, df in tabelas:
+        tabela = df.copy()
+        if "Seção" in tabela.columns:
+            tabela = tabela.rename(columns={"Seção": "Seção original"})
+        tabela.insert(0, "Seção", nome)
+        secoes.append(tabela)
+    consolidado = pd.concat(secoes, ignore_index=True, sort=False).fillna("")
+    return consolidado.to_csv(index=False, sep=";", decimal=",", lineterminator="\n").encode("utf-8-sig")
+
+def _nome_aba_excel(nome, usados):
+    nome_limpo = re.sub(r"[\\/*?:\[\]]", " ", str(nome)).strip() or "Dados"
+    nome_limpo = nome_limpo[:31]
+    candidato, contador = nome_limpo, 2
+    while candidato.lower() in usados:
+        sufixo = f" {contador}"
+        candidato = f"{nome_limpo[:31-len(sufixo)]}{sufixo}"
+        contador += 1
+    usados.add(candidato.lower())
+    return candidato
+
+def _criar_xlsx_basico(tabelas):
+    """Fallback XLSX feito apenas com a biblioteca padrão do Python."""
+    def coluna_excel(indice):
+        texto = ""
+        while indice:
+            indice, resto = divmod(indice - 1, 26)
+            texto = chr(65 + resto) + texto
+        return texto
+
+    def celula_xml(referencia, valor, estilo=0):
+        estilo_xml = f' s="{estilo}"' if estilo else ""
+        if isinstance(valor, bool):
+            return f'<c r="{referencia}" t="b"{estilo_xml}><v>{1 if valor else 0}</v></c>'
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool) and math.isfinite(float(valor)):
+            return f'<c r="{referencia}"{estilo_xml}><v>{valor}</v></c>'
+        texto = xml_escape(str(valor), {'"': '&quot;'})
+        return f'<c r="{referencia}" t="inlineStr"{estilo_xml}><is><t xml:space="preserve">{texto}</t></is></c>'
+
+    usados, abas = set(), []
+    for nome, df in tabelas:
+        nome_aba = _nome_aba_excel(nome, usados)
+        linhas = [list(map(str, df.columns))] + df.values.tolist()
+        linhas_xml = []
+        for numero_linha, valores in enumerate(linhas, start=1):
+            celulas = "".join(
+                celula_xml(f"{coluna_excel(indice)}{numero_linha}", valor, 1 if numero_linha == 1 else 0)
+                for indice, valor in enumerate(valores, start=1)
+            )
+            linhas_xml.append(f'<row r="{numero_linha}">{celulas}</row>')
+        ultima_coluna = coluna_excel(max(1, len(df.columns)))
+        ultima_linha = max(1, len(linhas))
+        larguras = "".join(
+            f'<col min="{i}" max="{i}" width="{min(45, max(12, len(str(col)) + 3))}" customWidth="1"/>'
+            for i, col in enumerate(df.columns, start=1)
+        )
+        filtro = f'<autoFilter ref="A1:{ultima_coluna}{ultima_linha}"/>' if len(df.columns) else ""
+        planilha = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f'<dimension ref="A1:{ultima_coluna}{ultima_linha}"/>'
+            '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+            f'<cols>{larguras}</cols><sheetData>{"".join(linhas_xml)}</sheetData>{filtro}</worksheet>'
+        )
+        abas.append((nome_aba, planilha))
+
+    saida = io.BytesIO()
+    with zipfile.ZipFile(saida, "w", zipfile.ZIP_DEFLATED) as arquivo:
+        overrides = "".join(
+            f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            for i in range(1, len(abas) + 1)
+        )
+        arquivo.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            f'{overrides}</Types>')
+        arquivo.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            '</Relationships>')
+        sheets = "".join(
+            f'<sheet name="{xml_escape(nome, {chr(34): "&quot;"})}" sheetId="{i}" r:id="rId{i}"/>'
+            for i, (nome, _) in enumerate(abas, start=1)
+        )
+        arquivo.writestr("xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            f'<sheets>{sheets}</sheets></workbook>')
+        relacionamentos = "".join(
+            f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>'
+            for i in range(1, len(abas) + 1)
+        )
+        arquivo.writestr("xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'{relacionamentos}<Relationship Id="rId{len(abas)+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+            '</Relationships>')
+        arquivo.writestr("xl/styles.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts>'
+            '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/><bgColor indexed="64"/></patternFill></fill></fills>'
+            '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+            '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>'
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
+        for i, (_, planilha) in enumerate(abas, start=1):
+            arquivo.writestr(f"xl/worksheets/sheet{i}.xml", planilha)
+    return saida.getvalue()
+
+def _criar_excel_relatorio(tabelas):
+    for motor in ("xlsxwriter", "openpyxl"):
+        try:
+            saida = io.BytesIO()
+            with pd.ExcelWriter(saida, engine=motor) as escritor:
+                usados = set()
+                for nome, df in tabelas:
+                    df.to_excel(escritor, sheet_name=_nome_aba_excel(nome, usados), index=False)
+            return saida.getvalue()
+        except (ImportError, ModuleNotFoundError):
+            continue
+    return _criar_xlsx_basico(tabelas)
+
+def _texto_pdf(valor):
+    bytes_texto = str(valor).encode("cp1252", errors="replace")
+    return "".join(
+        chr(byte) if 32 <= byte <= 126 and chr(byte) not in "\\()" else
+        f"\\{chr(byte)}" if chr(byte) in "\\()" else f"\\{byte:03o}"
+        for byte in bytes_texto
+    )
+
+def _criar_pdf_relatorio(titulo, tabelas):
+    linhas = [titulo, f"Gerado em: {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y %H:%M')}", ""]
+    for nome, df in tabelas:
+        linhas.extend([f"== {nome} ==", " | ".join(map(str, df.columns))])
+        for valores in df.astype(str).values.tolist():
+            texto_linha = " | ".join(valores)
+            linhas.extend(textwrap.wrap(texto_linha, width=105, break_long_words=True, replace_whitespace=False) or [""])
+        linhas.append("")
+
+    paginas = [linhas[i:i + 54] for i in range(0, len(linhas), 54)] or [[titulo]]
+    objetos = [b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"]
+    ids_paginas = []
+    for linhas_pagina in paginas:
+        id_pagina = len(objetos) + 1
+        id_conteudo = id_pagina + 1
+        ids_paginas.append(id_pagina)
+        conteudo = "BT /F1 8 Tf 32 810 Td 11 TL\n" + "\n".join(f"({_texto_pdf(linha)}) Tj T*" for linha in linhas_pagina) + "\nET"
+        objetos.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {id_conteudo} 0 R >>".encode("ascii"))
+        conteudo_bytes = conteudo.encode("ascii")
+        objetos.append(f"<< /Length {len(conteudo_bytes)} >>\nstream\n".encode("ascii") + conteudo_bytes + b"\nendstream")
+    objetos[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    objetos[1] = f"<< /Type /Pages /Kids [{' '.join(f'{i} 0 R' for i in ids_paginas)}] /Count {len(ids_paginas)} >>".encode("ascii")
+
+    arquivo = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for indice, objeto in enumerate(objetos, start=1):
+        offsets.append(len(arquivo))
+        arquivo.extend(f"{indice} 0 obj\n".encode("ascii") + objeto + b"\nendobj\n")
+    inicio_xref = len(arquivo)
+    arquivo.extend(f"xref\n0 {len(objetos)+1}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets[1:]:
+        arquivo.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    arquivo.extend(f"trailer\n<< /Size {len(objetos)+1} /Root 1 0 R >>\nstartxref\n{inicio_xref}\n%%EOF".encode("ascii"))
+    return bytes(arquivo)
+
+def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
+    st.markdown("##### 📤 Exportar relatório")
+    col_formato, col_download = st.columns([1, 2])
+    formato = col_formato.selectbox("Formato", ["PDF", "CSV", "Excel"], key=f"formato_relatorio_{chave}")
+    tabelas = _normalizar_tabelas_relatorio(dados)
+    if formato == "CSV":
+        arquivo, extensao, mime = _criar_csv_relatorio(tabelas), "csv", "text/csv"
+    elif formato == "Excel":
+        arquivo, extensao, mime = _criar_excel_relatorio(tabelas), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        arquivo, extensao, mime = _criar_pdf_relatorio(titulo, tabelas), "pdf", "application/pdf"
+    col_download.download_button(
+        f"⬇️ Baixar {formato}", data=arquivo,
+        file_name=f"{nome_arquivo}_{AGORA_REAL.strftime('%Y-%m-%d')}.{extensao}",
+        mime=mime, use_container_width=True, key=f"baixar_relatorio_{chave}_{formato}",
+    )
+
+@fragmento_independente
+def renderizar_exportador(titulo, dados, nome_arquivo, chave):
+    _conteudo_exportador(titulo, dados, nome_arquivo, chave)
+
+def montar_relatorio_rota(route_steps, concluidos):
+    linhas, numero_parada = [], 0
+    for step in route_steps:
+        if step.get("type") == "lunch":
+            linhas.append({"Parada": "Almoço", "Local": "Pausa", "Chegada": step.get("dyn_chegada", step.get("chegada", "")), "Saída": step.get("dyn_saida", step.get("saida", "")), "Ação": "PAUSA"})
+            continue
+        if step.get("type") == "return":
+            linhas.append({"Parada": "Retorno", "Local": step.get("destino", ""), "Chegada": step.get("dyn_chegada", step.get("chegada", "")), "Saída": step.get("dyn_saida", step.get("saida", "")), "Ação": "RETORNO", "Distância (km)": step.get("dist", 0)})
+            continue
+        numero_parada += 1
+        acoes = step.get("actions", []) or [("DESLOCAMENTO", {})]
+        for acao, tarefa in acoes:
+            card_id = str(tarefa.get("id", ""))
+            linhas.append({
+                "Parada": numero_parada, "Local": step.get("destino", ""),
+                "Chegada": step.get("dyn_chegada", step.get("chegada", "")),
+                "Saída": step.get("dyn_saida", step.get("saida", "")),
+                "Distância (km)": round(float(step.get("dist", 0) or 0), 2),
+                "Ação": acao, "Obra": tarefa.get("Obra", ""), "Materiais": tarefa.get("Materiais", ""),
+                "Status": f"Concluída às {concluidos[card_id]}" if card_id in concluidos else "Pendente",
+            })
+    return pd.DataFrame(linhas)
 
 def calcular_distancia_km(lat1, lon1, lat2, lon2):
     dLat = math.radians(lat2 - lat1)
@@ -1560,7 +1794,12 @@ with tab_rastreador:
 
                 if len(limites) > 1: mapa.fit_bounds(limites, padding=(35, 35))
                 st_folium(mapa, height=520, use_container_width=True, returned_objects=[], key="mapa_rastreador_protege")
-                st.dataframe(pd.DataFrame(posicoes)[["Placa", "🟢 Início da Rota (Hoje)", "Última atualização", "Velocidade (km/h)", "Situação", "Endereço"]], use_container_width=True, hide_index=True)
+                df_posicoes_exportacao = pd.DataFrame(posicoes)[["Placa", "🟢 Início da Rota (Hoje)", "Última atualização", "Velocidade (km/h)", "Situação", "Endereço"]]
+                st.dataframe(df_posicoes_exportacao, use_container_width=True, hide_index=True)
+                _conteudo_exportador(
+                    "Rastreador ao Vivo — Protege Express", df_posicoes_exportacao,
+                    "rastreador_ao_vivo", "rastreador",
+                )
 
             except:
                 st.session_state.pop("protege_sessao", None); st.session_state.pop("protege_pagina", None)
@@ -1594,11 +1833,25 @@ with tab_demandas:
             else: c_status.warning("⏳ Pendente / No Carro")
             st.write("---")
 
+    df_relatorio_demandas = st.session_state.demandas.copy()
+    if not df_relatorio_demandas.empty:
+        df_relatorio_demandas["Status da rota"] = df_relatorio_demandas["id"].astype(str).map(
+            lambda card_id: f"Entregue às {dict_concluidos_monitor[card_id]}" if card_id in dict_concluidos_monitor else "Pendente"
+        )
+    renderizar_exportador(
+        f"Demandas Ativas — {DATA_REF_ROTA_STR}", df_relatorio_demandas,
+        "demandas_ativas", "demandas",
+    )
+
 with tab_historico:
     st.subheader(f"📋 Entregas Fisicamente Concluídas ({DATA_HOJE_REAL_STR})")
     df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_HOJE_REAL_STR})
     if df_hist.empty: st.info("Nenhuma entrega foi registrada como finalizada no Trello no dia de hoje.")
     else: st.dataframe(df_hist, use_container_width=True, hide_index=True)
+    renderizar_exportador(
+        f"Entregas Concluídas — {DATA_HOJE_REAL_STR}", df_hist,
+        "entregas_concluidas", "historico",
+    )
 
 with tab_enderecos:
     @fragmento_independente
@@ -1623,6 +1876,10 @@ with tab_enderecos:
 
         df_locais = get_df("SELECT * FROM locais ORDER BY apelido")
         st.dataframe(df_locais, use_container_width=True, hide_index=True)
+        _conteudo_exportador(
+            "Locais e Coordenadas GPS", df_locais,
+            "locais_e_enderecos", "enderecos",
+        )
         st.divider()
         st.markdown("#### Remover local")
         locais_removiveis = [apelido for apelido in df_locais["apelido"].tolist() if apelido not in ALIASES_LOCAL_BASE]
@@ -1740,6 +1997,9 @@ with tab_custos:
     if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
     df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
     df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
+    if not df_abastec_mes.empty:
+        df_abastec_mes['custo_combustivel'] = pd.to_numeric(df_abastec_mes['litros'], errors='coerce').fillna(0) * pd.to_numeric(df_abastec_mes['valor_litro'], errors='coerce').fillna(0)
+        df_abastec_mes['custo_total'] = df_abastec_mes['custo_combustivel'] + pd.to_numeric(df_abastec_mes['manutencao'], errors='coerce').fillna(0)
     
     df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
     gas_strada = (df_gas_strada['litros'] * df_gas_strada['valor_litro']).sum() if not df_gas_strada.empty else 0.0
@@ -1752,18 +2012,66 @@ with tab_custos:
     custo_km_strada = (gas_strada + manut_strada) / km_strada if km_strada > 0 else 0.0
     custo_km_l200 = (gas_l200 + manut_l200) / km_l200 if km_l200 > 0 else 0.0
 
+    def tabelas_fechamento_veiculo(veiculo):
+        gastos = df_abastec_mes[df_abastec_mes['veiculo'] == veiculo].copy()
+        quilometragem = df_km_mes[df_km_mes['veiculo'] == veiculo].copy()
+        if not gastos.empty:
+            gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
+                "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
+                "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
+                "custo_total": "Total (R$)", "obs": "Observação",
+            })
+            for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
+                gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
+        if not quilometragem.empty:
+            quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
+        return gastos, quilometragem
+
+    gastos_strada_mes, kms_strada_mes = tabelas_fechamento_veiculo("Strada")
+    gastos_l200_mes, kms_l200_mes = tabelas_fechamento_veiculo("L200")
+
     col_strada, col_l200 = st.columns(2)
     with col_strada:
         s1, s2 = st.columns(2)
         s1.metric("🚗 Strada (KM)", f"{km_strada:.1f} km", delta_color="off")
         s2.metric("Custo / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_strada:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_strada:.2f}</p>", unsafe_allow_html=True)
+        with st.expander("Ver lançamentos da Strada que formam este fechamento"):
+            st.caption("Combustível e manutenções do mês")
+            if gastos_strada_mes.empty: st.info("Nenhum gasto lançado no mês.")
+            else: st.dataframe(gastos_strada_mes, use_container_width=True, hide_index=True)
+            st.caption("Quilometragens do mês")
+            if kms_strada_mes.empty: st.info("Nenhuma quilometragem lançada no mês.")
+            else: st.dataframe(kms_strada_mes, use_container_width=True, hide_index=True)
 
     with col_l200:
         l1, l2 = st.columns(2)
         l1.metric("🚙 L200 (KM)", f"{km_l200:.1f} km", delta_color="off")
         l2.metric("Custo / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_l200:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_l200:.2f}</p>", unsafe_allow_html=True)
+        with st.expander("Ver lançamentos da L200 que formam este fechamento"):
+            st.caption("Combustível e manutenções do mês")
+            if gastos_l200_mes.empty: st.info("Nenhum gasto lançado no mês.")
+            else: st.dataframe(gastos_l200_mes, use_container_width=True, hide_index=True)
+            st.caption("Quilometragens do mês")
+            if kms_l200_mes.empty: st.info("Nenhuma quilometragem lançada no mês.")
+            else: st.dataframe(kms_l200_mes, use_container_width=True, hide_index=True)
+
+    df_resumo_fechamento = pd.DataFrame([
+        {"Veículo": "Strada", "KM": round(km_strada, 2), "Combustível (R$)": round(gas_strada, 2), "Manutenção (R$)": round(manut_strada, 2), "Custo total (R$)": round(gas_strada + manut_strada, 2), "Custo/KM (R$)": round(custo_km_strada, 2)},
+        {"Veículo": "L200", "KM": round(km_l200, 2), "Combustível (R$)": round(gas_l200, 2), "Manutenção (R$)": round(manut_l200, 2), "Custo total (R$)": round(gas_l200 + manut_l200, 2), "Custo/KM (R$)": round(custo_km_l200, 2)},
+    ])
+    renderizar_exportador(
+        f"Fechamento Individualizado — {mes_atual_str}",
+        {
+            "Resumo": df_resumo_fechamento,
+            "Gastos Strada": gastos_strada_mes,
+            "KM Strada": kms_strada_mes,
+            "Gastos L200": gastos_l200_mes,
+            "KM L200": kms_l200_mes,
+        },
+        "fechamento_mensal_frota", "custos",
+    )
 
 # --- NOVA ABA: REGISTROS DA FROTA ---
 with tab_registros:
@@ -1831,6 +2139,19 @@ with tab_registros:
                 st.info("Nenhuma quilometragem registrada.")
 
         editor_quilometragem()
+
+    df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
+    df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
+    renderizar_exportador(
+        "Registros e Histórico da Frota",
+        {
+            "Inícios de rota": df_inicio,
+            "Paradas rastreadas": df_paradas_tbl,
+            "Abastecimentos e manutenção": df_abastecimentos_relatorio,
+            "Quilometragens": df_quilometragens_relatorio,
+        },
+        "registros_da_frota", "registros",
+    )
 
 with tab_roteiro:
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR): st.session_state['rota_gerada'] = False
@@ -2214,3 +2535,20 @@ with tab_roteiro:
 
             st_folium(m, width=450, height=550, returned_objects=[])
             st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+
+        df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
+        df_resumo_rota = pd.DataFrame([{
+            "Data": DATA_REF_ROTA_STR,
+            "Ponto de saída": p_saida,
+            "Veículo": veiculo_selecionado.split('(')[0].strip(),
+            "Estratégia": estrategia,
+            "Distância planejada (km)": round(float(total_km), 2),
+            "Início": hora_inicio_real,
+            "Término previsto": format_mins_to_time(final_dyn_min),
+            "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo'),
+        }])
+        renderizar_exportador(
+            f"Roteiro do Davi — {DATA_REF_ROTA_STR}",
+            {"Resumo": df_resumo_rota, "Paradas e demandas": df_relatorio_rota},
+            "roteiro_do_davi", "roteiro",
+        )
