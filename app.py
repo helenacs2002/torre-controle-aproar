@@ -2,6 +2,7 @@ import os
 import re
 import json
 import math
+import sqlite3
 import time
 import base64
 import urllib.request
@@ -35,12 +36,12 @@ else:
     DATA_REF_ROTA_STR = AGORA_REAL.strftime("%d/%m/%Y")
 
 DATA_HOJE_REAL_STR = AGORA_REAL.strftime("%d/%m/%Y")
+DB_FILE = "enderecos_logistica.db"
 
 # =====================================================================
 # MOTOR DE BANCO DE DADOS NA NUVEM (POSTGRESQL / SUPABASE)
 # =====================================================================
 def get_conn():
-    # Puxa a conexão automaticamente dos Secrets do Streamlit
     return st.connection("postgresql", type="sql")
 
 def execute_db(query, params=None):
@@ -62,14 +63,9 @@ def fetch_all(query, params=None):
     with conn_db.session as s:
         return s.execute(text(query), params).fetchall()
 
-def get_df(query, params=None):
-    if params is None: params = {}
+def get_df(query, params=None, cache_ttl=15):
     conn_db = get_conn()
-    with conn_db.session as s:
-        res = s.execute(text(query), params)
-        keys = res.keys()
-        data = res.fetchall()
-        return pd.DataFrame(data, columns=keys)
+    return conn_db.query(query, params=params, ttl=cache_ttl)
 
 def save_df_to_db(df, table_name):
     conn_db = get_conn()
@@ -86,13 +82,15 @@ DICIONARIO_SINONIMOS = {
     "DEPÓSITO JP": "JP CONSTRUÇÃO",
     "JP CONSTRUCOES": "JP CONSTRUÇÃO",
     "ELETRICA FORTALEZA": "ELÉTRICA FORTALEZA",
+    "CLARUS EPI": "CLARUS EPIs",
+    "CLARUS": "CLARUS EPIs"
 }
 
 def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
 
-# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM E DASHBOARD CORPORATIVO) ---
+# --- INJEÇÃO DE CSS CUSTOMIZADO ---
 def aplicar_estilo_customizado():
     st.markdown("""
     <style>
@@ -245,7 +243,7 @@ if modo_url == "true":
 
     try:
         res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-        df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+        df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR}, cache_ttl=10)
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
         hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
@@ -340,7 +338,7 @@ if modo_url == "true":
 
     if len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m_mobile)
     if len(path_points_mobile) > 1: m_mobile.fit_bounds(path_points_mobile, padding=(30, 30), max_zoom=14)
-    if p_saida in locais_dict: folium.Marker([path_points_mobile[0][0], path_points_mobile[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m_mobile)
+    if p_saida in locais_dict: folium.Marker([path_points_mobile[0][0], path_points_mobile[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
     st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
@@ -371,7 +369,7 @@ SUPERVISORES_MAP = {
 TEAMS_SECRET_KEYS = {"Luis Eduardo Rodrigues": "luis_eduardo", "Victor Bezerra": "victor_bezerra", "Gustavo Souza": "gustavo_souza", "Neto Porto": "neto_porto", "Soares Junior": "soares_junior", "Joel Lima": "joel_lima", "Sede / Logística": "sede_logistica", "Geral / Logística": "geral_logistica"}
 LOCAL_BASE_ENDERECO = "Rua Professor Mário Rocha, 84 - Joaquim Távora, Fortaleza - CE, 60120-200"
 LOCAL_BASE_COORDS = (-3.752270016704, -38.51537298342)
-ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "ESCRITÓRIO"}
+ALIASES_LOCAL_BASE = {"ALMOXARIFADO", "ESCRITÓRIO", "ESCRITORIO", "ESCRITÓRIO PROVISÓRIO", "ESCRITORIO PROVISORIO"}
 
 # ENDEREÇOS FIXOS DO SISTEMA
 ENDERECOS_PADRAO = [
@@ -409,9 +407,11 @@ ENDERECOS_PADRAO = [
     ("DEPÓSITO JP", "Edson Queiroz, Fortaleza - CE"),
     ("DEPOSITO JP", "Edson Queiroz, Fortaleza - CE"),
     ("JP CONSTRUÇÃO", "Edson Queiroz, Fortaleza - CE"),
-    ("JP CONSTRUCOES", "Edson Queiroz, Fortaleza - CE")
+    ("JP CONSTRUCOES", "Edson Queiroz, Fortaleza - CE"),
+    ("CLARUS EPIs", "Centro, Fortaleza - CE")
 ]
 
+@st.cache_resource(show_spinner=False)
 def inicializar_bd():
     try:
         queries = [
@@ -446,10 +446,9 @@ def inicializar_bd():
         for alias in ALIASES_LOCAL_BASE: 
             execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:alias, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"alias": alias, "end": LOCAL_BASE_ENDERECO, "lat": LOCAL_BASE_COORDS[0], "lon": LOCAL_BASE_COORDS[1]})
     except Exception as e:
-        # Se o banco de dados falhar na criação (não configurado nos secrets ainda)
         pass
 
-# Garante a inicialização segura do banco Supabase
+# Garante a inicialização segura do banco Supabase apenas 1x
 try:
     inicializar_bd()
     if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
@@ -1021,7 +1020,7 @@ with tab_demandas:
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
     st.caption("Acompanhe em tempo real as entregas da rota gerada.")
 
-    df_entregues_hoje = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+    df_entregues_hoje = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR}, cache_ttl=15)
     dict_concluidos_monitor = dict(zip(df_entregues_hoje['id'].astype(str), df_entregues_hoje['hora_conclusao']))
     demandas_na_rota = {str(t.get('id', '')): t for step in st.session_state.get('route_steps', []) for acao, t in step.get('actions', [])}
 
@@ -1036,7 +1035,7 @@ with tab_demandas:
 
 with tab_historico:
     st.subheader(f"📋 Entregas Fisicamente Concluídas ({DATA_HOJE_REAL_STR})")
-    df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_HOJE_REAL_STR})
+    df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_HOJE_REAL_STR}, cache_ttl=15)
     if df_hist.empty: st.info("Nenhuma entrega foi registrada como finalizada no Trello no dia de hoje.")
     else: st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
@@ -1055,7 +1054,7 @@ with tab_enderecos:
             else: st.error("❌ Não consegui achar as coordenadas com esse texto. Cole o Link Direto do Google Maps!")
         else: st.warning("Preencha o nome e o endereço.")
 
-    df_locais = get_df("SELECT * FROM locais ORDER BY apelido")
+    df_locais = get_df("SELECT * FROM locais ORDER BY apelido", cache_ttl=60)
     st.dataframe(df_locais, use_container_width=True, hide_index=True)
     st.divider()
     st.markdown("#### Remover local")
@@ -1070,7 +1069,7 @@ with tab_enderecos:
 
 with tab_custos:
     st.subheader("💰 Fechamento Mensal e Controle de Frota")
-    cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1").iloc[0]
+    cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1", cache_ttl=60).iloc[0]
     
     st.markdown("#### ⚙️ Estimativa Base do Carro")
     cc1, cc2 = st.columns(2)
@@ -1133,7 +1132,7 @@ with tab_custos:
     st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
     mes_atual_str = AGORA_REAL.strftime("%m/%Y")
     
-    df_km = get_df("SELECT * FROM registro_km")
+    df_km = get_df("SELECT * FROM registro_km", cache_ttl=15)
     if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
     df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
     df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
@@ -1141,7 +1140,7 @@ with tab_custos:
     km_strada = df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'].sum() if not df_km_mes.empty else 0.0
     km_l200 = df_km_mes[df_km_mes['veiculo'] == 'L200']['km'].sum() if not df_km_mes.empty else 0.0
     
-    df_abastec = get_df("SELECT * FROM abastecimentos")
+    df_abastec = get_df("SELECT * FROM abastecimentos", cache_ttl=15)
     if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
     df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
     df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
@@ -1181,7 +1180,7 @@ with tab_registros:
     with c_inicio:
         st.markdown("**🏁 Início da Rota (Saídas do Pátio)**")
         st.caption("Marcado quando o carro afasta > 500m do escritório.")
-        df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora Saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC")
+        df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora Saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC", cache_ttl=15)
         if not df_inicio.empty:
             st.dataframe(df_inicio, use_container_width=True, hide_index=True)
         else:
@@ -1190,7 +1189,7 @@ with tab_registros:
     with c_paradas:
         st.markdown("**📍 Paradas Realizadas nas Obras (Geofence)**")
         st.caption("Registra tempo parado no raio de 250m do destino.")
-        df_paradas_tbl = get_df("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150")
+        df_paradas_tbl = get_df("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150", cache_ttl=15)
         if not df_paradas_tbl.empty:
             st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
         else:
@@ -1203,12 +1202,13 @@ with tab_registros:
     cx_abast, cx_km = st.columns(2)
     with cx_abast:
         st.markdown("**⛽ Combustível e Manutenções**")
-        df_abastec_all = get_df("SELECT * FROM abastecimentos ORDER BY id DESC")
+        df_abastec_all = get_df("SELECT * FROM abastecimentos ORDER BY id DESC", cache_ttl=15)
         if not df_abastec_all.empty:
             edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
             if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
                 edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
                 save_df_to_db(edited_abastec_clean, "abastecimentos")
+                get_df.clear() # Limpa o cache para mostrar a atualização instantaneamente
                 st.success("Abastecimentos atualizados na Nuvem com sucesso!")
                 st.rerun()
         else:
@@ -1216,12 +1216,13 @@ with tab_registros:
             
     with cx_km:
         st.markdown("**🛣️ Quilometragem Rodada**")
-        df_km_all = get_df("SELECT * FROM registro_km ORDER BY id DESC")
+        df_km_all = get_df("SELECT * FROM registro_km ORDER BY id DESC", cache_ttl=15)
         if not df_km_all.empty:
             edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
             if st.button("💾 Salvar Alterações (KM)", type="primary"):
                 edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
                 save_df_to_db(edited_km_clean, "registro_km")
+                get_df.clear() # Limpa o cache para mostrar a atualização instantaneamente
                 st.success("KMs atualizados na Nuvem com sucesso!")
                 st.rerun()
         else:
@@ -1253,7 +1254,7 @@ with tab_roteiro:
             st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
             
-            df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+            df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR}, cache_ttl=0)
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
@@ -1296,7 +1297,8 @@ with tab_roteiro:
                     p_sem_acento = remover_acentos(p)
                     encontrado = next((loc for loc in locais_db.keys() if remover_acentos(loc) == p_sem_acento), None)
                     if not encontrado:
-                        matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.8)
+                        # FOI AUMENTADA A TOLERÂNCIA AQUI DE 0.80 PARA 0.72
+                        matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.72)
                         if matches: encontrado = matches[0]
                     if encontrado: alvo = encontrado
 
@@ -1427,13 +1429,13 @@ with tab_roteiro:
 
         if st.session_state.get('demandas_adiadas'): st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã.")
         
-        df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+        df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR}, cache_ttl=10)
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         
         res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
         hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
         
-        df_paradas = get_df("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=:data", {"data": DATA_REF_ROTA_STR})
+        df_paradas = get_df("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=:data", {"data": DATA_REF_ROTA_STR}, cache_ttl=15)
 
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
@@ -1549,7 +1551,6 @@ with tab_roteiro:
 
         with col_dir:
             st.subheader("🗺️ Mapa da Rota")
-            # MAPA CLARO (OPENSTREETMAP) RESTAURADO AQUI
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
             path_points, offsets_dict = [], {}
             
