@@ -1495,11 +1495,153 @@ CREATE TABLE IF NOT EXISTS roteiro_checkins_davi (
 )
 """
 
+SQL_TABELA_COMPROVANTES_DAVI = """
+CREATE TABLE IF NOT EXISTS comprovantes_entrega_davi (
+    data_rota TEXT NOT NULL,
+    demanda_id TEXT NOT NULL,
+    etapa_indice INTEGER NOT NULL,
+    obra TEXT,
+    destino TEXT,
+    materiais TEXT,
+    recebedor TEXT NOT NULL,
+    nome_arquivo TEXT NOT NULL,
+    enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (data_rota, demanda_id)
+)
+"""
+
 @st.cache_resource(show_spinner=False)
 def garantir_tabela_checkins_davi():
     """Cria uma única vez a estrutura compartilhada entre celular e escritório."""
     execute_db(SQL_TABELA_CHECKINS_DAVI)
     return True
+
+
+@st.cache_resource(show_spinner=False)
+def garantir_tabela_comprovantes_davi():
+    """Cria a tabela que guarda os metadados dos comprovantes enviados ao OneDrive."""
+    execute_db(SQL_TABELA_COMPROVANTES_DAVI)
+    return True
+
+
+def carregar_comprovantes_davi(data_rota):
+    rows = fetch_all(
+        """
+        SELECT demanda_id, etapa_indice, obra, destino, materiais, recebedor,
+               nome_arquivo,
+               TO_CHAR(enviado_em AT TIME ZONE 'America/Fortaleza', 'HH24:MI') AS hora
+        FROM comprovantes_entrega_davi
+        WHERE data_rota = :data
+        ORDER BY enviado_em
+        """,
+        {"data": data_rota},
+    )
+    return {
+        str(row[0]): {
+            "etapa_indice": int(row[1]),
+            "obra": str(row[2] or ""),
+            "destino": str(row[3] or ""),
+            "materiais": str(row[4] or ""),
+            "recebedor": str(row[5] or ""),
+            "nome_arquivo": str(row[6] or ""),
+            "hora": str(row[7] or ""),
+        }
+        for row in rows
+    }
+
+
+def _texto_seguro_nome_arquivo(valor, limite=42):
+    texto = remover_acentos(str(valor or "")).strip().upper()
+    texto = re.sub(r"[^A-Z0-9]+", "-", texto).strip("-")
+    return (texto[:limite] or "SEM-NOME")
+
+
+def enviar_comprovante_onedrive(data_rota, etapa_indice, tarefa, destino, recebedor, arquivo_foto):
+    """Envia a foto ao fluxo do Power Automate e registra os metadados no Supabase."""
+    try:
+        flow_url = str(st.secrets["onedrive"]["flow_url"]).strip()
+    except Exception:
+        return False, "", "O endereço do Power Automate não está configurado nos Secrets."
+
+    if not flow_url:
+        return False, "", "O endereço do Power Automate está vazio nos Secrets."
+
+    if arquivo_foto is None:
+        return False, "", "Tire ou selecione uma foto antes de enviar."
+
+    recebedor = str(recebedor or "").strip()
+    if not recebedor:
+        return False, "", "Informe quem recebeu o material."
+
+    try:
+        foto_bytes = arquivo_foto.getvalue()
+    except Exception:
+        try:
+            foto_bytes = arquivo_foto.read()
+        except Exception:
+            foto_bytes = b""
+    if not foto_bytes:
+        return False, "", "A foto selecionada está vazia."
+
+    tipo_mime = str(getattr(arquivo_foto, "type", "") or "").lower()
+    extensao = "png" if "png" in tipo_mime else "webp" if "webp" in tipo_mime else "jpg"
+    card_id = str(tarefa.get("id", ""))
+    obra = str(tarefa.get("Obra", ""))
+    materiais = str(tarefa.get("Materiais", ""))
+    agora_nome = datetime.now(FUSO_LOCAL).strftime("%d-%m-%Y_%H-%M-%S")
+    nome_arquivo = (
+        f"{agora_nome}_{_texto_seguro_nome_arquivo(obra)}_"
+        f"{_texto_seguro_nome_arquivo(recebedor, 30)}_{_texto_seguro_nome_arquivo(card_id[-8:] or 'SEM-ID', 12)}.{extensao}"
+    )
+
+    payload = {
+        "nome_arquivo": nome_arquivo,
+        "foto_base64": base64.b64encode(foto_bytes).decode("ascii"),
+        "recebedor": recebedor,
+        "obra": obra,
+        "demanda_id": card_id,
+    }
+
+    try:
+        resposta = requests.post(flow_url, json=payload, timeout=75)
+        if not 200 <= resposta.status_code < 300:
+            detalhe = (resposta.text or "").strip().replace("\n", " ")[:250]
+            return False, "", f"Power Automate respondeu HTTP {resposta.status_code}. {detalhe}".strip()
+    except Exception as erro:
+        return False, "", f"Não foi possível enviar a foto ao Power Automate: {erro}"
+
+    try:
+        execute_db(
+            """
+            INSERT INTO comprovantes_entrega_davi
+                (data_rota, demanda_id, etapa_indice, obra, destino, materiais, recebedor, nome_arquivo, enviado_em)
+            VALUES
+                (:data, :demanda_id, :etapa, :obra, :destino, :materiais, :recebedor, :nome_arquivo, NOW())
+            ON CONFLICT (data_rota, demanda_id)
+            DO UPDATE SET
+                etapa_indice = EXCLUDED.etapa_indice,
+                obra = EXCLUDED.obra,
+                destino = EXCLUDED.destino,
+                materiais = EXCLUDED.materiais,
+                recebedor = EXCLUDED.recebedor,
+                nome_arquivo = EXCLUDED.nome_arquivo,
+                enviado_em = NOW()
+            """,
+            {
+                "data": data_rota,
+                "demanda_id": card_id,
+                "etapa": int(etapa_indice),
+                "obra": obra,
+                "destino": str(destino or ""),
+                "materiais": materiais,
+                "recebedor": recebedor,
+                "nome_arquivo": nome_arquivo,
+            },
+        )
+    except Exception as erro:
+        return False, "", f"A foto foi aceita pelo Power Automate, mas não consegui registrar o comprovante no banco: {erro}"
+
+    return True, nome_arquivo, ""
 
 def carregar_checkins_davi(data_rota):
     rows = fetch_all(
@@ -1570,6 +1712,7 @@ if modo_url == "true":
     erro_checkin_mobile = ""
     try:
         garantir_tabela_checkins_davi()
+        garantir_tabela_comprovantes_davi()
         res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
         df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
@@ -1587,6 +1730,11 @@ if modo_url == "true":
     total_km = res[4]
     p_saida = route_steps[0]['destino'] if route_steps else ""
 
+    try:
+        dict_comprovantes_mobile = carregar_comprovantes_davi(DATA_REF_ROTA_STR)
+    except Exception:
+        dict_comprovantes_mobile = {}
+
     # O clique no cartão volta ao app com estes parâmetros. A gravação é feita
     # no servidor para que a mesma informação apareça no painel do escritório.
     etapa_param = st.query_params.get("etapa", "")
@@ -1599,6 +1747,15 @@ if modo_url == "true":
             etapa_escolhida = route_steps[etapa_indice]
             if etapa_escolhida.get("type") in {"lunch", "return"}:
                 raise ValueError("Esta etapa não pode ser marcada")
+            if feito_param == "1":
+                ids_entregas_etapa = [
+                    str(tarefa.get("id", ""))
+                    for acao, tarefa in etapa_escolhida.get("actions", [])
+                    if acao == "ENTREGAR" and str(tarefa.get("id", ""))
+                ]
+                faltantes = [demanda_id for demanda_id in ids_entregas_etapa if demanda_id not in dict_comprovantes_mobile]
+                if faltantes:
+                    raise ValueError("Envie o comprovante das entregas antes de concluir a etapa")
             salvar_checkin_davi(
                 DATA_REF_ROTA_STR,
                 etapa_indice,
@@ -1608,8 +1765,9 @@ if modo_url == "true":
             st.query_params.clear()
             st.query_params["davi"] = "true"
             st.rerun()
-        except Exception:
-            erro_checkin_mobile = "Não foi possível salvar a marcação. Tente novamente."
+        except Exception as erro:
+            mensagem_erro = str(erro).strip()
+            erro_checkin_mobile = mensagem_erro if mensagem_erro else "Não foi possível salvar a marcação. Tente novamente."
             st.query_params.clear()
             st.query_params["davi"] = "true"
 
@@ -1627,6 +1785,106 @@ if modo_url == "true":
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
     renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+
+    entregas_mobile = []
+    numero_parada_form = 0
+    for indice_step, step_form in enumerate(route_steps):
+        if step_form.get("type") != "stop":
+            continue
+        if not (indice_step == 0 and str(step_form.get("destino", "")) == p_saida):
+            numero_parada_form += 1
+        for acao_form, tarefa_form in step_form.get("actions", []):
+            if acao_form != "ENTREGAR":
+                continue
+            demanda_id_form = str(tarefa_form.get("id", ""))
+            if not demanda_id_form:
+                continue
+            comprovante_existente = dict_comprovantes_mobile.get(demanda_id_form)
+            titulo_entrega = (
+                f"{'✅ ' if comprovante_existente else ''}Parada {max(1, numero_parada_form)} — "
+                f"{tarefa_form.get('Obra', '')} — {str(tarefa_form.get('Materiais', ''))[:75]}"
+            )
+            entregas_mobile.append((titulo_entrega, indice_step, str(step_form.get("destino", "")), tarefa_form))
+
+    if entregas_mobile:
+        faltam_comprovantes = sum(
+            1 for _, _, _, tarefa_form in entregas_mobile
+            if str(tarefa_form.get("id", "")) not in dict_comprovantes_mobile
+        )
+        with st.expander(
+            f"📷 Comprovantes de Entrega — {faltam_comprovantes} pendente(s)",
+            expanded=faltam_comprovantes > 0,
+        ):
+            mapa_entregas = {item[0]: item[1:] for item in entregas_mobile}
+            escolha_entrega = st.selectbox(
+                "Qual entrega deseja comprovar?",
+                list(mapa_entregas.keys()),
+                key="comprovante_entrega_selecionada",
+            )
+            etapa_comprovante, destino_comprovante, tarefa_comprovante = mapa_entregas[escolha_entrega]
+            demanda_id_comprovante = str(tarefa_comprovante.get("id", ""))
+            comprovante_atual = dict_comprovantes_mobile.get(demanda_id_comprovante)
+
+            st.caption(f"📍 {destino_comprovante} • Obra: {tarefa_comprovante.get('Obra', '')}")
+            st.markdown(f"**Material:** {tarefa_comprovante.get('Materiais', '')}")
+            if comprovante_atual:
+                st.success(
+                    f"✅ Já enviado às {comprovante_atual.get('hora', '')} • "
+                    f"Recebido por: {comprovante_atual.get('recebedor', '')}"
+                )
+                st.caption("Você pode enviar outra foto para substituir o registro deste comprovante.")
+
+            recebedor_comprovante = st.text_input(
+                "👤 Quem recebeu o material?",
+                value=comprovante_atual.get("recebedor", "") if comprovante_atual else "",
+                placeholder="Ex.: João da Silva",
+                key=f"recebedor_entrega_{demanda_id_comprovante}",
+            )
+            origem_foto = st.radio(
+                "Foto do material entregue",
+                ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
+                horizontal=True,
+                key=f"origem_foto_{demanda_id_comprovante}",
+            )
+            if origem_foto == "📷 Tirar foto agora":
+                foto_comprovante = st.camera_input(
+                    "Tire uma foto mostrando o material entregue",
+                    key=f"camera_entrega_{demanda_id_comprovante}",
+                )
+            else:
+                foto_comprovante = st.file_uploader(
+                    "Selecione uma foto",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    accept_multiple_files=False,
+                    key=f"arquivo_entrega_{demanda_id_comprovante}",
+                )
+
+            if st.button(
+                "✅ ENVIAR COMPROVANTE",
+                type="primary",
+                use_container_width=True,
+                key=f"enviar_comprovante_{demanda_id_comprovante}",
+            ):
+                if not str(recebedor_comprovante or "").strip():
+                    st.error("Informe quem recebeu o material.")
+                elif foto_comprovante is None:
+                    st.error("Tire ou selecione uma foto do material entregue.")
+                else:
+                    with st.spinner("Enviando foto para a pasta de comprovantes..."):
+                        sucesso, nome_salvo, erro_envio = enviar_comprovante_onedrive(
+                            DATA_REF_ROTA_STR,
+                            etapa_comprovante,
+                            tarefa_comprovante,
+                            destino_comprovante,
+                            recebedor_comprovante,
+                            foto_comprovante,
+                        )
+                    if sucesso:
+                        st.success(f"✅ Comprovante enviado: {nome_salvo}")
+                        time.sleep(0.7)
+                        st.rerun()
+                    else:
+                        st.error(erro_envio)
 
     st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
     st.caption("Deslize para o lado para avançar pelas etapas da rota.")
@@ -1678,17 +1936,32 @@ if modo_url == "true":
                 classe_acao, icone = ("coleta", "📦") if eh_coleta else ("entrega", "📬")
                 card_id = str(tarefa.get('id', ''))
                 concluido = f"<div class='baixa'>✅ Baixa às {html_escape(str(dict_concluidos_mobile[card_id]))}</div>" if card_id in dict_concluidos_mobile else ""
+                comprovante_card = dict_comprovantes_mobile.get(card_id) if acao == "ENTREGAR" else None
+                comprovante_html = (
+                    f"<div class='comprovante'>📷 Comprovante às {html_escape(str(comprovante_card.get('hora', '')))} • "
+                    f"Recebido por {html_escape(str(comprovante_card.get('recebedor', '')))}</div>"
+                    if comprovante_card else
+                    ("<div class='comprovante pendente-comprovante'>📷 Comprovante pendente</div>" if acao == "ENTREGAR" else "")
+                )
                 blocos_acao.append(
                     f"<div class='acao {classe_acao}'><div class='acao-titulo'>{icone} {html_escape(str(acao))}</div>"
                     f"<div class='materiais'>{html_escape(str(tarefa.get('Materiais', '')))}</div>"
-                    f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}</div>"
+                    f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}{comprovante_html}</div>"
                 )
             corpo_acoes = status_tempo + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
             rotulo_lembrete = "preparação" if is_start else "parada"
             checkin_etapa = dict_checkins_mobile.get(i)
             etapa_marcada = bool(checkin_etapa) or bool(step.get('is_concluded'))
+            ids_entregas_step = [
+                str(tarefa_step.get("id", ""))
+                for acao_step, tarefa_step in step.get("actions", [])
+                if acao_step == "ENTREGAR" and str(tarefa_step.get("id", ""))
+            ]
+            comprovantes_faltando_step = [demanda_id for demanda_id in ids_entregas_step if demanda_id not in dict_comprovantes_mobile]
             if step.get('is_concluded'):
                 botao_feito = "<button class='marcar-feita ativa' data-feita='1' disabled>✅ Concluída no sistema</button>"
+            elif comprovantes_faltando_step and not checkin_etapa:
+                botao_feito = "<button class='marcar-feita aguardando-foto' data-feita='0' disabled>📷 Envie o comprovante antes de concluir</button>"
             else:
                 novo_estado = "0" if checkin_etapa else "1"
                 classe_marcacao = " ativa" if checkin_etapa else ""
@@ -1748,11 +2021,14 @@ if modo_url == "true":
             .materiais { color:#e4e8f4; font-size:13px; line-height:1.45; }
             .obra { color:#8da0b8; font-size:11.5px; font-style:italic; margin-top:7px; }
             .baixa { color:#86efac; font-size:12px; font-weight:800; margin-top:7px; }
+            .comprovante { color:#bfdbfe; font-size:12px; font-weight:800; margin-top:7px; }
+            .pendente-comprovante { color:#fbbf24; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
             .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
             .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
+            .marcar-feita.aguardando-foto:disabled { background:rgba(245,158,11,.12); color:#fde68a; border-color:#f59e0b; }
             .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
             .controle { border:1px solid #303a59; background:#151a31; color:#e4e8f4; border-radius:10px; padding:10px 8px; font-weight:800; cursor:pointer; }
