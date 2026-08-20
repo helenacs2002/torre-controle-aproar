@@ -165,7 +165,19 @@ def format_time(minutes):
     return f"{total // 60:02d}:{total % 60:02d}"
 
 def format_mins_to_time(mins):
-    return f"{int(mins) // 60:02d}:{int(mins) % 60:02d}"
+    """Formata minutos acumulados sem exibir horários impossíveis como 25:03."""
+    try:
+        total = max(0, int(round(float(mins))))
+    except (TypeError, ValueError):
+        total = 0
+    dias, resto = divmod(total, 24 * 60)
+    hora, minuto = divmod(resto, 60)
+    horario = f"{hora:02d}:{minuto:02d}"
+    if dias == 1:
+        return f"{horario} (+1 dia)"
+    if dias > 1:
+        return f"{horario} (+{dias} dias)"
+    return horario
 
 def _limpar_texto_relatorio(valor):
     if valor is None:
@@ -1405,78 +1417,210 @@ def obter_hora_inicio_rota(data_rota):
     return str(primeiro_inicio[0]) if primeiro_inicio and primeiro_inicio[0] else "07:30"
 
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
+    """Atualiza ETAs sem empurrar a rota de amanhã para o horário de agora.
+
+    Para a rota de hoje, as etapas ainda pendentes partem do horário real atual.
+    Para uma rota futura (ex.: planejamento do dia seguinte após 18h), conserva-se
+    a linha do tempo planejada. A preparação inicial também permanece no horário
+    planejado, evitando mensagens confusas como 20:37–21:07 para uma preparação
+    originalmente prevista para 07:00–07:30.
+    """
+    rota_eh_hoje = DATA_REF_ROTA_DATE == AGORA_REAL.date()
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
-    agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
-    current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 0)
-    
-    for step in route_steps:
+    agora_min_efetivo = (13 * 60 if 12 * 60 <= agora_min < 13 * 60 else agora_min) if rota_eh_hoje else None
+    current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
+
+    for indice_step, step in enumerate(route_steps):
         if step['type'] == 'lunch':
             step['dyn_chegada'] = "12:00"
             step['dyn_saida'] = "13:00"
             step['is_concluded'] = False
             current_min = max(current_min, 13 * 60)
             continue
-            
+
         if step['type'] == 'return':
             arr_min = current_min + step.get('travel_mins', 0)
-            if current_min <= 12*60 and arr_min > 12*60: arr_min = max(arr_min + 60, 13*60)
-            if arr_min < agora_min_efetivo: arr_min = agora_min_efetivo
-            if 12*60 <= arr_min < 13*60: arr_min = 13*60
-            
+            if current_min <= 12 * 60 and arr_min > 12 * 60:
+                arr_min = max(arr_min + 60, 13 * 60)
+            if agora_min_efetivo is not None and arr_min < agora_min_efetivo:
+                arr_min = agora_min_efetivo
+            if 12 * 60 <= arr_min < 13 * 60:
+                arr_min = 13 * 60
+
             step['dyn_chegada'] = format_mins_to_time(arr_min)
             step['dyn_saida'] = step['dyn_chegada']
             step['is_concluded'] = False
+            current_min = arr_min
             continue
-            
+
+        # A primeira etapa é a preparação no pátio. Ela não deve virar um
+        # "ETA atualizado" com o horário atual quando a rota já avançou.
+        eh_preparacao_inicial = (
+            indice_step == 0
+            and float(step.get('dist', 0) or 0) <= 0.05
+            and float(step.get('travel_mins', 0) or 0) <= 0.5
+        )
+        if eh_preparacao_inicial:
+            chegada_base = str(step.get('chegada', '') or '')
+            saida_base = str(step.get('saida', '') or '')
+            step['dyn_chegada'] = chegada_base
+            step['dyn_saida'] = saida_base
+            step['is_concluded'] = False
+            saida_min = parse_time_to_mins(saida_base) if saida_base else 0
+            current_min = max(current_min, saida_min)
+            continue
+
         concluded_times = []
         has_pending = False
-        for a, t in step.get('actions', []):
-            card_id = str(t.get('id', ''))
+        for _acao, tarefa in step.get('actions', []):
+            card_id = str(tarefa.get('id', ''))
             if card_id in dict_concluidos:
                 concluded_times.append(parse_time_to_mins(dict_concluidos[card_id]))
             else:
                 has_pending = True
-                
+
         if not has_pending and concluded_times:
             max_c = max(concluded_times)
             step['dyn_chegada'] = "Concluído"
             step['dyn_saida'] = format_mins_to_time(max_c)
             current_min = max(current_min, max_c)
             step['is_concluded'] = True
-        else:
-            if 12*60 <= current_min < 13*60: current_min = 13*60
-                
-            travel = step.get('travel_mins', 0)
-            arr_min = current_min + travel
-            
-            if current_min <= 12*60 and arr_min > 12*60: arr_min = max(arr_min + 60, 13*60)
-            if arr_min < agora_min_efetivo: arr_min = agora_min_efetivo
-            if 12*60 <= arr_min < 13*60: arr_min = 13*60
-                
-            service = step.get('tempo_local', 0)
-            dep_min = arr_min + service
-            
-            if arr_min <= 12*60 and dep_min > 12*60: dep_min = max(dep_min + 60, 13*60)
-            
-            step['dyn_chegada'] = format_mins_to_time(arr_min)
-            step['dyn_saida'] = format_mins_to_time(dep_min)
-            current_min = dep_min
-            step['is_concluded'] = False
-            
+            continue
+
+        if 12 * 60 <= current_min < 13 * 60:
+            current_min = 13 * 60
+
+        travel = step.get('travel_mins', 0)
+        arr_min = current_min + travel
+
+        if current_min <= 12 * 60 and arr_min > 12 * 60:
+            arr_min = max(arr_min + 60, 13 * 60)
+        if agora_min_efetivo is not None and arr_min < agora_min_efetivo:
+            arr_min = agora_min_efetivo
+        if 12 * 60 <= arr_min < 13 * 60:
+            arr_min = 13 * 60
+
+        service = step.get('tempo_local', 0)
+        dep_min = arr_min + service
+        if arr_min <= 12 * 60 and dep_min > 12 * 60:
+            dep_min = max(dep_min + 60, 13 * 60)
+
+        step['dyn_chegada'] = format_mins_to_time(arr_min)
+        step['dyn_saida'] = format_mins_to_time(dep_min)
+        current_min = dep_min
+        step['is_concluded'] = False
+
     return route_steps, current_min
 
+
+def carregar_paradas_rastreadas_rota(data_rota, placa=PLACA_DAVI):
+    """Carrega as visitas reais do rastreador, mais recentes primeiro."""
+    try:
+        return get_df(
+            """
+            SELECT id, local, hora_chegada, hora_saida
+            FROM rastreio_paradas
+            WHERE data=:data AND placa=:placa
+            ORDER BY id DESC
+            """,
+            {"data": data_rota, "placa": placa},
+        )
+    except Exception:
+        return pd.DataFrame(columns=["id", "local", "hora_chegada", "hora_saida"])
+
+
+def _normalizar_local_rastreio(valor):
+    return re.sub(r"\s+", " ", remover_acentos(str(valor or "")).upper()).strip()
+
+
+def _duracao_horarios_minutos(inicio, fim):
+    ini = parse_time_to_mins(str(inicio or ""))
+    ter = parse_time_to_mins(str(fim or ""))
+    if ter < ini:
+        ter += 24 * 60
+    return max(0, ter - ini)
+
+
+def _formatar_duracao_parada(minutos):
+    minutos = max(0, int(minutos or 0))
+    horas, resto = divmod(minutos, 60)
+    if horas and resto:
+        return f"{horas}h{resto:02d}"
+    if horas:
+        return f"{horas}h"
+    return f"{resto} min"
+
+
+def obter_status_rastreio_local(df_paradas, local, data_rota):
+    """Retorna chegada, saída e permanência real da visita mais recente ao local."""
+    if df_paradas is None or df_paradas.empty or not str(local or "").strip():
+        return None
+
+    chave = _normalizar_local_rastreio(local)
+    candidatos = df_paradas[
+        df_paradas["local"].astype(str).map(_normalizar_local_rastreio) == chave
+    ]
+    if candidatos.empty:
+        return None
+
+    linha = candidatos.iloc[0]
+    chegada = str(linha.get("hora_chegada", "") or "").strip()
+    saida = str(linha.get("hora_saida", "") or "").strip()
+    if not chegada:
+        return None
+
+    if saida and saida.lower() not in {"none", "nan", "nat"}:
+        duracao = _duracao_horarios_minutos(chegada, saida)
+        return {
+            "aberta": False,
+            "chegada": chegada,
+            "saida": saida,
+            "duracao_min": duracao,
+            "duracao": _formatar_duracao_parada(duracao),
+        }
+
+    duracao = None
+    if str(data_rota) == DATA_HOJE_REAL_STR:
+        agora_hm = AGORA_REAL.strftime("%H:%M")
+        duracao = _duracao_horarios_minutos(chegada, agora_hm)
+
+    return {
+        "aberta": True,
+        "chegada": chegada,
+        "saida": "",
+        "duracao_min": duracao,
+        "duracao": _formatar_duracao_parada(duracao) if duracao is not None else "",
+    }
+
+
+def html_status_rastreio_local(status):
+    if not status:
+        return ""
+    chegada = html_escape(str(status.get("chegada", "")))
+    if status.get("aberta"):
+        duracao = html_escape(str(status.get("duracao", "")))
+        detalhe = f" • ⏱️ no local há {duracao}" if duracao else ""
+        return f"<div class='rastreio-real'>📍 Chegada real: <b>{chegada}</b>{detalhe}</div>"
+    saida = html_escape(str(status.get("saida", "")))
+    duracao = html_escape(str(status.get("duracao", "")))
+    return f"<div class='rastreio-real'>📍 Chegada: <b>{chegada}</b> • 🚚 Saída: <b>{saida}</b> • ⏱️ Permanência: <b>{duracao}</b></div>"
+
 def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
-    if not hora_atual_str: return
+    if not hora_atual_str:
+        return
     cor_previsao = "#16a34a" if final_dyn_min <= (17 * 60) else "#f59e0b" if final_dyn_min <= (17 * 60 + 30) else "#ef4444"
-            
+    rota_futura = DATA_REF_ROTA_DATE > AGORA_REAL.date()
+    rotulo_referencia = "📅 Rota planejada:" if rota_futura else "🕒 Horário atual:"
+    valor_referencia = DATA_REF_ROTA_STR if rota_futura else hora_atual_str
+
     st.markdown(f'''
     <div style="background: linear-gradient(145deg, rgba(18,21,48,0.8), rgba(13,16,37,0.9)); padding: 15px 25px; border-radius: 12px; border: 1px solid rgba(64,116,146,.3); display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; box-shadow: 0 8px 20px rgba(0,0,0,0.2);">
        <div style="font-size: 14px; color: #8da0b8; text-align: left;">
-            <span style="font-size: 20px;">⏱️</span> Atualizada:<br>
-            <b style="color: #e4e8f4; font-size: 20px;">{hora_atual_str}</b>
+            {rotulo_referencia}<br>
+            <b style="color: #e4e8f4; font-size: 20px;">{valor_referencia}</b>
        </div>
        <div style="font-size: 14px; color: #8da0b8; text-align: right;">
-            <span style="font-size: 20px;">🏁</span> Previsão de Término:<br>
+            <span style="font-size: 20px;">🏁</span> Término previsto:<br>
             <b style="color: {cor_previsao}; font-size: 20px;">{nova_previsao_str}</b>
        </div>
     </div>
@@ -1791,6 +1935,7 @@ if modo_url == "true":
     enderecos_dict = json.loads(res[3])
     total_km = res[4]
     p_saida = route_steps[0]['destino'] if route_steps else ""
+    df_paradas_mobile = carregar_paradas_rastreadas_rota(DATA_REF_ROTA_STR, PLACA_DAVI)
 
     # O clique no cartão volta ao app com estes parâmetros. A gravação é feita
     # no servidor para que a mesma informação apareça no painel do escritório.
@@ -1978,6 +2123,22 @@ if modo_url == "true":
                         unsafe_allow_html=True,
                     )
 
+                    status_real_comprovante = obter_status_rastreio_local(
+                        df_paradas_mobile, destino_sel, DATA_REF_ROTA_STR
+                    )
+                    if status_real_comprovante:
+                        if status_real_comprovante.get("aberta"):
+                            texto_chegada = f"📍 Chegou às **{status_real_comprovante['chegada']}**"
+                            if status_real_comprovante.get("duracao"):
+                                texto_chegada += f" • ⏱️ Está no local há **{status_real_comprovante['duracao']}**"
+                            st.info(texto_chegada)
+                        else:
+                            st.info(
+                                f"📍 Chegou às **{status_real_comprovante['chegada']}** • "
+                                f"🚚 Saiu às **{status_real_comprovante['saida']}** • "
+                                f"⏱️ Ficou **{status_real_comprovante['duracao']}** no local"
+                            )
+
                     mensagem_pendente = estado.pop("mensagem", "") if estado.get("mensagem") else ""
                     if mensagem_pendente:
                         st.success(mensagem_pendente)
@@ -2138,13 +2299,20 @@ if modo_url == "true":
             if is_start:
                 classe_card, selo = "preparacao", "PREPARAÇÃO"
                 titulo_card = f"🏁 {html_escape(destino_step)}"
-                meta_card = f"Base: {html_escape(str(step.get('chegada', '')))} às {html_escape(str(step.get('saida', '')))}"
+                meta_card = f"Preparação planejada: {html_escape(str(step.get('chegada', '')))} às {html_escape(str(step.get('saida', '')))}"
             else:
                 selo = f"PARADA {numero_parada_mobile}"
                 titulo_card = f"📍 {html_escape(destino_step)}"
-                meta_card = f"Trecho: {float(step.get('dist', 0) or 0):.1f} km | Base: {html_escape(str(step.get('chegada', '')))} às {html_escape(str(step.get('saida', '')))}"
+                meta_card = f"Trecho: {float(step.get('dist', 0) or 0):.1f} km"
 
-            status_tempo = f"<span class='status concluido'>✅ Concluído às {html_escape(str(step.get('dyn_saida', '')))}</span>" if step.get('is_concluded') else f"<span class='status pendente'>⏳ Previsão: {html_escape(str(step.get('dyn_chegada', '')))} às {html_escape(str(step.get('dyn_saida', '')))}</span>"
+            if is_start:
+                status_tempo = f"<span class='status pendente'>🕖 Preparação: {html_escape(str(step.get('chegada', '')))} às {html_escape(str(step.get('saida', '')))}</span>"
+                status_rastreio_html = ""
+            else:
+                status_tempo = f"<span class='status concluido'>✅ Concluído às {html_escape(str(step.get('dyn_saida', '')))}</span>" if step.get('is_concluded') else f"<span class='status pendente'>⏳ Previsão atual: {html_escape(str(step.get('dyn_chegada', '')))} às {html_escape(str(step.get('dyn_saida', '')))}</span>"
+                status_rastreio_html = html_status_rastreio_local(
+                    obter_status_rastreio_local(df_paradas_mobile, destino_step, DATA_REF_ROTA_STR)
+                )
             blocos_acao = []
             for acao, tarefa in step.get('actions', []):
                 eh_coleta = acao == "COLETAR"
@@ -2156,7 +2324,7 @@ if modo_url == "true":
                     f"<div class='materiais'>{html_escape(str(tarefa.get('Materiais', '')))}</div>"
                     f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}</div>"
                 )
-            corpo_acoes = status_tempo + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
+            corpo_acoes = status_tempo + status_rastreio_html + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
             rotulo_lembrete = "preparação" if is_start else "parada"
             checkin_etapa = dict_checkins_mobile.get(i)
             etapa_marcada = bool(checkin_etapa) or bool(step.get('is_concluded'))
@@ -2215,6 +2383,7 @@ if modo_url == "true":
             .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
             .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
             .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
+            .rastreio-real { margin:-4px 0 12px; padding:9px 11px; border-radius:10px; color:#bae6fd; background:rgba(14,165,233,.10); border:1px solid rgba(56,189,248,.22); font-size:12.5px; line-height:1.45; }
             .acao { margin-bottom:11px; padding:12px; border-radius:12px; border-left:4px solid; background:rgba(255,255,255,.035); }
             .acao.coleta { border-color:#f59e0b; }
             .acao.entrega { border-color:#16a34a; }
@@ -4383,7 +4552,7 @@ with tab_roteiro:
         
         hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
         
-        df_paradas = get_df("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=:data", {"data": DATA_REF_ROTA_STR})
+        df_paradas = carregar_paradas_rastreadas_rota(DATA_REF_ROTA_STR, PLACA_DAVI)
 
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
@@ -4449,15 +4618,29 @@ with tab_roteiro:
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
                 with st.container(border=True):
-                    status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
-
                     if is_start:
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
-                        st.caption(f"{status_tempo} | Base original: {step['chegada']} às {step['saida']}", unsafe_allow_html=True)
-                        texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n"
+                        st.caption(f"🕖 Preparação planejada: **{step['chegada']} às {step['saida']}**")
+                        texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     else:
+                        status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
-                        st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
+                        st.caption(f"{status_tempo} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
+
+                        status_real = obter_status_rastreio_local(df_paradas, step['destino'], DATA_REF_ROTA_STR)
+                        if status_real:
+                            if status_real.get('aberta'):
+                                texto_real = f"📍 Chegada real: **{status_real['chegada']}**"
+                                if status_real.get('duracao'):
+                                    texto_real += f"  •  ⏱️ No local há **{status_real['duracao']}**"
+                                st.markdown(texto_real)
+                            else:
+                                st.markdown(
+                                    f"📍 Chegada: **{status_real['chegada']}**  •  "
+                                    f"🚚 Saída: **{status_real['saida']}**  •  "
+                                    f"⏱️ Permanência: **{status_real['duracao']}**"
+                                )
+
                         texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n🧭 *GPS:* {link_parada}\n"
 
                     checkin_davi = dict_checkins_torre.get(i)
@@ -4478,21 +4661,6 @@ with tab_roteiro:
                         col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*{check_ui}", unsafe_allow_html=True)
                         texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                     
-                    texto_paradas_reais = ""
-                    paradas_local = df_paradas[df_paradas['local'] == step['destino']]
-                    if not paradas_local.empty:
-                        for _, rp in paradas_local.iterrows():
-                            h_c = rp['hora_chegada']
-                            h_s = rp['hora_saida'] if rp['hora_saida'] else ""
-                            if h_s:
-                                duracao = max(0, parse_time_to_mins(h_s) - parse_time_to_mins(h_c))
-                                texto_paradas_reais += f"⏱️ **Tempo no local:** Chegou às {h_c} • Saiu às {h_s} <b>({duracao} min)</b><br>"
-                            else:
-                                texto_paradas_reais += f"📡 **Rastreador:** Chegou às {h_c} • (Ainda no local)<br>"
-                                
-                    if texto_paradas_reais:
-                        st.markdown(f"<div style='background-color:rgba(37, 99, 235, 0.15); border-left:4px solid #2563eb; padding:10px 15px; margin-top:10px; margin-bottom:5px; font-size:14px; border-radius:6px; color:#bfdbfe;'>{texto_paradas_reais}</div>", unsafe_allow_html=True)
-                        
                     texto_whatsapp += "\n"
                     if not is_start: num_parada += 1
 
