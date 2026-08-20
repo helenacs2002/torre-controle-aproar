@@ -7,6 +7,8 @@ import time
 import base64
 import urllib.request
 import urllib.parse
+import unicodedata
+import difflib
 from datetime import datetime, timezone, timedelta
 from html import escape as html_escape
 from html.parser import HTMLParser
@@ -16,6 +18,7 @@ import requests
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from streamlit_gsheets import GSheetsConnection
 
 # =====================================================================
 # CONFIGURAÇÕES DE TELA E RELÓGIO (VIRADA DE TURNO)
@@ -34,6 +37,36 @@ else:
 
 DATA_HOJE_REAL_STR = AGORA_REAL.strftime("%d/%m/%Y")
 DB_FILE = "enderecos_logistica.db"
+
+# =====================================================================
+# DICIONÁRIO INTELIGENTE DE SINÔNIMOS (APELIDOS)
+# =====================================================================
+# Adicione aqui apelidos da rua/Trello para mapear com os oficiais do banco
+DICIONARIO_SINONIMOS = {
+    "DEPOSITO JP": "JP CONSTRUÇÃO",
+    "DEPÓSITO JP": "JP CONSTRUÇÃO",
+    "JP CONSTRUCOES": "JP CONSTRUÇÃO",
+    "ELETRICA FORTALEZA": "ELÉTRICA FORTALEZA",
+}
+
+def remover_acentos(txt):
+    if not txt: return ""
+    return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
+
+# --- CONEXÃO COM O GOOGLE SHEETS ---
+conn_sheets = st.connection("gsheets", type=GSheetsConnection)
+
+def ler_dados_sheets(worksheet_name):
+    try:
+        df = conn_sheets.read(worksheet=worksheet_name, ttl=0)
+        return df.dropna(how="all")
+    except:
+        return pd.DataFrame()
+
+def salvar_dados_sheets(df_novo, worksheet_name):
+    df_atual = ler_dados_sheets(worksheet_name)
+    df_atualizado = pd.concat([df_atual, df_novo], ignore_index=True)
+    conn_sheets.update(worksheet=worksheet_name, data=df_atualizado)
 
 # --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
 def aplicar_estilo_customizado():
@@ -477,6 +510,13 @@ def canonicalizar_ponto_rota(nome):
     texto = normalizar_local(str(nome or ""))
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
     texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
+    
+    # Busca por Dicionário Fixo (Substitui apelidos absurdos por nome real)
+    texto_limpo = remover_acentos(texto)
+    for sin, oficial in DICIONARIO_SINONIMOS.items():
+        if texto_limpo == remover_acentos(sin):
+            texto = oficial
+            
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
 
@@ -773,7 +813,6 @@ def loop_automacoes_background():
                             c_math = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
                             dist_km = 6371.0 * c_math
                             
-                            # Se o carro está a menos de 250 metros do destino da rota
                             if dist_km <= 0.25 and dist_km < menor_dist: 
                                 local_proximo = nome_loc
                                 menor_dist = dist_km
@@ -1166,7 +1205,7 @@ with tab_roteiro:
         txt_botao = "🚀 Calcular Rota Otimizada / Atualizar Rota"
 
     if st.button(txt_botao, type="primary", disabled=df_ativos.empty):
-        with st.spinner("Analisando histórico e traçando rota a partir de onde o motorista está..."):
+        with st.spinner("Analisando histórico e inteligência de nomes para traçar rota..."):
             st.session_state['demandas_adiadas'] = []
             conn = sqlite3.connect(DB_FILE)
             garantir_gps_local_base(conn)
@@ -1204,17 +1243,39 @@ with tab_roteiro:
             pontos_necessarios = {canonicalizar_ponto_rota(p) for p in pontos_brutos if canonicalizar_ponto_rota(p) not in {"", "DESCONHECIDO", "NAN", "NONE"}}
             
             locais_dict, enderecos_dict = {}, {}
+            
+            # Busca locais cadastrados e aplica lógica IA
+            locais_db_raw = conn.execute("SELECT apelido, endereco, lat, lon FROM locais").fetchall()
+            locais_db = {row[0]: (row[1], row[2], row[3]) for row in locais_db_raw}
+            
             for p in pontos_necessarios:
-                res = conn.execute("SELECT endereco, lat, lon FROM locais WHERE apelido = ?", (p,)).fetchone()
-                if res and res[1] is not None and res[2] is not None:
-                    locais_dict[p] = (res[1], res[2])
-                    enderecos_dict[p] = res[0]
-                    continue
-                if res and res[0]:
-                    lat, lon = buscar_coordenadas(res[0])
-                    if lat is not None and lon is not None:
-                        conn.execute("UPDATE locais SET lat = ?, lon = ? WHERE apelido = ?", (lat, lon, p))
-                        locais_dict[p], enderecos_dict[p] = (lat, lon), res[0]
+                alvo = p
+                # 1. Tenta achar o exato
+                if alvo not in locais_db:
+                    p_sem_acento = remover_acentos(p)
+                    # 2. Ignora Acentos (Ex: ELETRICA x ELÉTRICA)
+                    encontrado = next((loc for loc in locais_db.keys() if remover_acentos(loc) == p_sem_acento), None)
+                    
+                    # 3. Fuzzy Match Ortográfico (Corretor de erros de digitação)
+                    if not encontrado:
+                        matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.8)
+                        if matches: encontrado = matches[0]
+                        
+                    if encontrado: alvo = encontrado
+
+                # Associa o endereço encontrado de volta à variável original do Trello
+                if alvo in locais_db:
+                    end_str, lat_db, lon_db = locais_db[alvo]
+                    if lat_db is not None and lon_db is not None:
+                        locais_dict[p] = (lat_db, lon_db)
+                        enderecos_dict[p] = end_str
+                    elif end_str:
+                        lat, lon = buscar_coordenadas(end_str)
+                        if lat is not None and lon is not None:
+                            conn.execute("UPDATE locais SET lat=?, lon=? WHERE apelido=?", (lat, lon, alvo))
+                            locais_dict[p] = (lat, lon)
+                            enderecos_dict[p] = end_str
+                            
             conn.commit(); conn.close()
             st.session_state['enderecos_dict'] = enderecos_dict
             
