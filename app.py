@@ -1531,19 +1531,6 @@ def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
             {"data": data_rota, "indice": etapa_indice, "destino": destino},
         )
 
-def renderizar_progresso_davi_compartilhado(route_steps):
-    checkins = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
-    total = sum(1 for step in route_steps if step.get("type") not in {"lunch", "return"})
-    feitas = len(checkins)
-    percentual = feitas / total if total else 0
-    st.progress(percentual, text=f"📱 Progresso informado pelo Davi: {feitas}/{total} etapa(s) marcada(s)")
-    if checkins:
-        ultimo = max(checkins.values(), key=lambda item: item.get("instante", 0))
-        locais = " • ".join(dados["destino"] for _, dados in sorted(checkins.items()))
-        st.caption(f"✅ {locais}  |  Última marcação às {ultimo['hora']}  |  atualização automática")
-    else:
-        st.caption("Nenhuma etapa foi marcada pelo Davi ainda • atualização automática")
-
 # =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
@@ -3601,12 +3588,33 @@ with tab_roteiro:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
             st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
 
-            # Resumo compartilhado: consulta pequena e independente, atualizada
-            # sem recarregar nem escurecer o restante do roteiro.
-            if hasattr(st, "fragment"):
-                st.fragment(run_every="20s")(renderizar_progresso_davi_compartilhado)(route_steps)
-            else:
-                renderizar_progresso_davi_compartilhado(route_steps)
+            # A marca invisível colocada dentro de uma etapa concluída pelo Davi
+            # acende a borda do próprio cartão, sem criar um painel separado.
+            st.markdown("""
+                <style>
+                    div[data-testid="stVerticalBlockBorderWrapper"]:has(.davi-etapa-feita) {
+                        border: 2px solid #39ff88 !important;
+                        background: linear-gradient(145deg, rgba(34,197,94,.10), rgba(13,16,37,.78)) !important;
+                        outline: 1px solid rgba(134,239,172,.85);
+                        outline-offset: 1px;
+                        box-shadow: 0 0 8px rgba(57,255,136,.95),
+                                    0 0 22px rgba(34,197,94,.55),
+                                    inset 0 0 18px rgba(34,197,94,.08);
+                        animation: pulso-davi 2.2s ease-in-out infinite;
+                    }
+                    .davi-etapa-feita { display:none; }
+                    .selo-davi-feita {
+                        display:inline-block; margin:7px 0 11px; padding:5px 10px;
+                        color:#d1fae5; background:rgba(22,163,74,.24);
+                        border:1px solid rgba(74,222,128,.65); border-radius:999px;
+                        font-size:12px; font-weight:800;
+                    }
+                    @keyframes pulso-davi {
+                        0%, 100% { box-shadow:0 0 7px rgba(57,255,136,.75), 0 0 18px rgba(34,197,94,.38), inset 0 0 18px rgba(34,197,94,.06); }
+                        50% { box-shadow:0 0 12px rgba(57,255,136,1), 0 0 30px rgba(34,197,94,.68), inset 0 0 22px rgba(34,197,94,.12); }
+                    }
+                </style>
+            """, unsafe_allow_html=True)
 
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
@@ -3651,9 +3659,8 @@ with tab_roteiro:
                     checkin_davi = dict_checkins_torre.get(i)
                     if checkin_davi:
                         st.markdown(
-                            f"<div style='margin:8px 0 12px; padding:9px 12px; border-radius:8px; "
-                            f"background:rgba(22,163,74,.15); border:1px solid rgba(34,197,94,.35); "
-                            f"color:#bbf7d0; font-weight:700;'>☑️ Davi marcou esta etapa como feita às {html_escape(checkin_davi['hora'])}</div>",
+                            f"<span class='davi-etapa-feita'></span>"
+                            f"<span class='selo-davi-feita'>✓ Feita pelo Davi às {html_escape(checkin_davi['hora'])}</span>",
                             unsafe_allow_html=True,
                         )
                     
