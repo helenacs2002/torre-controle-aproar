@@ -1466,6 +1466,85 @@ def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     ''', unsafe_allow_html=True)
 
 # =====================================================================
+# MARCAÇÕES COMPARTILHADAS DO APP DO DAVI
+# =====================================================================
+SQL_TABELA_CHECKINS_DAVI = """
+CREATE TABLE IF NOT EXISTS roteiro_checkins_davi (
+    data_rota TEXT NOT NULL,
+    etapa_indice INTEGER NOT NULL,
+    destino TEXT NOT NULL,
+    marcado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (data_rota, etapa_indice)
+)
+"""
+
+@st.cache_resource(show_spinner=False)
+def garantir_tabela_checkins_davi():
+    """Cria uma única vez a estrutura compartilhada entre celular e escritório."""
+    execute_db(SQL_TABELA_CHECKINS_DAVI)
+    return True
+
+def carregar_checkins_davi(data_rota):
+    rows = fetch_all(
+        """
+        SELECT etapa_indice, destino,
+               TO_CHAR(marcado_em AT TIME ZONE 'America/Fortaleza', 'HH24:MI') AS hora,
+               EXTRACT(EPOCH FROM marcado_em) AS instante
+        FROM roteiro_checkins_davi
+        WHERE data_rota = :data
+        ORDER BY etapa_indice
+        """,
+        {"data": data_rota},
+    )
+    return {
+        int(row[0]): {"destino": str(row[1]), "hora": str(row[2] or ""), "instante": float(row[3] or 0)}
+        for row in rows
+    }
+
+def filtrar_checkins_da_rota(route_steps, checkins):
+    """Impede que uma marca antiga seja ligada a outro destino após refazer a rota."""
+    return {
+        indice: dados
+        for indice, dados in checkins.items()
+        if 0 <= indice < len(route_steps)
+        and route_steps[indice].get("type") not in {"lunch", "return"}
+        and str(route_steps[indice].get("destino", "")) == dados.get("destino", "")
+    }
+
+def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
+    if feita:
+        execute_db(
+            """
+            INSERT INTO roteiro_checkins_davi (data_rota, etapa_indice, destino, marcado_em)
+            VALUES (:data, :indice, :destino, NOW())
+            ON CONFLICT (data_rota, etapa_indice)
+            DO UPDATE SET destino = EXCLUDED.destino, marcado_em = NOW()
+            """,
+            {"data": data_rota, "indice": etapa_indice, "destino": destino},
+        )
+    else:
+        execute_db(
+            """
+            DELETE FROM roteiro_checkins_davi
+            WHERE data_rota = :data AND etapa_indice = :indice AND destino = :destino
+            """,
+            {"data": data_rota, "indice": etapa_indice, "destino": destino},
+        )
+
+def renderizar_progresso_davi_compartilhado(route_steps):
+    checkins = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
+    total = sum(1 for step in route_steps if step.get("type") not in {"lunch", "return"})
+    feitas = len(checkins)
+    percentual = feitas / total if total else 0
+    st.progress(percentual, text=f"📱 Progresso informado pelo Davi: {feitas}/{total} etapa(s) marcada(s)")
+    if checkins:
+        ultimo = max(checkins.values(), key=lambda item: item.get("instante", 0))
+        locais = " • ".join(dados["destino"] for _, dados in sorted(checkins.items()))
+        st.caption(f"✅ {locais}  |  Última marcação às {ultimo['hora']}  |  atualização automática")
+    else:
+        st.caption("Nenhuma etapa foi marcada pelo Davi ainda • atualização automática")
+
+# =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
 modo_url = st.query_params.get("davi", "")
@@ -1484,7 +1563,9 @@ if modo_url == "true":
 
     if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"): st.rerun()
 
+    erro_checkin_mobile = ""
     try:
+        garantir_tabela_checkins_davi()
         res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
         df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
@@ -1503,6 +1584,41 @@ if modo_url == "true":
     total_km = res[4]
     p_saida = route_steps[0]['destino'] if route_steps else ""
 
+    # O clique no cartão volta ao app com estes parâmetros. A gravação é feita
+    # no servidor para que a mesma informação apareça no painel do escritório.
+    etapa_param = st.query_params.get("etapa", "")
+    feito_param = st.query_params.get("feito", "")
+    if etapa_param != "" and feito_param in {"0", "1"}:
+        try:
+            etapa_indice = int(etapa_param)
+            if not 0 <= etapa_indice < len(route_steps):
+                raise ValueError("Etapa fora da rota atual")
+            etapa_escolhida = route_steps[etapa_indice]
+            if etapa_escolhida.get("type") in {"lunch", "return"}:
+                raise ValueError("Esta etapa não pode ser marcada")
+            salvar_checkin_davi(
+                DATA_REF_ROTA_STR,
+                etapa_indice,
+                str(etapa_escolhida.get("destino", "")),
+                feito_param == "1",
+            )
+            st.query_params.clear()
+            st.query_params["davi"] = "true"
+            st.rerun()
+        except Exception:
+            erro_checkin_mobile = "Não foi possível salvar a marcação. Tente novamente."
+            st.query_params.clear()
+            st.query_params["davi"] = "true"
+
+    try:
+        dict_checkins_mobile = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
+    except Exception:
+        dict_checkins_mobile = {}
+        erro_checkin_mobile = "Não foi possível carregar as marcações compartilhadas agora."
+
+    if erro_checkin_mobile:
+        st.error(erro_checkin_mobile)
+
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
     
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
@@ -1519,6 +1635,7 @@ if modo_url == "true":
         destino_step = str(step.get('destino', ''))
         is_start = (i == 0 and destino_step == p_saida)
         classe_card, selo, titulo_card, meta_card, botao_gps, botao_feito = "normal", "ETAPA", destino_step, "", "", ""
+        etapa_marcada = False
 
         if tipo_step == 'lunch':
             classe_card, selo = "almoco", "PAUSA"
@@ -1564,13 +1681,23 @@ if modo_url == "true":
                     f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}</div>"
                 )
             corpo_acoes = status_tempo + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
-            chave_lembrete = html_escape(f"{DATA_REF_ROTA_STR}|{i}|{destino_step}", quote=True)
             rotulo_lembrete = "preparação" if is_start else "parada"
-            concluida_oficialmente = "1" if step.get('is_concluded') else "0"
-            botao_feito = (
-                f"<button class='marcar-feita' data-chave='{chave_lembrete}' data-rotulo='{rotulo_lembrete}' "
-                f"data-oficial='{concluida_oficialmente}' onclick='alternarFeita(this)'>☐ Marcar {rotulo_lembrete} como feita</button>"
-            )
+            checkin_etapa = dict_checkins_mobile.get(i)
+            etapa_marcada = bool(checkin_etapa) or bool(step.get('is_concluded'))
+            if step.get('is_concluded'):
+                botao_feito = "<button class='marcar-feita ativa' data-feita='1' disabled>✅ Concluída no sistema</button>"
+            else:
+                novo_estado = "0" if checkin_etapa else "1"
+                classe_marcacao = " ativa" if checkin_etapa else ""
+                texto_marcacao = (
+                    f"✅ Marcada às {html_escape(checkin_etapa['hora'])} • toque para desfazer"
+                    if checkin_etapa else f"☐ Marcar {rotulo_lembrete} como feita"
+                )
+                link_marcacao = html_escape(f"?davi=true&etapa={i}&feito={novo_estado}", quote=True)
+                botao_feito = (
+                    f"<a class='marcar-feita{classe_marcacao}' data-feita='{'1' if checkin_etapa else '0'}' "
+                    f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
+                )
             if not is_start:
                 if link_gps:
                     botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
@@ -1578,7 +1705,7 @@ if modo_url == "true":
 
         rodape_card = f"<div class='rodape-card'>{botao_feito}{botao_gps}</div>" if botao_feito or botao_gps else ""
         cartoes_mobile.append(
-            f"<article class='cartao {classe_card}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
+            f"<article class='cartao {classe_card}{' feita' if etapa_marcada else ''}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
             f"<h2>{titulo_card}</h2><div class='meta'>{meta_card}</div></div>"
             f"<div class='conteudo-card'>{corpo_acoes}</div>{rodape_card}</article>"
         )
@@ -1620,7 +1747,7 @@ if modo_url == "true":
             .baixa { color:#86efac; font-size:12px; font-weight:800; margin-top:7px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
             .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
-            .marcar-feita { width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; }
+            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
@@ -1631,7 +1758,7 @@ if modo_url == "true":
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
             .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
         </style></head><body>
-            <div class="barra"><span>↔️ Deslize • lembrete local</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
+            <div class="barra"><span>↔️ Deslize • sincronizado</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
             <div id="trilho" class="trilho">__CARTOES__</div>
             <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
         <script>
@@ -1642,21 +1769,15 @@ if modo_url == "true":
             const proxima = document.getElementById('proxima');
             const pontos = document.getElementById('pontos');
             const feitasEl = document.getElementById('feitas');
-            const prefixoLembrete = 'aproar_davi_feita_v1:';
             let atual = 0;
             cartoes.forEach((_, i) => { const p=document.createElement('button'); p.className='ponto'; p.onclick=()=>ir(i); pontos.appendChild(p); });
-            function chaveLocal(botao) { return prefixoLembrete + botao.dataset.chave; }
-            function lerLocal(botao) { try { return localStorage.getItem(chaveLocal(botao)) === '1'; } catch (_) { return botao.dataset.feita === '1'; } }
-            function salvarLocal(botao, feita) { try { if (feita) localStorage.setItem(chaveLocal(botao),'1'); else localStorage.removeItem(chaveLocal(botao)); } catch (_) {} }
             function atualizarFeitas() { const botoes=Array.from(document.querySelectorAll('.marcar-feita')); const total=botoes.length; const feitas=botoes.filter(b=>b.dataset.feita==='1').length; feitasEl.textContent=`${feitas}/${total} ${feitas===1?'feita':'feitas'}`; }
-            function aplicarFeita(botao, feita, persistir=false) { const oficial=botao.dataset.oficial==='1'; feita=oficial||feita; botao.dataset.feita=feita?'1':'0'; botao.classList.toggle('ativa',feita); botao.closest('.cartao').classList.toggle('feita',feita); if(oficial){botao.textContent='✅ Concluída no sistema';botao.disabled=true;}else{botao.textContent=feita?'✅ Marcada como feita':'☐ Marcar '+botao.dataset.rotulo+' como feita';} if(persistir) salvarLocal(botao,feita); atualizarFeitas(); }
-            function alternarFeita(botao) { if(botao.dataset.oficial==='1') return; aplicarFeita(botao,botao.dataset.feita!=='1',true); }
-            function restaurarMarcacoes() { document.querySelectorAll('.marcar-feita').forEach(botao=>aplicarFeita(botao,botao.dataset.oficial==='1'||lerLocal(botao),false)); }
+            function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
             function atualizar(i) { atual=Math.max(0,Math.min(cartoes.length-1,i)); contador.textContent=`${atual+1} de ${cartoes.length}`; anterior.disabled=atual===0; proxima.disabled=atual===cartoes.length-1; Array.from(pontos.children).forEach((p,j)=>p.classList.toggle('ativo',j===atual)); }
             function ir(i) { const indice=Math.max(0,Math.min(cartoes.length-1,i)); const alvo=cartoes[indice]; trilho.scrollTo({left:alvo.offsetLeft-trilho.offsetLeft,behavior:'smooth'}); atualizar(indice); }
             function mover(delta) { ir(atual+delta); }
             let timer; trilho.addEventListener('scroll',()=>{ clearTimeout(timer); timer=setTimeout(()=>{ const centro=trilho.scrollLeft+trilho.clientWidth/2; let melhor=0,dist=Infinity; cartoes.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-centro); if(d<dist){dist=d;melhor=i;} }); atualizar(melhor); },80); },{passive:true});
-            restaurarMarcacoes(); atualizar(0);
+            atualizarFeitas(); atualizar(0);
         </script></body></html>
         """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile)))
         st.components.v1.html(html_carrossel, height=520, scrolling=False)
@@ -1787,6 +1908,7 @@ def inicializar_bd():
         "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
         "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
         "CREATE TABLE IF NOT EXISTS rota_ativa (id SERIAL PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)",
+        SQL_TABELA_CHECKINS_DAVI,
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS horario_matriz TEXT",
         "CREATE INDEX IF NOT EXISTS idx_historico_concluidos_data ON historico_concluidos (data_conclusao)",
@@ -3462,6 +3584,10 @@ with tab_roteiro:
         
         df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
+        try:
+            dict_checkins_torre = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
+        except Exception:
+            dict_checkins_torre = {}
         
         res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
         hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
@@ -3474,6 +3600,13 @@ with tab_roteiro:
         with col_esq:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
             st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
+
+            # Resumo compartilhado: consulta pequena e independente, atualizada
+            # sem recarregar nem escurecer o restante do roteiro.
+            if hasattr(st, "fragment"):
+                st.fragment(run_every="20s")(renderizar_progresso_davi_compartilhado)(route_steps)
+            else:
+                renderizar_progresso_davi_compartilhado(route_steps)
 
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
@@ -3514,6 +3647,15 @@ with tab_roteiro:
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
                         texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n🧭 *GPS:* {link_parada}\n"
+
+                    checkin_davi = dict_checkins_torre.get(i)
+                    if checkin_davi:
+                        st.markdown(
+                            f"<div style='margin:8px 0 12px; padding:9px 12px; border-radius:8px; "
+                            f"background:rgba(22,163,74,.15); border:1px solid rgba(34,197,94,.35); "
+                            f"color:#bbf7d0; font-weight:700;'>☑️ Davi marcou esta etapa como feita às {html_escape(checkin_davi['hora'])}</div>",
+                            unsafe_allow_html=True,
+                        )
                     
                     for acao, t in step['actions']:
                         cor, icone = ("orange", "📦 COLETAR:") if acao == "COLETAR" else ("green", "📬 ENTREGAR:")
