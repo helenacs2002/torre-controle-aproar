@@ -1983,7 +1983,7 @@ except:
 # =====================================================================
 # LÓGICA DE EXTRAÇÃO E AUTOMAÇÃO DO TRELLO
 # =====================================================================
-INTERVALO_TRELLO_SEGUNDOS = 5 * 60
+INTERVALO_TRELLO_SEGUNDOS = 2 * 60
 
 def ler_cache_trello_supabase():
     """Lê a cópia mantida pelo Cron, inclusive quando o Streamlit esteve dormindo."""
@@ -3097,19 +3097,30 @@ if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(
 with st.sidebar:
     st.header("⚙️ Painel de Operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
+    if st.session_state.get("_ultima_rotina_auto"):
+        st.caption(f"🔄 Trello + rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
     
-    # Copia silenciosamente para a sessão os dados que o servidor consulta
-    # no Trello a cada 5 minutos. O fragmento não escurece nem recarrega a tela.
+    # Atualiza o Trello ao vivo a cada 2 minutos enquanto o app estiver aberto.
+    # A leitura é forçada para não depender de um cache antigo do Supabase.
+    # Depois da sincronização, um rerun completo dispara o recálculo automático da rota.
     if "ultima_sincronizacao" not in st.session_state:
         st.session_state.ultima_sincronizacao = 0
-        sincronizar_demandas()
+        if sincronizar_demandas(forcar=True):
+            st.session_state["_recalcular_rota_automatico"] = True
     
     if hasattr(st, "fragment"):
-        @st.fragment(run_every="60s")
+        @st.fragment(run_every="30s")
         def _loop_operacoes():
-            loop_automacoes_background()
-            if time.time() - st.session_state.get("ultima_sincronizacao", 0) > INTERVALO_TRELLO_SEGUNDOS:
-                sincronizar_demandas()
+            tempo_desde_sync = time.time() - st.session_state.get("ultima_sincronizacao", 0)
+            if tempo_desde_sync >= INTERVALO_TRELLO_SEGUNDOS:
+                if sincronizar_demandas(forcar=True):
+                    # Agora o cache já contém a leitura nova; registra baixas antes de recalcular.
+                    loop_automacoes_background()
+                    st.session_state["_recalcular_rota_automatico"] = True
+                    st.session_state["_ultima_rotina_auto"] = datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
+                    st.rerun()
+            else:
+                loop_automacoes_background()
         _loop_operacoes()
 
     st.markdown("---")
@@ -3605,7 +3616,12 @@ with tab_roteiro:
     else:
         txt_botao = "🚀 Calcular Rota Otimizada / Atualizar Rota"
 
-    if st.button(txt_botao, type="primary", disabled=df_ativos.empty):
+    recalculo_automatico = bool(st.session_state.pop("_recalcular_rota_automatico", False))
+    recalculo_manual = st.button(txt_botao, type="primary", disabled=df_ativos.empty)
+
+    if (recalculo_manual or recalculo_automatico) and not df_ativos.empty:
+        if recalculo_automatico:
+            st.toast("🔄 Trello atualizado. Recalculando a rota automaticamente...", icon="🗺️")
         with st.spinner("Analisando histórico e inteligência de nomes para traçar rota..."):
             st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
