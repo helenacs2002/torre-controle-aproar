@@ -78,6 +78,14 @@ def save_df_to_db(df, table_name):
         s.commit()
     df.to_sql(table_name, conn_db.engine, if_exists="append", index=False)
 
+@st.cache_data(ttl=30, show_spinner=False)
+def carregar_abastecimentos_df():
+    return get_df("SELECT * FROM abastecimentos")
+
+@st.cache_data(ttl=30, show_spinner=False)
+def carregar_registro_km_df():
+    return get_df("SELECT * FROM registro_km")
+
 # =====================================================================
 # DICIONÁRIO INTELIGENTE DE SINÔNIMOS E ERROS DE DIGITAÇÃO
 # =====================================================================
@@ -122,6 +130,10 @@ def aplicar_estilo_customizado():
     """, unsafe_allow_html=True)
 
 aplicar_estilo_customizado()
+
+def fragmento_independente(func):
+    """Mantém compatibilidade e evita recarregar o aplicativo inteiro por um formulário."""
+    return st.fragment(func) if hasattr(st, "fragment") else func
 
 # =====================================================================
 # FUNÇÕES DE FORMATAÇÃO E ETA DINÂMICO Waze
@@ -412,42 +424,61 @@ ENDERECOS_PADRAO = [
     ("JP CONSTRUCOES", "Edson Queiroz, Fortaleza - CE")
 ]
 
+@st.cache_resource(show_spinner=False)
 def inicializar_bd():
-    try:
-        queries = [
-            "CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)",
-            "CREATE TABLE IF NOT EXISTS locais_removidos (apelido TEXT PRIMARY KEY)",
-            "CREATE TABLE IF NOT EXISTS config_frota (id SERIAL PRIMARY KEY, consumo REAL, preco_gasolina REAL)",
-            "CREATE TABLE IF NOT EXISTS abastecimentos (id SERIAL PRIMARY KEY, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
-            "CREATE TABLE IF NOT EXISTS registro_km (id SERIAL PRIMARY KEY, data TEXT, km REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
-            "CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)",
-            "CREATE TABLE IF NOT EXISTS rastreio_paradas (id SERIAL PRIMARY KEY, data TEXT, placa TEXT, local TEXT, hora_chegada TEXT, hora_saida TEXT)",
-            "CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))",
-            "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
-            "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
-            "CREATE TABLE IF NOT EXISTS rota_ativa (id SERIAL PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)"
-        ]
-        for q in queries: execute_db(q)
-        
-        execute_db("INSERT INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90) ON CONFLICT (id) DO NOTHING")
-        execute_db("INSERT INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '') ON CONFLICT (setor) DO NOTHING")
-        for sup in set(SUPERVISORES_MAP.values()): 
-            execute_db("INSERT INTO webhooks_teams (setor, url) VALUES (:sup, '') ON CONFLICT (setor) DO NOTHING", {"sup": sup})
-            
+    """Prepara a estrutura do banco uma única vez por processo do aplicativo."""
+    queries = [
+        "CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)",
+        "CREATE TABLE IF NOT EXISTS locais_removidos (apelido TEXT PRIMARY KEY)",
+        "CREATE TABLE IF NOT EXISTS config_frota (id SERIAL PRIMARY KEY, consumo REAL, preco_gasolina REAL)",
+        "CREATE TABLE IF NOT EXISTS abastecimentos (id SERIAL PRIMARY KEY, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
+        "CREATE TABLE IF NOT EXISTS registro_km (id SERIAL PRIMARY KEY, data TEXT, km REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
+        "CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)",
+        "CREATE TABLE IF NOT EXISTS rastreio_paradas (id SERIAL PRIMARY KEY, data TEXT, placa TEXT, local TEXT, hora_chegada TEXT, hora_saida TEXT)",
+        "CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))",
+        "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
+        "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
+        "CREATE TABLE IF NOT EXISTS rota_ativa (id SERIAL PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)",
+        "CREATE INDEX IF NOT EXISTS idx_historico_concluidos_data ON historico_concluidos (data_conclusao)",
+        "CREATE INDEX IF NOT EXISTS idx_inicio_movimento_data ON inicio_movimento (data)",
+        "CREATE INDEX IF NOT EXISTS idx_rastreio_paradas_data_placa ON rastreio_paradas (data, placa)",
+        "CREATE INDEX IF NOT EXISTS idx_rastreio_paradas_abertas ON rastreio_paradas (data, placa, hora_saida)",
+    ]
+
+    # Uma única sessão/commit evita dezenas de viagens separadas até o Supabase.
+    conn_db = get_conn()
+    with conn_db.session as s:
+        for query in queries:
+            s.execute(text(query))
+
+        s.execute(text("INSERT INTO config_frota (id, consumo, preco_gasolina) VALUES (1, 11.5, 5.90) ON CONFLICT (id) DO NOTHING"))
+        s.execute(text("INSERT INTO webhooks_teams (setor, url) VALUES ('Geral / Logística', '') ON CONFLICT (setor) DO NOTHING"))
+        for sup in set(SUPERVISORES_MAP.values()):
+            s.execute(text("INSERT INTO webhooks_teams (setor, url) VALUES (:sup, '') ON CONFLICT (setor) DO NOTHING"), {"sup": sup})
+
+        locais_existentes = {
+            row[0]: row[1]
+            for row in s.execute(text("SELECT apelido, endereco FROM locais")).fetchall()
+        }
+        locais_removidos = {
+            row[0]
+            for row in s.execute(text("SELECT apelido FROM locais_removidos")).fetchall()
+        }
+
         for apelido, end in ENDERECOS_PADRAO:
-            registro = fetch_one("SELECT endereco FROM locais WHERE apelido = :apelido", {"apelido": apelido})
-            if registro:
-                if registro[0] != end: 
-                    execute_db("UPDATE locais SET endereco = :end, lat = NULL, lon = NULL WHERE apelido = :apelido", {"end": end, "apelido": apelido})
-            else: 
-                execute_db("INSERT INTO locais (apelido, endereco) SELECT :apelido, :end WHERE NOT EXISTS (SELECT 1 FROM locais_removidos WHERE apelido = :apelido)", {"apelido": apelido, "end": end})
-                
-        execute_db("DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'")
-        for alias in ALIASES_LOCAL_BASE: 
-            execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:alias, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"alias": alias, "end": LOCAL_BASE_ENDERECO, "lat": LOCAL_BASE_COORDS[0], "lon": LOCAL_BASE_COORDS[1]})
-    except Exception as e:
-        # Se o banco de dados falhar na criação (não configurado nos secrets ainda)
-        pass
+            if apelido in locais_existentes:
+                if locais_existentes[apelido] != end:
+                    s.execute(text("UPDATE locais SET endereco = :end, lat = NULL, lon = NULL WHERE apelido = :apelido"), {"end": end, "apelido": apelido})
+            elif apelido not in locais_removidos:
+                s.execute(text("INSERT INTO locais (apelido, endereco) VALUES (:apelido, :end)"), {"apelido": apelido, "end": end})
+
+        s.execute(text("DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'"))
+        for alias in ALIASES_LOCAL_BASE:
+            s.execute(text("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:alias, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon"), {"alias": alias, "end": LOCAL_BASE_ENDERECO, "lat": LOCAL_BASE_COORDS[0], "lon": LOCAL_BASE_COORDS[1]})
+
+        s.commit()
+
+    return True
 
 # Garante a inicialização segura do banco Supabase
 try:
@@ -933,8 +964,12 @@ with st.sidebar:
         def _loop_operacoes():
             loop_automacoes_background()
             if time.time() - st.session_state.get("ultima_sincronizacao", 0) > 600:
+                demandas_antes = st.session_state.demandas.copy(deep=True)
                 if sincronizar_demandas():
-                    st.rerun()
+                    # O Trello continua sendo consultado a cada 10 minutos, mas
+                    # a tela inteira só recarrega quando os dados realmente mudam.
+                    if not demandas_antes.equals(st.session_state.demandas):
+                        st.rerun()
         _loop_operacoes()
 
     st.markdown("---")
@@ -1084,56 +1119,74 @@ with tab_custos:
     col_recibo, col_km = st.columns(2)
     with col_recibo:
         st.markdown("#### ⛽ Lançar Recibo de Gasto")
-        with st.form("form_recibo", clear_on_submit=True):
-            f_data = st.date_input("Data do Recibo")
-            fc_veic = st.selectbox("Veículo do Gasto", ["Strada", "L200"])
-            fc1, fc2 = st.columns(2)
-            f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
-            f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
-            f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
-            f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
-            if st.form_submit_button("Lançar no Caixa"):
-                execute_db("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (:data, :litros, :valor, :manut, :obs, :veic)", {"data": f_data.strftime("%d/%m/%Y"), "litros": f_litros, "valor": f_valor, "manut": f_manut, "obs": f_obs, "veic": fc_veic})
-                st.success("Recibo salvo com sucesso!")
+
+        @fragmento_independente
+        def formulario_recibo():
+            with st.form("form_recibo", clear_on_submit=True):
+                f_data = st.date_input("Data do Recibo")
+                fc_veic = st.selectbox("Veículo do Gasto", ["Strada", "L200"])
+                fc1, fc2 = st.columns(2)
+                f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
+                f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
+                f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
+                f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
+                if st.form_submit_button("Lançar no Caixa"):
+                    execute_db("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (:data, :litros, :valor, :manut, :obs, :veic)", {"data": f_data.strftime("%d/%m/%Y"), "litros": f_litros, "valor": f_valor, "manut": f_manut, "obs": f_obs, "veic": fc_veic})
+                    carregar_abastecimentos_df.clear()
+                    st.success("Recibo salvo com sucesso!")
+
+        formulario_recibo()
 
     with col_km:
         st.markdown("#### 🛣️ Lançar KMs Avulsos")
-        with st.form("form_km", clear_on_submit=True):
-            k_data = st.date_input("Data da Corrida")
-            k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
-            k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
-            k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
-            if st.form_submit_button("Lançar KMs"):
-                execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": k_data.strftime("%d/%m/%Y"), "km": k_km, "obs": k_obs, "veic": k_veic})
-                st.success(f"{k_km} km salvos com sucesso!")
+
+        @fragmento_independente
+        def formulario_km_avulso():
+            with st.form("form_km", clear_on_submit=True):
+                k_data = st.date_input("Data da Corrida")
+                k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
+                k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
+                k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
+                if st.form_submit_button("Lançar KMs"):
+                    execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": k_data.strftime("%d/%m/%Y"), "km": k_km, "obs": k_obs, "veic": k_veic})
+                    carregar_registro_km_df.clear()
+                    st.success(f"{k_km} km salvos com sucesso!")
+
+        formulario_km_avulso()
 
     st.divider()
     st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
-    with st.form("form_fechamento_km", clear_on_submit=True):
-        col_f1, col_f2 = st.columns([1, 2])
-        f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
-        f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
-        
-        col_f3, col_f4, col_f5, col_f6 = st.columns(4)
-        f_data_ini = col_f3.date_input("Data Inicial")
-        f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
-        f_data_fin = col_f5.date_input("Data Final")
-        f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
-        
-        if st.form_submit_button("Calcular e Lançar Fechamento"):
-            km_rodado = f_km_fin - f_km_ini
-            if km_rodado > 0:
-                obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
-                execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": f_data_fin.strftime("%d/%m/%Y"), "km": km_rodado, "obs": obs_final, "veic": f_veic})
-                st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
-            else:
-                st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
+
+    @fragmento_independente
+    def formulario_fechamento_km():
+        with st.form("form_fechamento_km", clear_on_submit=True):
+            col_f1, col_f2 = st.columns([1, 2])
+            f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
+            f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
+            
+            col_f3, col_f4, col_f5, col_f6 = st.columns(4)
+            f_data_ini = col_f3.date_input("Data Inicial")
+            f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
+            f_data_fin = col_f5.date_input("Data Final")
+            f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
+            
+            if st.form_submit_button("Calcular e Lançar Fechamento"):
+                km_rodado = f_km_fin - f_km_ini
+                if km_rodado > 0:
+                    obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
+                    execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": f_data_fin.strftime("%d/%m/%Y"), "km": km_rodado, "obs": obs_final, "veic": f_veic})
+                    carregar_registro_km_df.clear()
+                    st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
+                else:
+                    st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
+
+    formulario_fechamento_km()
 
     st.divider()
     st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
     mes_atual_str = AGORA_REAL.strftime("%m/%Y")
     
-    df_km = get_df("SELECT * FROM registro_km")
+    df_km = carregar_registro_km_df()
     if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
     df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
     df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
@@ -1141,7 +1194,7 @@ with tab_custos:
     km_strada = df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'].sum() if not df_km_mes.empty else 0.0
     km_l200 = df_km_mes[df_km_mes['veiculo'] == 'L200']['km'].sum() if not df_km_mes.empty else 0.0
     
-    df_abastec = get_df("SELECT * FROM abastecimentos")
+    df_abastec = carregar_abastecimentos_df()
     if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
     df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
     df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
@@ -1203,29 +1256,39 @@ with tab_registros:
     cx_abast, cx_km = st.columns(2)
     with cx_abast:
         st.markdown("**⛽ Combustível e Manutenções**")
-        df_abastec_all = get_df("SELECT * FROM abastecimentos ORDER BY id DESC")
-        if not df_abastec_all.empty:
-            edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
-            if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
-                edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
-                save_df_to_db(edited_abastec_clean, "abastecimentos")
-                st.success("Abastecimentos atualizados na Nuvem com sucesso!")
-                st.rerun()
-        else:
-            st.info("Nenhum abastecimento ou manutenção registrada.")
+
+        @fragmento_independente
+        def editor_abastecimentos():
+            df_abastec_all = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
+            if not df_abastec_all.empty:
+                edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
+                if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
+                    edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
+                    save_df_to_db(edited_abastec_clean, "abastecimentos")
+                    carregar_abastecimentos_df.clear()
+                    st.success("Abastecimentos atualizados na Nuvem com sucesso!")
+            else:
+                st.info("Nenhum abastecimento ou manutenção registrada.")
+
+        editor_abastecimentos()
             
     with cx_km:
         st.markdown("**🛣️ Quilometragem Rodada**")
-        df_km_all = get_df("SELECT * FROM registro_km ORDER BY id DESC")
-        if not df_km_all.empty:
-            edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
-            if st.button("💾 Salvar Alterações (KM)", type="primary"):
-                edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
-                save_df_to_db(edited_km_clean, "registro_km")
-                st.success("KMs atualizados na Nuvem com sucesso!")
-                st.rerun()
-        else:
-            st.info("Nenhuma quilometragem registrada.")
+
+        @fragmento_independente
+        def editor_quilometragem():
+            df_km_all = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
+            if not df_km_all.empty:
+                edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
+                if st.button("💾 Salvar Alterações (KM)", type="primary"):
+                    edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
+                    save_df_to_db(edited_km_clean, "registro_km")
+                    carregar_registro_km_df.clear()
+                    st.success("KMs atualizados na Nuvem com sucesso!")
+            else:
+                st.info("Nenhuma quilometragem registrada.")
+
+        editor_quilometragem()
 
 with tab_roteiro:
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR): st.session_state['rota_gerada'] = False
@@ -1535,6 +1598,7 @@ with tab_roteiro:
                 veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
                 if st.form_submit_button("Gravar KM no Painel de Custos"):
                     execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
+                    carregar_registro_km_df.clear()
                     st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento} na Nuvem!")
 
             url_geral, _ = obter_webhook_teams("Geral / Logística")
