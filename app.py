@@ -110,7 +110,15 @@ def aplicar_estilo_customizado():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        html, body, [class*="css"], .stMarkdown, .stText, p, span, div, h1, h2, h3, h4, h5, h6 { font-family: 'Inter', sans-serif !important; color: #e4e8f4; }
+        html, body, [class*="css"], .stMarkdown, .stText, p, div, h1, h2, h3, h4, h5, h6 { font-family: 'Inter', sans-serif !important; color: #e4e8f4; }
+        /* Ícones do Streamlit usam uma fonte própria. Forçar Inter nos spans
+           fazia nomes como keyboard_arrow_right aparecerem como texto. */
+        span[data-testid="stIconMaterial"], .material-symbols-rounded, .material-symbols-outlined {
+            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+            font-weight: normal !important; font-style: normal !important;
+            letter-spacing: normal !important; text-transform: none !important;
+            white-space: nowrap !important; word-wrap: normal !important;
+        }
         [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
         [data-testid="stSidebar"] { background-color: #0b0e1e !important; border-right: 1px solid rgba(64,116,146,.15) !important; }
         [data-testid="stHeader"] { background-color: rgba(7, 9, 19, 0.8) !important; backdrop-filter: blur(8px); }
@@ -159,22 +167,58 @@ def format_time(minutes):
 def format_mins_to_time(mins):
     return f"{int(mins) // 60:02d}:{int(mins) % 60:02d}"
 
+def _limpar_texto_relatorio(valor):
+    if valor is None:
+        return ""
+    if isinstance(valor, (dict, list, tuple, set)):
+        valor = json.dumps(valor, ensure_ascii=False, default=str)
+    texto = str(valor)
+    # Imagens anexadas pelo Trello não agregam ao relatório e deixavam URLs
+    # enormes no meio dos materiais.
+    texto = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", texto)
+    texto = re.sub(r"\s*\|\s*", " • ", texto)
+    texto = re.sub(r"[\t\r\n]+", " ", texto)
+    texto = re.sub(r"\s{2,}", " ", texto).strip(" •")
+    return texto
+
 def _normalizar_tabelas_relatorio(dados):
-    """Padroniza uma ou várias tabelas para exportação sem alterar os dados da tela."""
+    """Entrega relatórios limpos, com rótulos amigáveis e sem campos técnicos."""
     itens = [("Dados", dados)] if isinstance(dados, pd.DataFrame) else list((dados or {}).items())
+    colunas_tecnicas = {"id", "data_dt", "json_route", "json_locais", "json_geometria", "json_enderecos"}
+    nomes_amigaveis = {
+        "Urgência": "Prazo",
+        "Peso": "Prioridade (1-5)",
+        "Tempo_Coleta": "Tempo de coleta (min)",
+        "Tempo_Entrega": "Tempo de entrega (min)",
+        "obs": "Observação",
+        "data": "Data",
+        "km": "KM",
+        "litros": "Litros",
+        "valor_litro": "Valor por litro (R$)",
+        "manutencao": "Manutenção (R$)",
+        "veiculo": "Veículo",
+        "apelido": "Local",
+        "endereco": "Endereço",
+        "lat": "Latitude",
+        "lon": "Longitude",
+        "🟢 Início da Rota (Hoje)": "Início da rota (hoje)",
+        "Última atualização": "Última atualização",
+        "Velocidade (km/h)": "Velocidade (km/h)",
+    }
     tabelas = []
     for nome, tabela in itens:
         if tabela is None:
             continue
         df = tabela.copy() if isinstance(tabela, pd.DataFrame) else pd.DataFrame(tabela)
+        remover = [coluna for coluna in df.columns if str(coluna).strip().lower() in colunas_tecnicas]
+        df = df.drop(columns=remover, errors="ignore").rename(columns=nomes_amigaveis)
         for coluna in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df[coluna]):
                 df[coluna] = df[coluna].dt.strftime("%d/%m/%Y %H:%M").fillna("")
             elif df[coluna].dtype == "object":
-                df[coluna] = df[coluna].map(
-                    lambda valor: json.dumps(valor, ensure_ascii=False, default=str)
-                    if isinstance(valor, (dict, list, tuple, set)) else valor
-                )
+                df[coluna] = df[coluna].map(_limpar_texto_relatorio)
+        df = df.dropna(axis=1, how="all")
+        df = df.loc[:, [coluna for coluna in df.columns if not (df[coluna].astype(str).str.strip() == "").all()]]
         tabelas.append((str(nome), df.fillna("")))
     return tabelas or [("Dados", pd.DataFrame({"Informação": ["Nenhum registro disponível."]}))]
 
@@ -290,16 +334,152 @@ def _criar_xlsx_basico(tabelas):
     return saida.getvalue()
 
 def _criar_excel_relatorio(tabelas):
-    for motor in ("xlsxwriter", "openpyxl"):
-        try:
-            saida = io.BytesIO()
-            with pd.ExcelWriter(saida, engine=motor) as escritor:
-                usados = set()
-                for nome, df in tabelas:
-                    df.to_excel(escritor, sheet_name=_nome_aba_excel(nome, usados), index=False)
-            return saida.getvalue()
-        except (ImportError, ModuleNotFoundError):
-            continue
+    def coluna_data_excel(coluna):
+        nome = remover_acentos(str(coluna)).lower().strip()
+        if "quantidade" in nome or "contagem" in nome:
+            return False
+        return (
+            "data" in nome or nome.startswith("dt.") or nome.startswith("dt ")
+            or "limite d+4" in nome or "prazo final" in nome
+        )
+
+    def preparar_datas_excel(df):
+        preparado = df.copy()
+        for coluna in preparado.columns:
+            if not coluna_data_excel(coluna):
+                continue
+            try:
+                convertida = pd.to_datetime(preparado[coluna], dayfirst=True, errors="coerce", format="mixed")
+            except (TypeError, ValueError):
+                convertida = pd.to_datetime(preparado[coluna], dayfirst=True, errors="coerce")
+            preenchidos = preparado[coluna].astype(str).str.strip() != ""
+            if preenchidos.any() and convertida[preenchidos].notna().mean() >= 0.8:
+                preparado[coluna] = convertida
+        return preparado
+
+    def coluna_identificador(coluna):
+        nome = remover_acentos(str(coluna)).lower()
+        return any(chave in nome for chave in ("numero da oc", "numero da cotacao", "solicitacoes"))
+
+    try:
+        saida = io.BytesIO()
+        with pd.ExcelWriter(
+            saida, engine="xlsxwriter", date_format="dd/mm/yyyy", datetime_format="dd/mm/yyyy",
+            engine_kwargs={"options": {"strings_to_formulas": False, "strings_to_urls": False}},
+        ) as escritor:
+            workbook = escritor.book
+            titulo_fmt = workbook.add_format({"bold": True, "font_size": 16, "font_color": "#FFFFFF", "bg_color": "#173B72", "align": "left", "valign": "vcenter"})
+            meta_fmt = workbook.add_format({"font_size": 9, "font_color": "#64748B", "italic": True})
+            texto_fmt = workbook.add_format({"valign": "top", "text_wrap": True})
+            moeda_fmt = workbook.add_format({"num_format": 'R$ #,##0.00', "valign": "top"})
+            numero_fmt = workbook.add_format({"num_format": '#,##0.00', "valign": "top"})
+            data_fmt = workbook.add_format({"num_format": 'dd/mm/yyyy', "valign": "top"})
+            identificador_fmt = workbook.add_format({"num_format": "@", "valign": "top", "text_wrap": True})
+            usados = set()
+
+            for nome, df_original in tabelas:
+                df = preparar_datas_excel(df_original)
+                nome_aba = _nome_aba_excel(nome, usados)
+                df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=3)
+                worksheet = escritor.sheets[nome_aba]
+                ultima_coluna = max(0, len(df.columns) - 1)
+                aba_de_dados = nome_aba in {"Base Completa", "OCs Fora do Prazo", "OCs Ignoradas"}
+                if ultima_coluna and not aba_de_dados:
+                    worksheet.merge_range(0, 0, 0, ultima_coluna, str(nome), titulo_fmt)
+                else:
+                    worksheet.write(0, 0, str(nome), titulo_fmt)
+                    for coluna_titulo in range(1, ultima_coluna + 1): worksheet.write_blank(0, coluna_titulo, None, titulo_fmt)
+                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} registro(s)", meta_fmt)
+                worksheet.set_row(0, 27)
+                worksheet.set_row(3, 26)
+                worksheet.freeze_panes(4, 0)
+                worksheet.hide_gridlines(2)
+                worksheet.set_landscape()
+                worksheet.fit_to_pages(1, 0)
+                worksheet.set_margins(0.35, 0.35, 0.55, 0.55)
+                worksheet.set_footer("&LAPROAR Engenharia&CRelatório operacional&R Página &P de &N")
+
+                if len(df.columns):
+                    if len(df):
+                        worksheet.add_table(3, 0, 3 + len(df), ultima_coluna, {
+                            "name": f"Tabela_{len(usados)}_{re.sub(r'[^A-Za-z0-9]', '', nome_aba)[:15] or 'Dados'}",
+                            "style": "Table Style Medium 2",
+                            "columns": [{"header": str(coluna)} for coluna in df.columns],
+                        })
+                    else:
+                        cabecalho_fmt = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "center"})
+                        worksheet.set_row(3, 25, cabecalho_fmt)
+
+                    for indice, coluna in enumerate(df.columns):
+                        valores = df[coluna].astype(str).head(250).tolist()
+                        maior = max([len(str(coluna))] + [len(valor) for valor in valores])
+                        nome_coluna = remover_acentos(str(coluna)).lower()
+                        longa = any(chave in nome_coluna for chave in ("material", "endereco", "observacao", "motivo"))
+                        largura = 48 if longa else min(32, max(12, maior + 2))
+                        formato = identificador_fmt if coluna_identificador(coluna) else data_fmt if coluna_data_excel(coluna) else moeda_fmt if "r$" in nome_coluna or "custo" in nome_coluna or "valor" in nome_coluna or "manutencao" in nome_coluna else numero_fmt if nome_coluna in {"km", "litros", "distancia (km)"} else texto_fmt
+                        worksheet.set_column(indice, indice, largura, formato)
+                        if coluna_identificador(coluna):
+                            for deslocamento, valor in enumerate(df[coluna].tolist(), start=4):
+                                texto_valor = "" if pd.isna(valor) else str(valor)
+                                worksheet.write_string(deslocamento, indice, texto_valor, identificador_fmt)
+
+                    for linha, valores in enumerate(df.astype(str).values.tolist(), start=4):
+                        maior_texto = max([len(valor) for valor in valores] + [0])
+                        worksheet.set_row(linha, min(72, 18 + 12 * max(0, maior_texto // 70)))
+
+                    for indice, coluna in enumerate(df.columns):
+                        if "status" in remover_acentos(str(coluna)).lower() and len(df):
+                            intervalo = (4, indice, 3 + len(df), indice)
+                            worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Dentro", "format": workbook.add_format({"bg_color": "#DCFCE7", "font_color": "#166534"})})
+                            worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Conclu", "format": workbook.add_format({"bg_color": "#DCFCE7", "font_color": "#166534"})})
+                            worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Fora", "format": workbook.add_format({"bg_color": "#FEE2E2", "font_color": "#991B1B"})})
+                            worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Sem Recebimento", "format": workbook.add_format({"bg_color": "#E2E8F0", "font_color": "#334155"})})
+                            worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Pend", "format": workbook.add_format({"bg_color": "#FEF3C7", "font_color": "#92400E"})})
+                        if "observacao" in remover_acentos(str(coluna)).lower() and len(df):
+                            intervalo = (4, indice, 3 + len(df), indice)
+                            worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "corre", "format": workbook.add_format({"bg_color": "#FEF3C7", "font_color": "#92400E"})})
+        return saida.getvalue()
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    try:
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        saida = io.BytesIO()
+        with pd.ExcelWriter(saida, engine="openpyxl") as escritor:
+            usados = set()
+            for nome, df_original in tabelas:
+                df = preparar_datas_excel(df_original)
+                nome_aba = _nome_aba_excel(nome, usados)
+                df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=3)
+                ws = escritor.sheets[nome_aba]
+                ultima_coluna = max(1, len(df.columns))
+                if nome_aba not in {"Base Completa", "OCs Fora do Prazo", "OCs Ignoradas"}:
+                    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ultima_coluna)
+                ws.cell(1, 1, str(nome))
+                ws.cell(1, 1).font = Font(bold=True, size=16, color="FFFFFF")
+                for coluna_titulo in range(1, ultima_coluna + 1): ws.cell(1, coluna_titulo).fill = PatternFill("solid", fgColor="173B72")
+                ws.cell(2, 1, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} registro(s)")
+                ws.cell(2, 1).font = Font(size=9, italic=True, color="64748B")
+                ws.freeze_panes = "A5"
+                ws.sheet_view.showGridLines = False
+                ws.auto_filter.ref = f"A4:{get_column_letter(ultima_coluna)}{max(4, 4 + len(df))}"
+                for celula in ws[4]:
+                    celula.font = Font(bold=True, color="FFFFFF")
+                    celula.fill = PatternFill("solid", fgColor="2563EB")
+                    celula.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                for indice, coluna in enumerate(df.columns, start=1):
+                    valores = df[coluna].astype(str).head(250).tolist()
+                    maior = max([len(str(coluna))] + [len(valor) for valor in valores])
+                    longa = any(chave in remover_acentos(str(coluna)).lower() for chave in ("material", "endereco", "observacao", "motivo"))
+                    ws.column_dimensions[get_column_letter(indice)].width = 48 if longa else min(32, max(12, maior + 2))
+                    for linha in range(5, 5 + len(df)):
+                        ws.cell(linha, indice).alignment = Alignment(vertical="top", wrap_text=True)
+                        if coluna_data_excel(coluna): ws.cell(linha, indice).number_format = "dd/mm/yyyy"
+                        if coluna_identificador(coluna): ws.cell(linha, indice).number_format = "@"
+        return saida.getvalue()
+    except (ImportError, ModuleNotFoundError):
+        pass
     return _criar_xlsx_basico(tabelas)
 
 def _texto_pdf(valor):
@@ -310,13 +490,20 @@ def _texto_pdf(valor):
         for byte in bytes_texto
     )
 
-def _criar_pdf_relatorio(titulo, tabelas):
-    linhas = [titulo, f"Gerado em: {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y %H:%M')}", ""]
+def _criar_pdf_textual(titulo, tabelas):
+    """Contingência legível para ambientes sem ReportLab."""
+    linhas = ["APROAR ENGENHARIA", titulo, f"Gerado em: {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y %H:%M')}", ""]
     for nome, df in tabelas:
-        linhas.extend([f"== {nome} ==", " | ".join(map(str, df.columns))])
-        for valores in df.astype(str).values.tolist():
-            texto_linha = " | ".join(valores)
-            linhas.extend(textwrap.wrap(texto_linha, width=105, break_long_words=True, replace_whitespace=False) or [""])
+        linhas.extend([str(nome).upper(), f"{len(df)} registro(s)", ""])
+        if df.empty:
+            linhas.extend(["Nenhum registro disponível.", ""])
+            continue
+        for numero, (_, registro) in enumerate(df.iterrows(), start=1):
+            linhas.append(f"REGISTRO {numero:02d}")
+            for coluna, valor in registro.items():
+                texto_linha = f"{coluna}: {valor}".replace("—", "-").replace("–", "-").replace("•", "-")
+                linhas.extend(textwrap.wrap(texto_linha, width=92, subsequent_indent="  ", break_long_words=True) or [""])
+            linhas.append("")
         linhas.append("")
 
     paginas = [linhas[i:i + 54] for i in range(0, len(linhas), 54)] or [[titulo]]
@@ -345,6 +532,163 @@ def _criar_pdf_relatorio(titulo, tabelas):
     arquivo.extend(f"trailer\n<< /Size {len(objetos)+1} /Root 1 0 R >>\nstartxref\n{inicio_xref}\n%%EOF".encode("ascii"))
     return bytes(arquivo)
 
+def _criar_pdf_relatorio(titulo, tabelas):
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except (ImportError, ModuleNotFoundError):
+        return _criar_pdf_textual(titulo, tabelas)
+
+    def texto_pdf_limpo(valor):
+        return str(valor).replace("—", "-").replace("–", "-").replace("‑", "-").replace("•", "-")
+
+    def paragrafo(valor, estilo):
+        texto = html_escape(texto_pdf_limpo(valor)).replace("\n", "<br/>")
+        return Paragraph(texto or "-", estilo)
+
+    azul_escuro = colors.HexColor("#173B72")
+    azul = colors.HexColor("#2563EB")
+    azul_claro = colors.HexColor("#EFF6FF")
+    cinza_fundo = colors.HexColor("#F8FAFC")
+    cinza_borda = colors.HexColor("#D8E1EC")
+    cinza_texto = colors.HexColor("#475569")
+    largura_util = A4[0] - 30 * mm
+
+    estilos = getSampleStyleSheet()
+    estilo_titulo = ParagraphStyle("TituloAproar", parent=estilos["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=azul_escuro, alignment=TA_LEFT, spaceAfter=5)
+    estilo_meta = ParagraphStyle("MetaAproar", parent=estilos["Normal"], fontName="Helvetica", fontSize=8.5, leading=11, textColor=cinza_texto, spaceAfter=12)
+    estilo_secao = ParagraphStyle("SecaoAproar", parent=estilos["Heading2"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=colors.white, backColor=azul, borderPadding=(6, 8, 6, 8), spaceBefore=5, spaceAfter=7)
+    estilo_cabecalho = ParagraphStyle("CabecalhoTabela", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.5, leading=9, textColor=colors.white, alignment=TA_CENTER)
+    estilo_celula = ParagraphStyle("CelulaTabela", parent=estilos["Normal"], fontName="Helvetica", fontSize=7.3, leading=9.2, textColor=colors.HexColor("#1E293B"))
+    estilo_rotulo = ParagraphStyle("RotuloCard", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.3, leading=9, textColor=azul_escuro)
+    estilo_valor = ParagraphStyle("ValorCard", parent=estilos["Normal"], fontName="Helvetica", fontSize=7.8, leading=10, textColor=colors.HexColor("#1E293B"))
+    estilo_card_titulo = ParagraphStyle("TituloCard", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=9, leading=11, textColor=colors.white)
+    estilo_vazio = ParagraphStyle("Vazio", parent=estilos["Normal"], fontName="Helvetica-Oblique", fontSize=8.5, textColor=cinza_texto)
+
+    titulo_limpo = texto_pdf_limpo(titulo)
+    total_registros = sum(len(df) for _, df in tabelas)
+    saida = io.BytesIO()
+    documento = SimpleDocTemplate(
+        saida, pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm,
+        topMargin=23 * mm, bottomMargin=16 * mm,
+        title=titulo_limpo, author="APROAR Engenharia",
+    )
+
+    def cabecalho_rodape(canvas, doc):
+        largura, altura = A4
+        canvas.saveState()
+        canvas.setFillColor(azul_escuro)
+        canvas.rect(0, altura - 14 * mm, largura, 14 * mm, stroke=0, fill=1)
+        canvas.setFillColor(colors.white)
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.drawString(15 * mm, altura - 9 * mm, "APROAR ENGENHARIA")
+        canvas.setFont("Helvetica", 7.5)
+        canvas.drawRightString(largura - 15 * mm, altura - 9 * mm, "Torre de Controle Logístico")
+        canvas.setStrokeColor(cinza_borda)
+        canvas.line(15 * mm, 11 * mm, largura - 15 * mm, 11 * mm)
+        canvas.setFillColor(cinza_texto)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(15 * mm, 7 * mm, "Relatório operacional")
+        canvas.drawRightString(largura - 15 * mm, 7 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    elementos = [
+        Paragraph(html_escape(titulo_limpo), estilo_titulo),
+        Paragraph(
+            f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} &nbsp;&nbsp;|&nbsp;&nbsp; {total_registros} registro(s)",
+            estilo_meta,
+        ),
+    ]
+
+    for nome, df in tabelas:
+        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome))} &nbsp; • &nbsp; {len(df)} registro(s)", estilo_secao))
+        if df.empty or not len(df.columns):
+            elementos.extend([Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio), Spacer(1, 8)])
+            continue
+
+        maximo_texto = max([len(str(valor)) for valor in df.astype(str).head(100).values.flatten()] + [0])
+        usar_tabela = len(df.columns) <= 6 and maximo_texto <= 45
+
+        if usar_tabela:
+            pesos = []
+            for coluna in df.columns:
+                amostra = [len(str(coluna))] + [len(str(valor)) for valor in df[coluna].astype(str).head(100)]
+                pesos.append(max(8, min(28, max(amostra))))
+            total_pesos = sum(pesos) or 1
+            larguras = [largura_util * peso / total_pesos for peso in pesos]
+            dados_tabela = [[paragrafo(coluna, estilo_cabecalho) for coluna in df.columns]]
+            dados_tabela.extend([[paragrafo(valor, estilo_celula) for valor in linha] for linha in df.astype(str).values.tolist()])
+            tabela = Table(dados_tabela, colWidths=larguras, repeatRows=1, hAlign="LEFT")
+            comandos = [
+                ("BACKGROUND", (0, 0), (-1, 0), azul_escuro),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
+            ]
+            for linha in range(1, len(dados_tabela)):
+                comandos.append(("BACKGROUND", (0, linha), (-1, linha), cinza_fundo if linha % 2 == 0 else colors.white))
+            tabela.setStyle(TableStyle(comandos))
+            elementos.extend([tabela, Spacer(1, 10)])
+            continue
+
+        chaves_titulo = ["Obra", "Placa", "Veículo", "Local", "Data", "Destino"]
+        campos_longos = ("material", "endereco", "observacao", "motivo", "descrição")
+        for numero, (_, registro) in enumerate(df.iterrows(), start=1):
+            chave_principal = next((chave for chave in chaves_titulo if chave in df.columns and str(registro.get(chave, "")).strip()), None)
+            titulo_registro = f"Registro {numero:02d}"
+            if chave_principal:
+                titulo_registro += f" - {registro.get(chave_principal, '')}"
+            linhas_card = [[paragrafo(titulo_registro, estilo_card_titulo), "", "", ""]]
+            compactos, longos = [], []
+            for coluna, valor in registro.items():
+                valor_texto = str(valor).strip()
+                if not valor_texto:
+                    continue
+                coluna_normalizada = remover_acentos(str(coluna)).lower()
+                if len(valor_texto) > 70 or any(chave in coluna_normalizada for chave in campos_longos):
+                    longos.append((coluna, valor_texto))
+                else:
+                    compactos.append((coluna, valor_texto))
+            for inicio in range(0, len(compactos), 2):
+                par = compactos[inicio:inicio + 2]
+                linha = [paragrafo(par[0][0], estilo_rotulo), paragrafo(par[0][1], estilo_valor)]
+                linha += [paragrafo(par[1][0], estilo_rotulo), paragrafo(par[1][1], estilo_valor)] if len(par) > 1 else ["", ""]
+                linhas_card.append(linha)
+            indices_longos = []
+            for coluna, valor in longos:
+                indices_longos.append(len(linhas_card))
+                linhas_card.append([paragrafo(coluna, estilo_rotulo), paragrafo(valor, estilo_valor), "", ""])
+
+            tabela_card = Table(linhas_card, colWidths=[31 * mm, 61 * mm, 31 * mm, 61 * mm], hAlign="LEFT", repeatRows=1)
+            comandos = [
+                ("SPAN", (0, 0), (3, 0)), ("BACKGROUND", (0, 0), (3, 0), azul_escuro),
+                ("BOX", (0, 0), (3, -1), 0.6, cinza_borda),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("BACKGROUND", (0, 1), (0, -1), azul_claro),
+                ("BACKGROUND", (2, 1), (2, -1), azul_claro),
+                ("LINEBELOW", (0, 1), (-1, -2), 0.3, cinza_borda),
+            ]
+            for indice_longo in indices_longos:
+                comandos.extend([
+                    ("SPAN", (1, indice_longo), (3, indice_longo)),
+                    ("BACKGROUND", (0, indice_longo), (0, indice_longo), azul_claro),
+                    ("BACKGROUND", (1, indice_longo), (3, indice_longo), cinza_fundo),
+                ])
+            tabela_card.setStyle(TableStyle(comandos))
+            elementos.extend([tabela_card, Spacer(1, 7)])
+        elementos.append(Spacer(1, 4))
+
+    documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
+    return saida.getvalue()
+
 def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
     st.markdown("##### 📤 Exportar relatório")
     col_formato, col_download = st.columns([1, 2])
@@ -365,6 +709,18 @@ def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
 @fragmento_independente
 def renderizar_exportador(titulo, dados, nome_arquivo, chave):
     _conteudo_exportador(titulo, dados, nome_arquivo, chave)
+
+@fragmento_independente
+def renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave):
+    mostrar = st.checkbox(f"Ver lançamentos da {veiculo}", key=f"mostrar_fechamento_{chave}")
+    if not mostrar:
+        return
+    st.caption("Combustível e manutenções do mês")
+    if gastos.empty: st.info("Nenhum gasto lançado no mês.")
+    else: st.dataframe(gastos, use_container_width=True, hide_index=True)
+    st.caption("Quilometragens do mês")
+    if quilometragem.empty: st.info("Nenhuma quilometragem lançada no mês.")
+    else: st.dataframe(quilometragem, use_container_width=True, hide_index=True)
 
 def montar_relatorio_rota(route_steps, concluidos):
     linhas, numero_parada = [], 0
@@ -388,6 +744,492 @@ def montar_relatorio_rota(route_steps, concluidos):
                 "Status": f"Concluída às {concluidos[card_id]}" if card_id in concluidos else "Pendente",
             })
     return pd.DataFrame(linhas)
+
+def _normalizar_chave_sla(valor):
+    texto = remover_acentos(str(valor or "")).lower()
+    return re.sub(r"[^a-z0-9]+", " ", texto).strip()
+
+def _preparar_tabela_sla(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    tabela = df.copy()
+    tabela.columns = [re.sub(r"\s+", " ", str(coluna or "").replace("\n", " ")).strip() for coluna in tabela.columns]
+    tabela = tabela.loc[:, [coluna for coluna in tabela.columns if coluna and not coluna.lower().startswith("unnamed")]]
+    tabela = tabela.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if not tabela.empty:
+        cabecalhos = {_normalizar_chave_sla(coluna) for coluna in tabela.columns}
+        tabela = tabela[~tabela.apply(lambda linha: sum(_normalizar_chave_sla(valor) in cabecalhos for valor in linha) >= max(2, len(tabela.columns) // 2), axis=1)]
+    return tabela.reset_index(drop=True)
+
+@st.cache_data(show_spinner=False)
+def ler_relatorio_sla(nome_arquivo, conteudo):
+    extensao = os.path.splitext(nome_arquivo.lower())[1]
+    if extensao == ".csv":
+        ultimo_erro = None
+        for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+            try:
+                return _preparar_tabela_sla(pd.read_csv(io.BytesIO(conteudo), sep=None, engine="python", encoding=encoding))
+            except Exception as erro:
+                ultimo_erro = erro
+        raise ValueError(f"Não foi possível ler o CSV: {ultimo_erro}")
+    if extensao in (".xlsx", ".xls"):
+        planilhas = pd.read_excel(io.BytesIO(conteudo), sheet_name=None)
+        candidatas = [_preparar_tabela_sla(df) for df in planilhas.values()]
+        candidatas = [df for df in candidatas if not df.empty]
+        if not candidatas:
+            raise ValueError("A planilha não possui uma tabela preenchida.")
+        return max(candidatas, key=lambda df: len(df) * max(1, len(df.columns)))
+    if extensao == ".pdf":
+        try:
+            import pdfplumber
+        except (ImportError, ModuleNotFoundError):
+            raise ValueError("Para importar PDF, adicione pdfplumber às dependências do aplicativo ou envie o relatório em Excel/CSV.")
+        tabelas = []
+        with pdfplumber.open(io.BytesIO(conteudo)) as pdf:
+            for pagina in pdf.pages:
+                for tabela in pagina.extract_tables() or []:
+                    linhas = [[str(valor or "").replace("\n", " ").strip() for valor in linha] for linha in tabela if linha]
+                    if len(linhas) < 2:
+                        continue
+                    indice_cabecalho = max(range(min(3, len(linhas))), key=lambda i: sum(bool(valor) for valor in linhas[i]))
+                    cabecalho = linhas[indice_cabecalho]
+                    if sum(bool(valor) for valor in cabecalho) < 2:
+                        continue
+                    nomes, usados = [], {}
+                    for posicao, nome in enumerate(cabecalho):
+                        base = nome or f"Coluna {posicao + 1}"
+                        usados[base] = usados.get(base, 0) + 1
+                        nomes.append(base if usados[base] == 1 else f"{base} {usados[base]}")
+                    dados = [linha[:len(nomes)] + [""] * max(0, len(nomes) - len(linha)) for linha in linhas[indice_cabecalho + 1:]]
+                    quadro = _preparar_tabela_sla(pd.DataFrame(dados, columns=nomes))
+                    if not quadro.empty:
+                        tabelas.append(quadro)
+        if not tabelas:
+            raise ValueError("Não encontrei uma tabela estruturada nesse PDF. Exporte o mesmo relatório em Excel ou CSV para garantir a leitura.")
+        return _preparar_tabela_sla(pd.concat(tabelas, ignore_index=True, sort=False))
+    raise ValueError("Formato não suportado. Use PDF, Excel ou CSV.")
+
+def _localizar_coluna_sla(df, candidatos, obrigatoria=False, nome_campo="campo"):
+    colunas = {coluna: _normalizar_chave_sla(coluna) for coluna in df.columns}
+    candidatos_norm = [_normalizar_chave_sla(candidato) for candidato in candidatos]
+    for candidato in candidatos_norm:
+        for coluna, normalizada in colunas.items():
+            if normalizada == candidato:
+                return coluna
+    for candidato in candidatos_norm:
+        if len(candidato) < 3:
+            continue
+        for coluna, normalizada in colunas.items():
+            if candidato in normalizada:
+                return coluna
+    if obrigatoria:
+        disponiveis = ", ".join(map(str, df.columns[:15]))
+        raise ValueError(f"Não identifiquei a coluna de {nome_campo}. Colunas encontradas: {disponiveis}")
+    return None
+
+def _texto_documento_sla(valor):
+    if valor is None or (isinstance(valor, float) and math.isnan(valor)):
+        return ""
+    texto = str(valor).strip()
+    if re.fullmatch(r"\d+\.0", texto):
+        texto = texto[:-2]
+    return texto
+
+def _numero_oc_sla(valor):
+    texto = _texto_documento_sla(valor)
+    encontrado = re.search(r"\d+", texto)
+    return encontrado.group(0) if encontrado else texto.upper()
+
+def _solicitacoes_sla(valor):
+    texto = _texto_documento_sla(valor)
+    numeros = re.findall(r"(?<!\d)\d{1,10}(?!\d)", texto)
+    return list(dict.fromkeys(numero.zfill(6) if len(numero) <= 6 else numero for numero in numeros))
+
+def _data_sla(valor):
+    if valor is None or valor == "":
+        return pd.NaT
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool) and 20000 < float(valor) < 80000:
+        return pd.Timestamp("1899-12-30") + pd.to_timedelta(float(valor), unit="D")
+    return pd.to_datetime(valor, dayfirst=True, errors="coerce")
+
+def _moeda_sla(valor):
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return float(valor)
+    texto = re.sub(r"[^0-9,.-]", "", str(valor or ""))
+    if "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    try:
+        return float(texto)
+    except (TypeError, ValueError):
+        return 0.0
+
+def _primeiro_preenchido_sla(valores):
+    for valor in valores:
+        texto = _texto_documento_sla(valor)
+        if texto:
+            return texto
+    return ""
+
+def _juntar_unicos_sla(valores, separador=" / "):
+    unicos = []
+    for valor in valores:
+        texto = _texto_documento_sla(valor)
+        if texto and texto not in unicos:
+            unicos.append(texto)
+    return separador.join(unicos)
+
+def _motivos_exclusao_sla(descricao, fornecedor):
+    original = f"{descricao} {fornecedor}"
+    normalizado = _normalizar_chave_sla(original)
+    motivos = []
+    if re.search(r"\[\s*ff\s*\]", original, re.IGNORECASE): motivos.append("[FF]")
+    if "tele entulho" in normalizado: motivos.append("Tele Entulho")
+    if re.search(r"\[\s*estoque\s*\]", original, re.IGNORECASE): motivos.append("[ESTOQUE]")
+    descricao_limpa = _normalizar_chave_sla(descricao)
+    tokens = descricao_limpa.split()
+    if re.search(r"\[\s*pg\s*\]", str(descricao), re.IGNORECASE) or (tokens and (tokens[0] == "pg" or tokens[-1] == "pg")):
+        motivos.append("[PG]")
+    return " / ".join(motivos)
+
+def _mapa_solicitacoes_sla(df, fonte):
+    if df is None or df.empty:
+        return {}, {}, set()
+    coluna_numero = _localizar_coluna_sla(df, ["Número da Solicitação", "Nº Solicitação", "Solicitação", "Código da Solicitação", "Número"])
+    coluna_necessidade = _localizar_coluna_sla(df, ["Data de Necessidade", "Necessidade"])
+    coluna_criacao = _localizar_coluna_sla(df, ["Criação da Solicitação", "Data da Solicitação", "Solicitação em", "Criação"])
+    if not coluna_numero:
+        return {}, {}, set()
+    mapa, criacoes, numeros = {}, {}, set()
+    for _, linha in df.iterrows():
+        solicitacoes = _solicitacoes_sla(linha.get(coluna_numero, ""))
+        necessidade = _data_sla(linha.get(coluna_necessidade, "")) if coluna_necessidade else pd.NaT
+        criacao = _data_sla(linha.get(coluna_criacao, "")) if coluna_criacao else pd.NaT
+        for numero in solicitacoes:
+            numeros.add(numero)
+            if pd.notna(necessidade):
+                anterior = mapa.get(numero)
+                if anterior is None or necessidade > anterior[0]: mapa[numero] = (necessidade, fonte)
+            if pd.notna(criacao):
+                criacoes[numero] = min(criacoes.get(numero, criacao), criacao)
+    return mapa, criacoes, numeros
+
+def _formatar_data_sla(valor):
+    return valor.strftime("%d/%m/%Y") if pd.notna(valor) else ""
+
+def calcular_sla_suprimentos(df_compras, df_solicitacoes, df_recebimentos, df_cotacoes, mes_referencia, correcoes_pontuais):
+    coluna_oc = _localizar_coluna_sla(df_compras, ["Número da OC", "Nº OC", "Ordem de Compra", "OC", "Número"], True, "número da OC no Relatório de Compras")
+    coluna_criacao = _localizar_coluna_sla(df_compras, ["Data de Criação da OC", "Criação da OC", "Criação", "Data Criação"], True, "Criação da OC")
+    coluna_fornecedor = _localizar_coluna_sla(df_compras, ["Fornecedor", "Razão Social"])
+    coluna_descricao = _localizar_coluna_sla(df_compras, ["Descrição", "Descrição do Item", "Material", "Produto"])
+    coluna_solicitacoes = _localizar_coluna_sla(df_compras, ["Solicitações", "Número da Solicitação", "Solicitação"])
+    coluna_cotacao = _localizar_coluna_sla(df_compras, ["Número da Cotação", "Cotação", "Nº Cotação"])
+    coluna_obra = _localizar_coluna_sla(df_compras, ["Obra/Centro de Custo", "Centro de Custo", "Obra"])
+    coluna_situacao = _localizar_coluna_sla(df_compras, ["Situação da OC", "Situação", "Status"])
+    coluna_valor = _localizar_coluna_sla(df_compras, ["Valor da OC", "Valor Total", "Valor"])
+
+    compras = df_compras.copy()
+    compras["_oc"] = compras[coluna_oc].map(_numero_oc_sla)
+    compras["_criacao"] = compras[coluna_criacao].map(_data_sla)
+    compras = compras[compras["_oc"].astype(str).str.strip() != ""].copy()
+    sem_data_criacao = int(compras["_criacao"].isna().sum())
+    compras_mes = compras[
+        compras["_criacao"].notna()
+        & (compras["_criacao"].dt.month == mes_referencia.month)
+        & (compras["_criacao"].dt.year == mes_referencia.year)
+    ].copy()
+    if compras_mes.empty:
+        raise ValueError(f"Nenhuma OC com Criação no mês {mes_referencia.strftime('%m/%Y')} foi localizada.")
+
+    linhas_ocs = []
+    for numero_oc, grupo in compras_mes.groupby("_oc", sort=False):
+        datas_criacao = sorted({data.normalize() for data in grupo["_criacao"] if pd.notna(data)})
+        observacoes = []
+        if len(datas_criacao) > 1:
+            observacoes.append("A OC possui mais de uma data de criação no relatório; adotada a menor data oficial.")
+        solicitacoes = []
+        if coluna_solicitacoes:
+            for valor in grupo[coluna_solicitacoes]: solicitacoes.extend(_solicitacoes_sla(valor))
+        solicitacoes = list(dict.fromkeys(solicitacoes))
+        linhas_ocs.append({
+            "Número da OC": numero_oc,
+            "Número da cotação": _juntar_unicos_sla(grupo[coluna_cotacao]) if coluna_cotacao else "",
+            "_solicitacoes_lista": solicitacoes,
+            "Solicitações": ", ".join(solicitacoes),
+            "Obra/Centro de Custo": _primeiro_preenchido_sla(grupo[coluna_obra]) if coluna_obra else "",
+            "Fornecedor": _primeiro_preenchido_sla(grupo[coluna_fornecedor]) if coluna_fornecedor else "",
+            "Descrição": _juntar_unicos_sla(grupo[coluna_descricao]) if coluna_descricao else "",
+            "_criacao": min(datas_criacao) if datas_criacao else pd.NaT,
+            "Situação da OC": _primeiro_preenchido_sla(grupo[coluna_situacao]) if coluna_situacao else "",
+            "Valor da OC": max([_moeda_sla(valor) for valor in grupo[coluna_valor]] + [0.0]) if coluna_valor else 0.0,
+            "_observacoes": observacoes,
+        })
+    ocs_unicas = pd.DataFrame(linhas_ocs)
+
+    motivos = ocs_unicas.apply(lambda linha: _motivos_exclusao_sla(linha["Descrição"], linha["Fornecedor"]), axis=1)
+    ignoradas = ocs_unicas[motivos != ""].copy()
+    ignoradas["Motivo da exclusão"] = motivos[motivos != ""]
+    validas = ocs_unicas[motivos == ""].copy()
+
+    mapa_solic, criacoes_solic, numeros_solic_relatorio = _mapa_solicitacoes_sla(df_solicitacoes, "Relatório de Solicitações")
+    mapa_cot, _, numeros_cot_relatorio = _mapa_solicitacoes_sla(df_cotacoes, "Relatório de Cotações") if df_cotacoes is not None else ({}, {}, set())
+
+    mapa_cotacao_por_oc = {}
+    if df_cotacoes is not None and not df_cotacoes.empty:
+        cot_oc = _localizar_coluna_sla(df_cotacoes, ["Número da OC", "Nº OC", "Ordem de Compra", "OC"])
+        cot_numero = _localizar_coluna_sla(df_cotacoes, ["Número da Cotação", "Cotação", "Nº Cotação"])
+        if cot_oc and cot_numero:
+            for _, linha in df_cotacoes.iterrows():
+                oc = _numero_oc_sla(linha.get(cot_oc, ""))
+                if oc: mapa_cotacao_por_oc.setdefault(oc, set()).add(_texto_documento_sla(linha.get(cot_numero, "")))
+
+    receb_oc = _localizar_coluna_sla(df_recebimentos, ["Número da OC", "Nº OC", "Ordem de Compra", "OC"], True, "número da OC nos Recebimentos")
+    receb_data = _localizar_coluna_sla(df_recebimentos, ["Dt. receb.", "Data de Recebimento", "Dt receb", "Recebimento"], True, "Dt. receb. nos Recebimentos")
+    recebimentos_map = {}
+    for _, linha in df_recebimentos.iterrows():
+        oc = _numero_oc_sla(linha.get(receb_oc, ""))
+        data = _data_sla(linha.get(receb_data, ""))
+        if oc and pd.notna(data): recebimentos_map.setdefault(oc, set()).add(data.normalize())
+
+    correcoes_normalizadas = {str(chave).zfill(6): valor for chave, valor in (correcoes_pontuais or {}).items() if isinstance(valor, dict)}
+    linhas_base, solicitacoes_nao_localizadas, recuperadas_cotacao = [], set(), set()
+    correcoes_aplicadas, receb_antes_criacao, necessidade_antes_solicitacao = 0, 0, 0
+
+    for _, oc in validas.iterrows():
+        numero_oc = oc["Número da OC"]
+        criacao_oc = oc["_criacao"]
+        datas_recebimento = sorted(recebimentos_map.get(numero_oc, set()))
+        primeiro_recebimento = datas_recebimento[0] if datas_recebimento else pd.NaT
+        candidatos_necessidade = []
+        observacoes = list(oc["_observacoes"])
+        solicitacoes = oc["_solicitacoes_lista"]
+
+        if not solicitacoes:
+            observacoes.append("OC sem solicitação vinculada; aplicado prazo D+4.")
+        for solicitacao in solicitacoes:
+            correcao = correcoes_normalizadas.get(solicitacao)
+            if correcao:
+                tipo = str(correcao.get("tipo", "")).strip().lower()
+                data_corrigida = _data_sla(correcao.get("data")) if tipo == "data_fixa" else primeiro_recebimento if tipo == "igualar_primeiro_recebimento" else pd.NaT
+                if pd.notna(data_corrigida):
+                    candidatos_necessidade.append((data_corrigida.normalize(), "Correção pontual autorizada"))
+                    correcoes_aplicadas += 1
+                    observacoes.append(f"Solicitação {solicitacao}: {correcao.get('motivo', 'correção manual autorizada')}.")
+                    continue
+            if solicitacao in mapa_solic:
+                candidatos_necessidade.append(mapa_solic[solicitacao])
+                criacao_solic = criacoes_solic.get(solicitacao)
+                if criacao_solic is not None and mapa_solic[solicitacao][0] < criacao_solic:
+                    necessidade_antes_solicitacao += 1
+                    observacoes.append(f"Solicitação {solicitacao} possui necessidade anterior à sua criação.")
+            elif solicitacao in mapa_cot:
+                candidatos_necessidade.append(mapa_cot[solicitacao])
+                recuperadas_cotacao.add(solicitacao)
+            else:
+                solicitacoes_nao_localizadas.add(solicitacao)
+                observacoes.append(f"Solicitação {solicitacao} não localizada nos relatórios de Solicitações/Cotações.")
+
+        if candidatos_necessidade:
+            data_necessidade, origem_necessidade = max(candidatos_necessidade, key=lambda item: item[0])
+        else:
+            data_necessidade, origem_necessidade = pd.NaT, "Sem Data de Necessidade"
+
+        limite_d4 = criacao_oc + pd.Timedelta(days=4)
+        prazo_final = max(limite_d4, data_necessidade) if pd.notna(data_necessidade) else limite_d4
+        pendencia = False
+        if pd.notna(primeiro_recebimento) and primeiro_recebimento < criacao_oc:
+            receb_antes_criacao += 1
+            pendencia = True
+            observacoes.append("Primeiro recebimento anterior à criação da OC; registro não avaliável sem validação.")
+
+        if pendencia:
+            saldo, status = None, "Pendência de validação"
+        elif pd.isna(primeiro_recebimento):
+            saldo, status = None, "Sem Recebimento"
+        else:
+            saldo = int((primeiro_recebimento - prazo_final).days)
+            status = "Dentro do Prazo" if saldo <= 0 else "Fora do Prazo"
+
+        cotacao = oc["Número da cotação"]
+        if not cotacao and numero_oc in mapa_cotacao_por_oc:
+            cotacao = ", ".join(sorted(valor for valor in mapa_cotacao_por_oc[numero_oc] if valor))
+        linhas_base.append({
+            "Número da OC": numero_oc, "Número da cotação": cotacao,
+            "Solicitações": oc["Solicitações"], "Obra/Centro de Custo": oc["Obra/Centro de Custo"],
+            "Fornecedor": oc["Fornecedor"], "Descrição": oc["Descrição"],
+            "Data de Criação da OC": _formatar_data_sla(criacao_oc),
+            "Data de Necessidade considerada": _formatar_data_sla(data_necessidade),
+            "Origem da Data de Necessidade": origem_necessidade,
+            "Limite D+4": _formatar_data_sla(limite_d4), "Prazo Final do SLA": _formatar_data_sla(prazo_final),
+            "Data do Primeiro Recebimento": _formatar_data_sla(primeiro_recebimento),
+            "Quantidade de datas de recebimento encontradas": len(datas_recebimento),
+            "Saldo de Dias": saldo if saldo is not None else "", "Status do SLA": status,
+            "Situação da OC": oc["Situação da OC"], "Valor da OC": round(float(oc["Valor da OC"]), 2),
+            "Observação de Auditoria": " ".join(observacoes),
+        })
+
+    colunas_base = [
+        "Número da OC", "Número da cotação", "Solicitações", "Obra/Centro de Custo", "Fornecedor", "Descrição",
+        "Data de Criação da OC", "Data de Necessidade considerada", "Origem da Data de Necessidade", "Limite D+4",
+        "Prazo Final do SLA", "Data do Primeiro Recebimento", "Quantidade de datas de recebimento encontradas",
+        "Saldo de Dias", "Status do SLA", "Situação da OC", "Valor da OC", "Observação de Auditoria",
+    ]
+    base = pd.DataFrame(linhas_base, columns=colunas_base)
+    avaliadas = base[base["Status do SLA"].isin(["Dentro do Prazo", "Fora do Prazo"])].copy()
+    dentro = int((avaliadas["Status do SLA"] == "Dentro do Prazo").sum())
+    fora = int((avaliadas["Status do SLA"] == "Fora do Prazo").sum())
+    sem_recebimento = int((base["Status do SLA"] == "Sem Recebimento").sum())
+    pendencias = int((base["Status do SLA"] == "Pendência de validação").sum())
+    sla = (dentro / len(avaliadas) * 100.0) if len(avaliadas) else None
+    media_saldo = pd.to_numeric(avaliadas["Saldo de Dias"], errors="coerce").mean() if len(avaliadas) else None
+    saldos_numericos = pd.to_numeric(base["Saldo de Dias"], errors="coerce")
+    revisao_limite = int(saldos_numericos.between(-2, 2, inclusive="both").sum())
+    datas_criacao_base = pd.to_datetime(base["Data de Criação da OC"].map(_data_sla), errors="coerce")
+    datas_necessidade_base = pd.to_datetime(base["Data de Necessidade considerada"].map(_data_sla), errors="coerce")
+    necessidade_mes_posterior = int(((datas_necessidade_base.dt.to_period("M") > datas_criacao_base.dt.to_period("M")) & datas_necessidade_base.notna()).sum())
+    datas_via_cotacao = int((base["Origem da Data de Necessidade"] == "Relatório de Cotações").sum())
+
+    painel = pd.DataFrame([
+        {"Indicador": "Mês de referência", "Valor": mes_referencia.strftime("%m/%Y")},
+        {"Indicador": "Total de OCs extraídas", "Valor": len(compras_mes)},
+        {"Indicador": "OCs únicas", "Valor": len(ocs_unicas)},
+        {"Indicador": "OCs ignoradas", "Valor": len(ignoradas)},
+        {"Indicador": "OCs válidas", "Valor": len(base)},
+        {"Indicador": "OCs avaliadas com recebimento", "Valor": len(avaliadas)},
+        {"Indicador": "OCs sem recebimento", "Valor": sem_recebimento},
+        {"Indicador": "OCs dentro do prazo", "Valor": dentro},
+        {"Indicador": "OCs fora do prazo", "Valor": fora},
+        {"Indicador": "Percentual de SLA", "Valor": f"{sla:.2f}%" if sla is not None else "N/A"},
+        {"Indicador": "Média do Saldo de Dias", "Valor": round(float(media_saldo), 2) if pd.notna(media_saldo) else "N/A"},
+        {"Indicador": "Pendências de validação", "Valor": pendencias},
+        {"Indicador": "Correções pontuais aplicadas", "Valor": correcoes_aplicadas},
+    ])
+
+    validacoes = pd.DataFrame([
+        {"Validação": "Total de linhas de OC no mês", "Resultado": len(compras_mes)},
+        {"Validação": "OCs únicas após duplicidades", "Resultado": len(ocs_unicas)},
+        {"Validação": "OCs ignoradas", "Resultado": len(ignoradas)},
+        {"Validação": "OCs válidas", "Resultado": len(base)},
+        {"Validação": "OCs válidas com recebimento avaliável", "Resultado": len(avaliadas)},
+        {"Validação": "OCs válidas sem recebimento", "Resultado": sem_recebimento},
+        {"Validação": "OCs com solicitação vinculada", "Resultado": int((base["Solicitações"].astype(str).str.strip() != "").sum())},
+        {"Validação": "OCs sem solicitação vinculada", "Resultado": int((base["Solicitações"].astype(str).str.strip() == "").sum())},
+        {"Validação": "Solicitações não localizadas", "Resultado": len(solicitacoes_nao_localizadas)},
+        {"Validação": "Solicitações recuperadas por Cotações", "Resultado": len(recuperadas_cotacao)},
+        {"Validação": "OCs com mais de uma solicitação", "Resultado": int((base["Solicitações"].astype(str).str.count(",") >= 1).sum())},
+        {"Validação": "OCs com mais de uma data de recebimento", "Resultado": int((base["Quantidade de datas de recebimento encontradas"] > 1).sum())},
+        {"Validação": "Recebimentos anteriores à criação da OC", "Resultado": receb_antes_criacao},
+        {"Validação": "Necessidades anteriores à criação da solicitação", "Resultado": necessidade_antes_solicitacao},
+        {"Validação": "Correções manuais aplicadas", "Resultado": correcoes_aplicadas},
+        {"Validação": "Pendências de validação", "Resultado": pendencias},
+        {"Validação": "OCs sem data de criação no arquivo", "Resultado": sem_data_criacao},
+        {"Validação": "Conciliação das OCs válidas", "Resultado": "OK" if len(base) == len(avaliadas) + sem_recebimento + pendencias else "DIVERGENTE"},
+        {"Validação": "Conciliação das OCs avaliadas", "Resultado": "OK" if len(avaliadas) == dentro + fora else "DIVERGENTE"},
+        {"Validação": "OCs com Saldo de Dias entre -2 e +2 para revisão manual", "Resultado": revisao_limite},
+        {"Validação": "OCs com necessidade em mês posterior à criação", "Resultado": necessidade_mes_posterior},
+        {"Validação": "Datas de necessidade provenientes de Cotações", "Resultado": datas_via_cotacao},
+        {"Validação": "Amostra manual mínima a confrontar com os arquivos", "Resultado": min(10, len(base))},
+    ])
+
+    ignoradas_saida = ignoradas.assign(**{
+        "Data de Criação": ignoradas["_criacao"].map(_formatar_data_sla),
+    })[["Número da OC", "Fornecedor", "Descrição", "Data de Criação", "Motivo da exclusão"]]
+    fora_prazo = base[base["Status do SLA"] == "Fora do Prazo"].sort_values("Saldo de Dias", ascending=False).reset_index(drop=True)
+    metodologia = pd.DataFrame([
+        {"Item": "Fontes oficiais", "Regra": "Criação/OC/fornecedor/descrição: Compras; necessidade: Solicitações; primeiro recebimento: menor Dt. receb. da Medição."},
+        {"Item": "Prazo D+4", "Regra": "Limite D+4 = criação da OC + 4 dias corridos."},
+        {"Item": "Prazo final", "Regra": "Maior data entre a necessidade válida e o limite D+4; sem necessidade, utiliza D+4."},
+        {"Item": "SLA", "Regra": "OCs dentro do prazo / OCs válidas com recebimento avaliável."},
+        {"Item": "Múltiplas solicitações", "Regra": "Mantém a lista completa e adota a maior Data de Necessidade válida."},
+        {"Item": "Múltiplos recebimentos", "Regra": "Adota a menor Dt. receb. como primeiro recebimento e preserva a contagem de datas."},
+        {"Item": "Exclusões", "Regra": "[FF], Tele Entulho, [PG]/PG no início ou fim e [ESTOQUE], ignorando caixa, acentos e espaços."},
+        {"Item": "Sem recebimento", "Regra": "Permanece na base, com saldo vazio, fora do denominador principal."},
+        {"Item": "Correções pontuais", "Regra": f"{correcoes_aplicadas} correção(ões) autorizada(s), mantidas separadas das regras permanentes."},
+        {"Item": "Revisão final", "Regra": f"Conferir manualmente amostra de {min(10, len(base))} OCs, as {revisao_limite} OCs com saldo entre -2 e +2, as {necessidade_mes_posterior} necessidades em mês posterior e as {datas_via_cotacao} datas provenientes de Cotações."},
+        {"Item": "Processamento", "Regra": datetime.now(FUSO_LOCAL).strftime("%d/%m/%Y %H:%M")},
+    ])
+    return {
+        "tabelas": {"Painel SLA": painel, "Base Completa": base, "OCs Fora do Prazo": fora_prazo, "OCs Ignoradas": ignoradas_saida, "Metodologia": metodologia},
+        "validacoes": validacoes,
+        "indicadores": {"sla": sla, "validas": len(base), "avaliadas": len(avaliadas), "sem_recebimento": sem_recebimento, "dentro": dentro, "fora": fora, "pendencias": pendencias, "media_saldo": media_saldo},
+    }
+
+@fragmento_independente
+def painel_sla_suprimentos():
+    st.subheader("📈 Painel SLA D+4 de Suprimentos")
+    st.caption("Apuração mensal auditável baseada na Criação da OC, Data de Necessidade e primeiro recebimento. Este módulo é independente da rota e dos custos.")
+
+    mes_ref = st.date_input("Mês de referência", value=AGORA_REAL.date().replace(day=1), key="sla_mes_referencia")
+    st.markdown("##### Relatórios do ObraPrima")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        arquivo_compras = st.file_uploader("1. Compras / Ordens de Compra", type=["xlsx", "xls", "csv", "pdf"], key="sla_compras")
+        arquivo_solicitacoes = st.file_uploader("2. Solicitações", type=["xlsx", "xls", "csv", "pdf"], key="sla_solicitacoes")
+    with col_b:
+        arquivo_recebimentos = st.file_uploader("3. Medição / Recebimentos", type=["xlsx", "xls", "csv", "pdf"], key="sla_recebimentos")
+        arquivo_cotacoes = st.file_uploader("4. Cotações (opcional)", type=["xlsx", "xls", "csv", "pdf"], key="sla_cotacoes")
+    st.caption("Excel ou CSV são preferíveis. PDFs funcionam quando o relatório contém tabelas estruturadas.")
+
+    with st.popover("⚙️ Correções pontuais autorizadas (opcional)", use_container_width=True):
+        st.caption("As correções valem apenas para esta apuração e nunca viram regra permanente.")
+        correcoes_texto = st.text_area(
+            "JSON das correções", value="{}", height=150, key="sla_correcoes",
+            placeholder='{"005714": {"tipo": "data_fixa", "data": "15/07/2026", "motivo": "Correção autorizada"}}',
+        )
+
+    pronto = bool(arquivo_compras and arquivo_solicitacoes and arquivo_recebimentos)
+    if st.button("🔎 Calcular e Auditar SLA", type="primary", use_container_width=True, disabled=not pronto, key="btn_calcular_sla"):
+        try:
+            correcoes = json.loads(correcoes_texto or "{}")
+            if not isinstance(correcoes, dict): raise ValueError("As correções pontuais precisam estar em um objeto JSON.")
+            with st.spinner("Lendo relatórios, cruzando OCs e executando validações..."):
+                df_compras = ler_relatorio_sla(arquivo_compras.name, arquivo_compras.getvalue())
+                df_solicitacoes = ler_relatorio_sla(arquivo_solicitacoes.name, arquivo_solicitacoes.getvalue())
+                df_recebimentos = ler_relatorio_sla(arquivo_recebimentos.name, arquivo_recebimentos.getvalue())
+                df_cotacoes = ler_relatorio_sla(arquivo_cotacoes.name, arquivo_cotacoes.getvalue()) if arquivo_cotacoes else None
+                resultado = calcular_sla_suprimentos(df_compras, df_solicitacoes, df_recebimentos, df_cotacoes, mes_ref, correcoes)
+                st.session_state["resultado_sla_suprimentos"] = resultado
+                st.session_state["mes_resultado_sla"] = mes_ref.strftime("%m/%Y")
+            st.success("Apuração concluída com rastreabilidade.")
+        except Exception as erro:
+            st.error(f"Não foi possível concluir o SLA: {erro}")
+
+    resultado = st.session_state.get("resultado_sla_suprimentos")
+    if not resultado:
+        st.info("Envie os três relatórios obrigatórios para gerar o painel. Cotações são opcionais e usadas apenas como fonte complementar.")
+        return
+
+    indicadores = resultado["indicadores"]
+    st.divider()
+    st.markdown(f"#### Resultado de {st.session_state.get('mes_resultado_sla', '')}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("SLA D+4", f"{indicadores['sla']:.2f}%" if indicadores['sla'] is not None else "N/A")
+    k2.metric("OCs válidas", indicadores["validas"])
+    k3.metric("OCs avaliadas", indicadores["avaliadas"])
+    k4.metric("Sem recebimento", indicadores["sem_recebimento"])
+    k5, k6, k7, k8 = st.columns(4)
+    k5.metric("Dentro do prazo", indicadores["dentro"])
+    k6.metric("Fora do prazo", indicadores["fora"])
+    k7.metric("Média saldo", f"{indicadores['media_saldo']:.2f} dias" if pd.notna(indicadores["media_saldo"]) else "N/A")
+    k8.metric("Pendências", indicadores["pendencias"])
+
+    if indicadores["pendencias"]:
+        st.warning("Há pendências de validação. O resultado deve ser tratado como provisório até a conferência dos registros sinalizados.")
+    elif indicadores["avaliadas"] == 0:
+        st.warning("Não há OCs com recebimento avaliável; o percentual principal não pode ser calculado.")
+    else:
+        st.success("As conciliações automáticas fecharam. Consulte as validações abaixo para auditoria.")
+    st.info("Antes do fechamento definitivo, confronte com os arquivos uma amostra de até 10 OCs e revise todos os saldos entre -2 e +2, necessidades em mês posterior e datas recuperadas por Cotações.")
+
+    aba_base, aba_atrasos, aba_ignoradas, aba_validacoes = st.tabs(["Base Completa", "Fora do Prazo", "OCs Ignoradas", "Validações"])
+    with aba_base: st.dataframe(resultado["tabelas"]["Base Completa"], use_container_width=True, hide_index=True)
+    with aba_atrasos: st.dataframe(resultado["tabelas"]["OCs Fora do Prazo"], use_container_width=True, hide_index=True)
+    with aba_ignoradas: st.dataframe(resultado["tabelas"]["OCs Ignoradas"], use_container_width=True, hide_index=True)
+    with aba_validacoes: st.dataframe(resultado["validacoes"], use_container_width=True, hide_index=True)
+
+    _conteudo_exportador(
+        f"SLA D+4 de Suprimentos - {st.session_state.get('mes_resultado_sla', '')}",
+        resultado["tabelas"], "sla_suprimentos", "sla_suprimentos",
+    )
 
 def calcular_distancia_km(lat1, lon1, lat2, lon2):
     dLat = math.radians(lat2 - lat1)
@@ -1747,7 +2589,7 @@ retornar_base = st.session_state.get("cfg_retornar_base", True)
 
 if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar Manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
 
-tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_registros = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "💰 Dashboard & Custos", "🗂️ Registros da Frota"])
+tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_sla, tab_registros = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "💰 Dashboard & Custos", "📈 SLA Suprimentos", "🗂️ Registros da Frota"])
 
 with tab_rastreador:
     st.subheader("📡 Rastreador ao Vivo — Protege Express")
@@ -2036,26 +2878,14 @@ with tab_custos:
         s1.metric("🚗 Strada (KM)", f"{km_strada:.1f} km", delta_color="off")
         s2.metric("Custo / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_strada:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_strada:.2f}</p>", unsafe_allow_html=True)
-        with st.expander("Ver lançamentos da Strada que formam este fechamento"):
-            st.caption("Combustível e manutenções do mês")
-            if gastos_strada_mes.empty: st.info("Nenhum gasto lançado no mês.")
-            else: st.dataframe(gastos_strada_mes, use_container_width=True, hide_index=True)
-            st.caption("Quilometragens do mês")
-            if kms_strada_mes.empty: st.info("Nenhuma quilometragem lançada no mês.")
-            else: st.dataframe(kms_strada_mes, use_container_width=True, hide_index=True)
+        renderizar_detalhes_fechamento("Strada", gastos_strada_mes, kms_strada_mes, "strada")
 
     with col_l200:
         l1, l2 = st.columns(2)
         l1.metric("🚙 L200 (KM)", f"{km_l200:.1f} km", delta_color="off")
         l2.metric("Custo / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_l200:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_l200:.2f}</p>", unsafe_allow_html=True)
-        with st.expander("Ver lançamentos da L200 que formam este fechamento"):
-            st.caption("Combustível e manutenções do mês")
-            if gastos_l200_mes.empty: st.info("Nenhum gasto lançado no mês.")
-            else: st.dataframe(gastos_l200_mes, use_container_width=True, hide_index=True)
-            st.caption("Quilometragens do mês")
-            if kms_l200_mes.empty: st.info("Nenhuma quilometragem lançada no mês.")
-            else: st.dataframe(kms_l200_mes, use_container_width=True, hide_index=True)
+        renderizar_detalhes_fechamento("L200", gastos_l200_mes, kms_l200_mes, "l200")
 
     df_resumo_fechamento = pd.DataFrame([
         {"Veículo": "Strada", "KM": round(km_strada, 2), "Combustível (R$)": round(gas_strada, 2), "Manutenção (R$)": round(manut_strada, 2), "Custo total (R$)": round(gas_strada + manut_strada, 2), "Custo/KM (R$)": round(custo_km_strada, 2)},
@@ -2072,6 +2902,9 @@ with tab_custos:
         },
         "fechamento_mensal_frota", "custos",
     )
+
+with tab_sla:
+    painel_sla_suprimentos()
 
 # --- NOVA ABA: REGISTROS DA FROTA ---
 with tab_registros:
