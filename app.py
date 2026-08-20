@@ -922,7 +922,8 @@ with st.sidebar:
 
 if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
 
-tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_integ = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "💰 Dashboard & Custos", "⚙️ Integrações"])
+# --- MUDANÇA NAS ABAS: A ÚLTIMA AGORA É REGISTROS DA FROTA ---
+tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_registros = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "💰 Dashboard & Custos", "🗂️ Registros da Frota"])
 
 with tab_rastreador:
     st.subheader("📡 Rastreador ao Vivo — Protege Express")
@@ -1091,7 +1092,6 @@ with tab_custos:
                 conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (k_data.strftime("%d/%m/%Y"), k_km, k_obs, k_veic))
                 conn.commit(); st.success(f"{k_km} km salvos com sucesso!")
 
-    # BLOCO DE FECHAMENTO DE KM POR PERÍODO
     st.divider()
     st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
     with st.form("form_fechamento_km", clear_on_submit=True):
@@ -1162,39 +1162,54 @@ with tab_custos:
         st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8;'>⛽ Gasolina: <b>R$ {gas_l200:.2f}</b> &nbsp;|&nbsp; 🔧 Manutenção: <b>R$ {manut_l200:.2f}</b></p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # EXTRATO VISUAL DE REGISTROS (PARA VOCÊ CONFERIR TUDO O QUE FOI LANÇADO)
+    conn.close()
+
+# --- NOVA ABA: REGISTROS DA FROTA ---
+with tab_registros:
+    st.subheader("🗂️ Registros e Histórico da Frota")
+    st.caption("Acompanhe os horários de operação, as rotas e os gastos detalhados dos veículos.")
+    
+    conn = sqlite3.connect(DB_FILE)
+    
+    st.markdown("#### 🕒 Horários da Operação (Rastreador)")
+    c_inicio, c_paradas = st.columns([1, 1.8])
+    
+    with c_inicio:
+        st.markdown("**🏁 Início da Rota (Saída do Pátio)**")
+        df_inicio = pd.read_sql_query("SELECT data as Data, placa as Placa, hora_inicio as 'Hora Saída' FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC", conn)
+        if not df_inicio.empty:
+            st.dataframe(df_inicio, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum registro de início encontrado.")
+            
+    with c_paradas:
+        st.markdown("**📍 Paradas Realizadas (Geofence)**")
+        df_paradas = pd.read_sql_query("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150", conn)
+        if not df_paradas.empty:
+            st.dataframe(df_paradas, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum registro de parada do rastreador encontrado.")
+
     st.divider()
-    st.markdown("#### 🗂️ Extrato Completo de Registros do Sistema")
+    st.markdown("#### 💰 Histórico de Custos e Abastecimentos")
     
     cx_abast, cx_km = st.columns(2)
     with cx_abast:
-        st.markdown("**⛽ Histórico de Abastecimentos / Gastos**")
-        df_abastec_all = pd.read_sql_query("SELECT data, veiculo, litros, valor_litro, manutencao, obs FROM abastecimentos ORDER BY id DESC", conn)
+        st.markdown("**⛽ Combustível e Manutenções**")
+        df_abastec_all = pd.read_sql_query("SELECT data as Data, veiculo as Veículo, litros as Litros, valor_litro as 'R$/L', manutencao as 'Manutenção (R$)', obs as Observação FROM abastecimentos ORDER BY id DESC", conn)
         if not df_abastec_all.empty:
             st.dataframe(df_abastec_all, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum abastecimento registrado.")
+            st.info("Nenhum abastecimento ou manutenção registrada.")
             
     with cx_km:
-        st.markdown("**🛣️ Histórico de Quilometragens**")
-        df_km_all = pd.read_sql_query("SELECT data, veiculo, km, obs FROM registro_km ORDER BY id DESC", conn)
+        st.markdown("**🛣️ Quilometragem Rodada**")
+        df_km_all = pd.read_sql_query("SELECT data as Data, veiculo as Veículo, km as KM, obs as Observação FROM registro_km ORDER BY id DESC", conn)
         if not df_km_all.empty:
             st.dataframe(df_km_all, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum KM registrado.")
-
-    conn.close()
-
-with tab_integ:
-    st.subheader("⚙️ Configurações de Integrações e APIs")
-    st.markdown("### Integração dos Grupos no Teams")
-    conn = sqlite3.connect(DB_FILE)
-    for index, row in pd.read_sql_query("SELECT * FROM webhooks_teams ORDER BY setor", conn).iterrows():
-        setor = row['setor']
-        nova_url = st.text_input(f"👤 {setor}", value=row['url'], key=f"tms_db_{setor}")
-        if st.button(f"Salvar {setor}"):
-            conn.execute("UPDATE webhooks_teams SET url=? WHERE setor=?", (nova_url, setor))
-            conn.commit(); st.success(f"Link de '{setor}' salvo no banco local!")
+            st.info("Nenhuma quilometragem registrada.")
+            
     conn.close()
 
 with tab_roteiro:
@@ -1525,14 +1540,6 @@ with tab_roteiro:
                     conn.execute("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (?, ?, ?, ?)", (DATA_REF_ROTA_STR, km_real, f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", veiculo_fechamento))
                     conn.commit(); conn.close()
                     st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento}!")
-
-            url_geral, _ = obter_webhook_teams("Geral / Logística")
-            if url_geral:
-                if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
-                    enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
-                    if enviado: st.success("✅ Roteiro enviado!")
-                    else: st.error(f"Erro ao enviar: {detalhe}")
 
             st.text_area("📋 Texto Pronto para WhatsApp", value=texto_whatsapp, height=150)
 
