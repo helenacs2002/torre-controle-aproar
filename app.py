@@ -204,6 +204,12 @@ def _normalizar_tabelas_relatorio(dados):
         "🟢 Início da Rota (Hoje)": "Início da rota (hoje)",
         "Última atualização": "Última atualização",
         "Velocidade (km/h)": "Velocidade (km/h)",
+        "obra": "Obra",
+        "origem": "Origem",
+        "destino": "Destino",
+        "materiais": "Materiais",
+        "data_conclusao": "Data da conclusão",
+        "hora_conclusao": "Hora da conclusão",
     }
     tabelas = []
     for nome, tabela in itens:
@@ -221,6 +227,219 @@ def _normalizar_tabelas_relatorio(dados):
         df = df.loc[:, [coluna for coluna in df.columns if not (df[coluna].astype(str).str.strip() == "").all()]]
         tabelas.append((str(nome), df.fillna("")))
     return tabelas or [("Dados", pd.DataFrame({"Informação": ["Nenhum registro disponível."]}))]
+
+def _criar_resumo_analitico_relatorio(titulo, tabelas):
+    """Cria indicadores úteis de acordo com o assunto e os campos de cada relatório."""
+    def normalizar(valor):
+        return re.sub(r"[^a-z0-9]+", " ", remover_acentos(str(valor or "")).lower()).strip()
+
+    def localizar_coluna(df, *candidatos):
+        mapa = {coluna: normalizar(coluna) for coluna in df.columns}
+        procurados = [normalizar(candidato) for candidato in candidatos]
+        for procurado in procurados:
+            for coluna, nome in mapa.items():
+                if nome == procurado:
+                    return coluna
+        for procurado in procurados:
+            for coluna, nome in mapa.items():
+                if procurado and procurado in nome:
+                    return coluna
+        return None
+
+    def numeros(df, *candidatos):
+        coluna = localizar_coluna(df, *candidatos)
+        if not coluna:
+            return pd.Series(dtype="float64")
+        if pd.api.types.is_numeric_dtype(df[coluna]):
+            return pd.to_numeric(df[coluna], errors="coerce")
+
+        def converter(valor):
+            texto = re.sub(r"[^0-9,.-]", "", str(valor or ""))
+            if not texto or texto in {"-", ".", ","}:
+                return None
+            if "," in texto:
+                texto = texto.replace(".", "").replace(",", ".")
+            try:
+                return float(texto)
+            except (TypeError, ValueError):
+                return None
+        return df[coluna].map(converter).astype("float64")
+
+    def minutos_horario(valor):
+        encontrado = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", str(valor or ""))
+        if not encontrado:
+            return None
+        hora, minuto = map(int, encontrado.groups())
+        return hora * 60 + minuto if hora < 24 and minuto < 60 else None
+
+    def horario_medio(valores):
+        minutos = [minuto for minuto in (minutos_horario(valor) for valor in valores) if minuto is not None]
+        if not minutos:
+            return None
+        media = int(round(sum(minutos) / len(minutos)))
+        return f"{media // 60:02d}:{media % 60:02d}"
+
+    def duracao_media(chegadas, saidas):
+        duracoes = []
+        for chegada, saida in zip(chegadas, saidas):
+            inicio, fim = minutos_horario(chegada), minutos_horario(saida)
+            if inicio is None or fim is None:
+                continue
+            if fim < inicio:
+                fim += 24 * 60
+            if 0 <= fim - inicio <= 12 * 60:
+                duracoes.append(fim - inicio)
+        return sum(duracoes) / len(duracoes) if duracoes else None
+
+    def numero_br(valor, casas=1):
+        return f"{float(valor):,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def moeda_br(valor):
+        return f"R$ {numero_br(valor, 2)}"
+
+    indicadores = []
+    def adicionar(indicador, resultado, leitura=""):
+        if resultado is None or (isinstance(resultado, float) and math.isnan(resultado)):
+            return
+        indicadores.append({"Indicador": indicador, "Resultado": resultado, "Leitura para análise": leitura})
+
+    por_nome = {normalizar(nome): df for nome, df in tabelas}
+    titulo_norm = normalizar(titulo)
+    tabelas_preenchidas = [(nome, df) for nome, df in tabelas if not df.empty]
+    principal = max(tabelas_preenchidas, key=lambda item: len(item[1]))[1] if tabelas_preenchidas else pd.DataFrame()
+
+    if "rastreador" in titulo_norm:
+        velocidades = numeros(principal, "Velocidade (km/h)").dropna()
+        em_movimento = velocidades[velocidades > 0]
+        total = len(principal)
+        adicionar("Veículos monitorados", total, "Quantidade de veículos com leitura atual.")
+        adicionar("Veículos em movimento", len(em_movimento), f"{numero_br(100 * len(em_movimento) / total, 1)}% da frota monitorada." if total else "")
+        adicionar("Velocidade média geral", f"{numero_br(velocidades.mean(), 1)} km/h" if len(velocidades) else None, "Inclui veículos parados.")
+        adicionar("Velocidade média em movimento", f"{numero_br(em_movimento.mean(), 1)} km/h" if len(em_movimento) else None, "Considera somente velocidades acima de zero.")
+        inicio_col = localizar_coluna(principal, "Início da rota (hoje)")
+        adicionar("Horário médio de saída", horario_medio(principal[inicio_col]) if inicio_col else None, "Média das saídas registradas no dia.")
+
+    elif "demandas ativas" in titulo_norm:
+        total = len(principal)
+        status_col = localizar_coluna(principal, "Status da rota", "Status")
+        status = principal[status_col].astype(str) if status_col else pd.Series([""] * total)
+        concluidas = int(status.str.contains(r"entregue|conclu", case=False, regex=True).sum())
+        pendentes = total - concluidas
+        adicionar("Demandas analisadas", total, "Volume total presente no relatório.")
+        adicionar("Taxa de conclusão", f"{numero_br(100 * concluidas / total, 1)}%" if total else "0,0%", "Boa aderência" if total and concluidas / total >= 0.9 else "Atenção às demandas ainda pendentes.")
+        adicionar("Demandas concluídas", concluidas)
+        adicionar("Demandas pendentes", pendentes)
+        prioridade = numeros(principal, "Prioridade (1-5)").dropna()
+        adicionar("Prioridade média", numero_br(prioridade.mean(), 2) if len(prioridade) else None, "Quanto maior, mais urgente é o conjunto de demandas.")
+        coleta = numeros(principal, "Tempo de coleta (min)").dropna()
+        entrega = numeros(principal, "Tempo de entrega (min)").dropna()
+        adicionar("Tempo médio de coleta", f"{numero_br(coleta.mean(), 1)} min" if len(coleta) else None)
+        adicionar("Tempo médio de entrega", f"{numero_br(entrega.mean(), 1)} min" if len(entrega) else None)
+        if len(coleta) and len(entrega):
+            adicionar("Tempo médio total por demanda", f"{numero_br(coleta.mean() + entrega.mean(), 1)} min", "Soma das médias de coleta e entrega.")
+        prazo_col = localizar_coluna(principal, "Prazo")
+        if prazo_col:
+            prazos = principal[prazo_col].astype(str)
+            adicionar("Demandas vencidas/atrasadas", int(prazos.str.contains(r"vencid|atrasad", case=False, regex=True).sum()), "Prioridade de regularização.")
+
+    elif "roteiro do davi" in titulo_norm:
+        resumo = next((df for nome, df in tabelas if normalizar(nome) == "resumo"), pd.DataFrame())
+        paradas = next((df for nome, df in tabelas if "paradas" in normalizar(nome)), principal)
+        parada_col = localizar_coluna(paradas, "Parada")
+        acao_col = localizar_coluna(paradas, "Ação")
+        status_col = localizar_coluna(paradas, "Status")
+        paradas_operacionais = set()
+        if parada_col:
+            paradas_operacionais = {str(valor) for valor in paradas[parada_col] if str(valor).strip().isdigit()}
+        entregas = paradas[paradas[acao_col].astype(str).str.contains("ENTREGAR", case=False, na=False)].copy() if acao_col else paradas.copy()
+        status = entregas[status_col].astype(str) if status_col else pd.Series([""] * len(entregas))
+        concluidas = int(status.str.contains(r"conclu|entregue", case=False, regex=True).sum())
+        total_demandas = len(entregas)
+        km = numeros(resumo, "Distância planejada (km)").dropna()
+        km_total = float(km.iloc[0]) if len(km) else None
+        adicionar("Paradas operacionais", len(paradas_operacionais), "Não inclui almoço nem retorno à base.")
+        adicionar("Demandas previstas", total_demandas)
+        adicionar("Taxa de conclusão da rota", f"{numero_br(100 * concluidas / total_demandas, 1)}%" if total_demandas else "0,0%", "Percentual de entregas previstas que tiveram baixa.")
+        adicionar("Demandas pendentes", total_demandas - concluidas)
+        adicionar("Distância planejada", f"{numero_br(km_total, 1)} km" if km_total is not None else None)
+        adicionar("Distância média por parada", f"{numero_br(km_total / len(paradas_operacionais), 1)} km" if km_total is not None and paradas_operacionais else None, "Indicador de dispersão da rota.")
+        if not resumo.empty:
+            inicio_col = localizar_coluna(resumo, "Início")
+            fim_col = localizar_coluna(resumo, "Término previsto")
+            inicio = minutos_horario(resumo.iloc[0][inicio_col]) if inicio_col else None
+            fim = minutos_horario(resumo.iloc[0][fim_col]) if fim_col else None
+            if inicio is not None and fim is not None:
+                adicionar("Duração planejada da rota", f"{numero_br((fim - inicio) / 60, 1)} h", "Tempo estimado entre saída e retorno.")
+
+    elif "fechamento individualizado" in titulo_norm:
+        resumo = next((df for nome, df in tabelas if normalizar(nome) == "resumo"), principal)
+        km = numeros(resumo, "KM").fillna(0).sum()
+        combustivel = numeros(resumo, "Combustível (R$)").fillna(0).sum()
+        manutencao = numeros(resumo, "Manutenção (R$)").fillna(0).sum()
+        custo_total = numeros(resumo, "Custo total (R$)").fillna(0).sum()
+        custo_km = custo_total / km if km > 0 else None
+        adicionar("Quilometragem total", f"{numero_br(km, 1)} km")
+        adicionar("Custo total da frota", moeda_br(custo_total))
+        adicionar("Custo médio por KM", moeda_br(custo_km) if custo_km is not None else None, "Dentro da referência de R$ 1,50/km." if custo_km is not None and custo_km <= 1.5 else "Acima da referência de R$ 1,50/km." if custo_km is not None else "")
+        adicionar("Total de combustível", moeda_br(combustivel), f"{numero_br(100 * combustivel / custo_total, 1)}% do custo total." if custo_total else "")
+        adicionar("Total de manutenção", moeda_br(manutencao), f"{numero_br(100 * manutencao / custo_total, 1)}% do custo total." if custo_total else "")
+        gastos = pd.concat([df for nome, df in tabelas if normalizar(nome).startswith("gastos") and not df.empty], ignore_index=True) if any(normalizar(nome).startswith("gastos") and not df.empty for nome, df in tabelas) else pd.DataFrame()
+        litros = numeros(gastos, "Litros").dropna()
+        adicionar("Litros médios por abastecimento", f"{numero_br(litros.mean(), 1)} L" if len(litros) else None)
+        adicionar("Custo médio por lançamento", moeda_br(numeros(gastos, "Total (R$)").dropna().mean()) if len(numeros(gastos, "Total (R$)").dropna()) else None)
+
+    elif "registros e historico da frota" in titulo_norm:
+        inicios = next((df for nome, df in tabelas if "inicios de rota" in normalizar(nome)), pd.DataFrame())
+        paradas = next((df for nome, df in tabelas if "paradas rastreadas" in normalizar(nome)), pd.DataFrame())
+        abastecimentos = next((df for nome, df in tabelas if "abastecimentos" in normalizar(nome)), pd.DataFrame())
+        quilometragens = next((df for nome, df in tabelas if "quilometragens" in normalizar(nome)), pd.DataFrame())
+        saida_col = localizar_coluna(inicios, "Hora Saída") if not inicios.empty else None
+        adicionar("Saídas registradas", len(inicios))
+        adicionar("Horário médio de saída", horario_medio(inicios[saida_col]) if saida_col else None, "Permite acompanhar a aderência ao início previsto.")
+        adicionar("Paradas rastreadas", len(paradas))
+        chegada_col = localizar_coluna(paradas, "Chegada") if not paradas.empty else None
+        saida_parada_col = localizar_coluna(paradas, "Saída") if not paradas.empty else None
+        media_parada = duracao_media(paradas[chegada_col], paradas[saida_parada_col]) if chegada_col and saida_parada_col else None
+        adicionar("Tempo médio por parada", f"{numero_br(media_parada, 1)} min" if media_parada is not None else None, "Considera paradas com chegada e saída registradas.")
+        locais_col = localizar_coluna(paradas, "Local") if not paradas.empty else None
+        adicionar("Locais distintos visitados", int(paradas[locais_col].astype(str).nunique()) if locais_col else None)
+        litros = numeros(abastecimentos, "Litros").dropna()
+        valor_litro = numeros(abastecimentos, "Valor por litro (R$)", "valor_litro").dropna()
+        manutencao = numeros(abastecimentos, "Manutenção (R$)", "manutencao").fillna(0)
+        combustivel_total = float((numeros(abastecimentos, "Litros").fillna(0) * numeros(abastecimentos, "Valor por litro (R$)", "valor_litro").fillna(0)).sum()) if not abastecimentos.empty else 0
+        adicionar("Litros médios por abastecimento", f"{numero_br(litros.mean(), 1)} L" if len(litros) else None)
+        adicionar("Preço médio do litro", moeda_br(valor_litro.mean()) if len(valor_litro) else None)
+        adicionar("Custo total registrado", moeda_br(combustivel_total + manutencao.sum()), "Combustível calculado mais manutenções registradas.")
+        kms = numeros(quilometragens, "KM").dropna()
+        adicionar("KM total registrado", f"{numero_br(kms.sum(), 1)} km" if len(kms) else None)
+        adicionar("KM médio por registro", f"{numero_br(kms.mean(), 1)} km" if len(kms) else None)
+
+    elif "entregas concluidas" in titulo_norm:
+        total = len(principal)
+        obra_col = localizar_coluna(principal, "Obra")
+        destino_col = localizar_coluna(principal, "Destino")
+        hora_col = localizar_coluna(principal, "Hora da conclusão", "hora_conclusao")
+        obras = int(principal[obra_col].astype(str).nunique()) if obra_col else 0
+        destinos = int(principal[destino_col].astype(str).nunique()) if destino_col else 0
+        adicionar("Entregas concluídas", total)
+        adicionar("Obras atendidas", obras)
+        adicionar("Destinos atendidos", destinos)
+        adicionar("Média de entregas por obra", numero_br(total / obras, 2) if obras else None, "Ajuda a identificar concentração de atendimento.")
+        adicionar("Média de entregas por destino", numero_br(total / destinos, 2) if destinos else None)
+        adicionar("Horário médio das conclusões", horario_medio(principal[hora_col]) if hora_col else None)
+        if destino_col and total:
+            frequencias = principal[destino_col].astype(str).replace("", pd.NA).dropna().value_counts()
+            if len(frequencias):
+                adicionar("Destino com mais entregas", f"{frequencias.index[0]} ({int(frequencias.iloc[0])})", "Local de maior concentração no período.")
+
+    if not indicadores:
+        adicionar("Registros analisados", sum(len(df) for _, df in tabelas), "Total de linhas incluídas no relatório.")
+        numericas = principal.select_dtypes(include="number") if not principal.empty else pd.DataFrame()
+        for coluna in numericas.columns[:4]:
+            serie = pd.to_numeric(numericas[coluna], errors="coerce").dropna()
+            adicionar(f"Média de {coluna}", numero_br(serie.mean(), 2) if len(serie) else None)
+
+    return pd.DataFrame(indicadores, columns=["Indicador", "Resultado", "Leitura para análise"])
 
 def _criar_csv_relatorio(tabelas):
     secoes = []
@@ -389,7 +608,8 @@ def _criar_excel_relatorio(tabelas):
                 else:
                     worksheet.write(0, 0, str(nome), titulo_fmt)
                     for coluna_titulo in range(1, ultima_coluna + 1): worksheet.write_blank(0, coluna_titulo, None, titulo_fmt)
-                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} registro(s)", meta_fmt)
+                tipo_linha = "indicador(es)" if nome_aba == "Resumo Analítico" else "registro(s)"
+                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {tipo_linha}", meta_fmt)
                 worksheet.set_row(0, 27)
                 worksheet.set_row(3, 26)
                 worksheet.freeze_panes(4, 0)
@@ -414,8 +634,10 @@ def _criar_excel_relatorio(tabelas):
                         valores = df[coluna].astype(str).head(250).tolist()
                         maior = max([len(str(coluna))] + [len(valor) for valor in valores])
                         nome_coluna = remover_acentos(str(coluna)).lower()
-                        longa = any(chave in nome_coluna for chave in ("material", "endereco", "observacao", "motivo"))
-                        largura = 48 if longa else min(32, max(12, maior + 2))
+                        longa = any(chave in nome_coluna for chave in ("material", "endereco", "observacao", "motivo", "leitura"))
+                        if nome_aba == "Resumo Analítico" and nome_coluna == "resultado": largura = 22
+                        elif nome_aba == "Resumo Analítico" and "indicador" in nome_coluna: largura = 34
+                        else: largura = 52 if longa else min(32, max(12, maior + 2))
                         formato = identificador_fmt if coluna_identificador(coluna) else data_fmt if coluna_data_excel(coluna) else moeda_fmt if "r$" in nome_coluna or "custo" in nome_coluna or "valor" in nome_coluna or "manutencao" in nome_coluna else numero_fmt if nome_coluna in {"km", "litros", "distancia (km)"} else texto_fmt
                         worksheet.set_column(indice, indice, largura, formato)
                         if coluna_identificador(coluna):
@@ -425,7 +647,8 @@ def _criar_excel_relatorio(tabelas):
 
                     for linha, valores in enumerate(df.astype(str).values.tolist(), start=4):
                         maior_texto = max([len(valor) for valor in valores] + [0])
-                        worksheet.set_row(linha, min(72, 18 + 12 * max(0, maior_texto // 70)))
+                        altura = 32 if nome_aba == "Resumo Analítico" else min(72, 18 + 12 * max(0, maior_texto // 70))
+                        worksheet.set_row(linha, altura)
 
                     for indice, coluna in enumerate(df.columns):
                         if "status" in remover_acentos(str(coluna)).lower() and len(df):
@@ -459,7 +682,8 @@ def _criar_excel_relatorio(tabelas):
                 ws.cell(1, 1, str(nome))
                 ws.cell(1, 1).font = Font(bold=True, size=16, color="FFFFFF")
                 for coluna_titulo in range(1, ultima_coluna + 1): ws.cell(1, coluna_titulo).fill = PatternFill("solid", fgColor="173B72")
-                ws.cell(2, 1, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} registro(s)")
+                tipo_linha = "indicador(es)" if nome_aba == "Resumo Analítico" else "registro(s)"
+                ws.cell(2, 1, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {tipo_linha}")
                 ws.cell(2, 1).font = Font(size=9, italic=True, color="64748B")
                 ws.freeze_panes = "A5"
                 ws.sheet_view.showGridLines = False
@@ -471,12 +695,18 @@ def _criar_excel_relatorio(tabelas):
                 for indice, coluna in enumerate(df.columns, start=1):
                     valores = df[coluna].astype(str).head(250).tolist()
                     maior = max([len(str(coluna))] + [len(valor) for valor in valores])
-                    longa = any(chave in remover_acentos(str(coluna)).lower() for chave in ("material", "endereco", "observacao", "motivo"))
-                    ws.column_dimensions[get_column_letter(indice)].width = 48 if longa else min(32, max(12, maior + 2))
+                    nome_coluna = remover_acentos(str(coluna)).lower()
+                    longa = any(chave in nome_coluna for chave in ("material", "endereco", "observacao", "motivo", "leitura"))
+                    if nome_aba == "Resumo Analítico" and nome_coluna == "resultado": largura = 22
+                    elif nome_aba == "Resumo Analítico" and "indicador" in nome_coluna: largura = 34
+                    else: largura = 52 if longa else min(32, max(12, maior + 2))
+                    ws.column_dimensions[get_column_letter(indice)].width = largura
                     for linha in range(5, 5 + len(df)):
                         ws.cell(linha, indice).alignment = Alignment(vertical="top", wrap_text=True)
                         if coluna_data_excel(coluna): ws.cell(linha, indice).number_format = "dd/mm/yyyy"
                         if coluna_identificador(coluna): ws.cell(linha, indice).number_format = "@"
+                if nome_aba == "Resumo Analítico":
+                    for linha in range(5, 5 + len(df)): ws.row_dimensions[linha].height = 32
         return saida.getvalue()
     except (ImportError, ModuleNotFoundError):
         pass
@@ -570,7 +800,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
     estilo_vazio = ParagraphStyle("Vazio", parent=estilos["Normal"], fontName="Helvetica-Oblique", fontSize=8.5, textColor=cinza_texto)
 
     titulo_limpo = texto_pdf_limpo(titulo)
-    total_registros = sum(len(df) for _, df in tabelas)
+    total_registros = sum(len(df) for nome, df in tabelas if remover_acentos(str(nome)).lower() != "resumo analitico")
     saida = io.BytesIO()
     documento = SimpleDocTemplate(
         saida, pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm,
@@ -605,13 +835,15 @@ def _criar_pdf_relatorio(titulo, tabelas):
     ]
 
     for nome, df in tabelas:
-        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome))} &nbsp; • &nbsp; {len(df)} registro(s)", estilo_secao))
+        tipo_linha = "indicador(es)" if remover_acentos(str(nome)).lower() == "resumo analitico" else "registro(s)"
+        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome))} &nbsp; • &nbsp; {len(df)} {tipo_linha}", estilo_secao))
         if df.empty or not len(df.columns):
             elementos.extend([Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio), Spacer(1, 8)])
             continue
 
         maximo_texto = max([len(str(valor)) for valor in df.astype(str).head(100).values.flatten()] + [0])
-        usar_tabela = len(df.columns) <= 6 and maximo_texto <= 45
+        eh_resumo_analitico = remover_acentos(str(nome)).lower() == "resumo analitico"
+        usar_tabela = eh_resumo_analitico or (len(df.columns) <= 6 and maximo_texto <= 45)
 
         if usar_tabela:
             pesos = []
@@ -693,7 +925,9 @@ def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
     st.markdown("##### 📤 Exportar relatório")
     col_formato, col_download = st.columns([1, 2])
     formato = col_formato.selectbox("Formato", ["PDF", "CSV", "Excel"], key=f"formato_relatorio_{chave}")
-    tabelas = _normalizar_tabelas_relatorio(dados)
+    tabelas_dados = _normalizar_tabelas_relatorio(dados)
+    resumo_analitico = _criar_resumo_analitico_relatorio(titulo, tabelas_dados)
+    tabelas = [("Resumo Analítico", resumo_analitico)] + tabelas_dados
     if formato == "CSV":
         arquivo, extensao, mime = _criar_csv_relatorio(tabelas), "csv", "text/csv"
     elif formato == "Excel":
