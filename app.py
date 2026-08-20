@@ -109,6 +109,8 @@ def aplicar_estilo_customizado():
         [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
         [data-testid="stSidebar"] { background-color: #0b0e1e !important; border-right: 1px solid rgba(64,116,146,.15) !important; }
         [data-testid="stHeader"] { background-color: rgba(7, 9, 19, 0.8) !important; backdrop-filter: blur(8px); }
+        /* Evita que a tela inteira escureça enquanto apenas um trecho é atualizado. */
+        [data-stale="true"] { opacity: 1 !important; }
         button[kind="primary"], [data-testid="baseButton-primary"] { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; color: #ffffff !important; border-radius: 8px !important; border: none !important; font-weight: 600 !important; box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3); transition: all 0.2s ease-in-out; padding: 10px 20px !important; }
         button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(37, 99, 235, 0.5); }
         button[kind="primary"]:disabled { background: #1e293b !important; color: #64748b !important; box-shadow: none !important; transform: none !important; cursor: not-allowed !important; }
@@ -634,6 +636,82 @@ def calcular_matriz_rotas(coords):
         duracoes.append(row_t)
     return distancias, duracoes
 
+def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
+    """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
+    distancia, duracao = get_dist_dur(atual, ponto)
+    custo_deslocamento = distancia + (duracao * 0.1)
+
+    coletas_aqui = [t for t in unpicked if t['Origem'] == ponto]
+    entregas_aqui = [t for t in carrying if t['Destino'] == ponto]
+    is_pickup = bool(coletas_aqui)
+    is_dropoff = bool(entregas_aqui)
+    destinos_no_carro = {t['Destino'] for t in carrying}
+
+    def peso_valido(tarefa):
+        try:
+            valor = float(tarefa.get('Peso', 1) or 1)
+            return 1.0 if math.isnan(valor) else valor
+        except (TypeError, ValueError):
+            return 1.0
+
+    urgencia_coleta = max([peso_valido(t) for t in coletas_aqui] + [1.0])
+    urgencia_entrega = max([peso_valido(t) for t in entregas_aqui] + [1.0])
+
+    # Se ainda há material a coletar para o mesmo destino, entregar agora
+    # normalmente cria uma segunda visita e o conhecido efeito de zigue-zague.
+    pendentes_mesmo_destino = [
+        t for t in unpicked
+        if t['Destino'] == ponto and t['Origem'] != ponto
+    ]
+    penalidade_retorno = 0.0
+    if is_dropoff and pendentes_mesmo_destino:
+        urgencia_pendente = max([peso_valido(t) for t in pendentes_mesmo_destino] + [1.0])
+        entrega_urgente_isolada = (
+            "Urgências" in estrategia
+            and urgencia_entrega >= 4
+            and urgencia_entrega > urgencia_pendente
+        )
+
+        if not entrega_urgente_isolada:
+            origens_pendentes = {t['Origem'] for t in pendentes_mesmo_destino}
+            ciclos_de_retorno = []
+            for origem in origens_pendentes:
+                ida, _ = get_dist_dur(ponto, origem)
+                volta, _ = get_dist_dur(origem, ponto)
+                ciclos_de_retorno.append(ida + volta)
+
+            # O piso de 8 km impede que uma pequena vantagem local provoque
+            # uma visita duplicada; o ciclo viário mede o prejuízo real.
+            penalidade_retorno = max(8.0, min(ciclos_de_retorno or [8.0]) * 1.35)
+
+    coleta_completa_carga = is_pickup and any(
+        t['Destino'] in destinos_no_carro for t in coletas_aqui
+    )
+
+    if "Menor Distância" in estrategia:
+        score = custo_deslocamento
+        if coleta_completa_carga:
+            score *= 0.85
+        score += penalidade_retorno
+    else:
+        prioridade = 1.0
+        if is_dropoff:
+            prioridade *= 2.0
+        if is_pickup:
+            prioridade *= 3.0 if coleta_completa_carga else 1.5
+        if "Urgências" in estrategia:
+            prioridade *= max(urgencia_coleta, urgencia_entrega) ** 2
+        elif "Descarregar" in estrategia and is_dropoff:
+            prioridade *= 5.0
+
+        score = (custo_deslocamento / max(prioridade, 0.001)) + penalidade_retorno
+
+    # Ações no local onde o veículo já está devem ocorrer imediatamente.
+    if distancia < 0.1:
+        score = -1.0
+
+    return score, distancia, duracao
+
 def buscar_geometria_rota(coords_ordenadas):
     coords_limpas = []
     for coord in coords_ordenadas:
@@ -983,13 +1061,22 @@ with st.sidebar:
             if sincronizar_demandas(manual=True):
                 st.success("✅ Trello Sincronizado e Demandas Importadas!")
     
-    st.divider()
-    veiculo_selecionado = st.radio("🚗 Tipo de Custeio da Rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"])
-    st.divider()
-    ponto_saida = st.selectbox("🏁 Ponto de Saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"])
-    estrategia = st.selectbox("🎯 Estratégia da Rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"])
-    st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Mescla urgência com proximidade para fazer a rota mais lógica e eficiente.', '🏢 Foco em Descarregar': 'Prioriza entregar os materiais o quanto antes para esvaziar a caçamba.', '⛽ Menor Distância': 'Foca 100% no menor KM percorrido (Economia de combustível).', '🚨 Priorizar Urgências': 'Foca 100% nas demandas Vencidas ou programadas para Hoje.'}[estrategia] }*")
-    retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
+    @fragmento_independente
+    def controles_planejamento_rota():
+        st.divider()
+        st.radio("🚗 Tipo de Custeio da Rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"], key="cfg_veiculo_rota")
+        st.divider()
+        st.selectbox("🏁 Ponto de Saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"], key="cfg_ponto_saida")
+        estrategia_atual = st.selectbox("🎯 Estratégia da Rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"], key="cfg_estrategia_rota")
+        st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Mescla urgência com proximidade para fazer a rota mais lógica e eficiente.', '🏢 Foco em Descarregar': 'Prioriza entregar os materiais o quanto antes para esvaziar a caçamba.', '⛽ Menor Distância': 'Foca 100% no menor KM percorrido (Economia de combustível).', '🚨 Priorizar Urgências': 'Foca 100% nas demandas Vencidas ou programadas para Hoje.'}[estrategia_atual] }*")
+        st.checkbox("Retornar à base no fim do dia", value=True, key="cfg_retornar_base")
+
+    controles_planejamento_rota()
+
+veiculo_selecionado = st.session_state.get("cfg_veiculo_rota", "Frota da Empresa (Calcula Gasolina)")
+ponto_saida = st.session_state.get("cfg_ponto_saida", "ESCRITÓRIO")
+estrategia = st.session_state.get("cfg_estrategia_rota", "⚖️ Equilibrada")
+retornar_base = st.session_state.get("cfg_retornar_base", True)
 
 if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar Manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
 
@@ -1051,7 +1138,12 @@ with tab_rastreador:
 
 with tab_demandas:
     st.subheader(f"Gerenciamento de Cargas da Rota ({DATA_REF_ROTA_STR})")
-    st.session_state.demandas = st.data_editor(st.session_state.demandas, column_config={"Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120), "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120), "Peso": None, "id": None, "Supervisor": None}, disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"], hide_index=True, use_container_width=True)
+
+    @fragmento_independente
+    def editor_tempos_demandas():
+        st.session_state.demandas = st.data_editor(st.session_state.demandas, column_config={"Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120), "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120), "Peso": None, "id": None, "Supervisor": None}, disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"], hide_index=True, use_container_width=True, key="editor_tempos_demandas")
+
+    editor_tempos_demandas()
     st.divider()
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
     st.caption("Acompanhe em tempo real as entregas da rota gerada.")
@@ -1076,44 +1168,61 @@ with tab_historico:
     else: st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 with tab_enderecos:
-    st.subheader("Locais e Coordenadas GPS")
-    col1, col2 = st.columns(2)
-    with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper().strip()
-    with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps").strip()
-    if st.button("Salvar Endereço Definitivo / Extrair GPS"):
-        if apelido_input and endereco_input:
-            lat, lon = buscar_coordenadas(endereco_input)
-            if lat:
-                execute_db("DELETE FROM locais_removidos WHERE apelido = :apelido", {"apelido": apelido_input})
-                execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"apelido": apelido_input, "end": endereco_input, "lat": lat, "lon": lon})
-                st.success(f"✅ GPS de '{apelido_input}' salvo com sucesso na Nuvem!")
-            else: st.error("❌ Não consegui achar as coordenadas com esse texto. Cole o Link Direto do Google Maps!")
-        else: st.warning("Preencha o nome e o endereço.")
+    @fragmento_independente
+    def painel_enderecos():
+        st.subheader("Locais e Coordenadas GPS")
+        mensagem_local = st.session_state.pop("mensagem_local", "")
+        if mensagem_local:
+            st.success(mensagem_local)
 
-    df_locais = get_df("SELECT * FROM locais ORDER BY apelido")
-    st.dataframe(df_locais, use_container_width=True, hide_index=True)
-    st.divider()
-    st.markdown("#### Remover local")
-    locais_removiveis = [apelido for apelido in df_locais["apelido"].tolist() if apelido not in ALIASES_LOCAL_BASE]
-    if locais_removiveis:
-        local_remover = st.selectbox("Selecione o local que deseja remover", locais_removiveis, index=None, placeholder="Escolha um local...")
-        confirmar_remocao = st.checkbox("Confirmo que desejo remover este local e seu GPS", key="confirmar_remocao_local")
-        if st.button("🗑️ Remover local selecionado", disabled=not (local_remover and confirmar_remocao)):
-            execute_db("INSERT INTO locais_removidos (apelido) VALUES (:apelido) ON CONFLICT (apelido) DO NOTHING", {"apelido": local_remover})
-            execute_db("DELETE FROM locais WHERE apelido = :apelido", {"apelido": local_remover})
-            st.success(f"✅ Local '{local_remover}' removido."); st.rerun()
+        col1, col2 = st.columns(2)
+        with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper().strip()
+        with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps").strip()
+        if st.button("Salvar Endereço Definitivo / Extrair GPS"):
+            if apelido_input and endereco_input:
+                lat, lon = buscar_coordenadas(endereco_input)
+                if lat:
+                    execute_db("DELETE FROM locais_removidos WHERE apelido = :apelido", {"apelido": apelido_input})
+                    execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"apelido": apelido_input, "end": endereco_input, "lat": lat, "lon": lon})
+                    st.success(f"✅ GPS de '{apelido_input}' salvo com sucesso na Nuvem!")
+                else: st.error("❌ Não consegui achar as coordenadas com esse texto. Cole o Link Direto do Google Maps!")
+            else: st.warning("Preencha o nome e o endereço.")
+
+        df_locais = get_df("SELECT * FROM locais ORDER BY apelido")
+        st.dataframe(df_locais, use_container_width=True, hide_index=True)
+        st.divider()
+        st.markdown("#### Remover local")
+        locais_removiveis = [apelido for apelido in df_locais["apelido"].tolist() if apelido not in ALIASES_LOCAL_BASE]
+        if locais_removiveis:
+            local_remover = st.selectbox("Selecione o local que deseja remover", locais_removiveis, index=None, placeholder="Escolha um local...")
+            confirmar_remocao = st.checkbox("Confirmo que desejo remover este local e seu GPS", key="confirmar_remocao_local")
+            if st.button("🗑️ Remover local selecionado", disabled=not (local_remover and confirmar_remocao)):
+                execute_db("INSERT INTO locais_removidos (apelido) VALUES (:apelido) ON CONFLICT (apelido) DO NOTHING", {"apelido": local_remover})
+                execute_db("DELETE FROM locais WHERE apelido = :apelido", {"apelido": local_remover})
+                st.session_state["mensagem_local"] = f"✅ Local '{local_remover}' removido."
+                if hasattr(st, "fragment"):
+                    st.rerun(scope="fragment")
+                else:
+                    st.rerun()
+
+    painel_enderecos()
 
 with tab_custos:
     st.subheader("💰 Fechamento Mensal e Controle de Frota")
     cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1").iloc[0]
-    
-    st.markdown("#### ⚙️ Estimativa Base do Carro")
-    cc1, cc2 = st.columns(2)
-    novo_consumo = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1)
-    novo_preco = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01)
-    if st.button("Atualizar Base"):
-        execute_db("UPDATE config_frota SET consumo=:c, preco_gasolina=:p WHERE id=1", {"c": novo_consumo, "p": novo_preco})
-        st.success("✅ Base de cálculo atualizada!")
+
+    @fragmento_independente
+    def configuracao_base_frota():
+        st.markdown("#### ⚙️ Estimativa Base do Carro")
+        cc1, cc2 = st.columns(2)
+        novo_consumo_cfg = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1, key="cfg_consumo_frota")
+        novo_preco_cfg = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01, key="cfg_preco_gasolina")
+        if st.button("Atualizar Base"):
+            execute_db("UPDATE config_frota SET consumo=:c, preco_gasolina=:p WHERE id=1", {"c": novo_consumo_cfg, "p": novo_preco_cfg})
+            st.success("✅ Base de cálculo atualizada!")
+
+    configuracao_base_frota()
+    novo_preco = float(st.session_state.get("cfg_preco_gasolina", cfg['preco_gasolina']))
     
     st.divider()
     col_recibo, col_km = st.columns(2)
@@ -1401,23 +1510,9 @@ with tab_roteiro:
                 if not candidates: break
 
                 best_point, min_score, best_dist, best_dur = None, float('inf'), 0, 0
-                destinos_no_carro = set(t['Destino'] for t in carrying)
 
                 for p in candidates:
-                    d, dur = get_dist_dur(current, p)
-                    is_dropoff, is_pickup = any(t['Destino'] == p for t in carrying), any(t['Origem'] == p for t in unpicked)
-                    urgency = max([t['Peso'] for t in unpicked if t['Origem'] == p] + [1])
-                    
-                    if "Menor Distância" in estrategia: score = d + (dur * 0.1)
-                    else:
-                        prio = 1.0
-                        if is_dropoff: prio = 2.0 if sum(1 for t in unpicked if t['Destino'] == p) == 0 else 0.1
-                        if is_pickup: prio *= 3.0 if set(t['Destino'] for t in unpicked if t['Origem'] == p).intersection(destinos_no_carro) else 1.5
-                        if "Urgências" in estrategia: prio *= urgency ** 2
-                        elif "Descarregar" in estrategia and is_dropoff: prio *= 5.0
-                        score = (d + (dur * 0.1)) / max(prio, 0.001)
-                    
-                    if d < 0.1: score = -1.0
+                    score, d, dur = pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)
                     if score < min_score: min_score, best_point, best_dist, best_dur = score, p, d, dur
 
                 if 12*60 <= current_time < 13*60 and not lunch_taken:
@@ -1586,30 +1681,39 @@ with tab_roteiro:
                 texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
 
             st.divider()
-            with st.form("fechamento_km_rota"):
-                st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
-                total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
-                acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
-                
-                if acoes_concluidas < total_acoes: st.warning(f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** demandas da rota foram concluídas hoje.")
-                else: st.success("✅ Todas as demandas desta rota foram devidamente concluídas hoje!")
+            @fragmento_independente
+            def formulario_fechamento_rota():
+                with st.form("fechamento_km_rota"):
+                    st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
+                    total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
+                    acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
                     
-                km_real = st.number_input("KM Efetivamente Rodado na Rota", value=float(total_km), step=1.0)
-                veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
-                if st.form_submit_button("Gravar KM no Painel de Custos"):
-                    execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
-                    carregar_registro_km_df.clear()
-                    st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento} na Nuvem!")
+                    if acoes_concluidas < total_acoes: st.warning(f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** demandas da rota foram concluídas hoje.")
+                    else: st.success("✅ Todas as demandas desta rota foram devidamente concluídas hoje!")
+                        
+                    km_real = st.number_input("KM Efetivamente Rodado na Rota", value=float(total_km), step=1.0)
+                    veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
+                    if st.form_submit_button("Gravar KM no Painel de Custos"):
+                        execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
+                        carregar_registro_km_df.clear()
+                        st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento} na Nuvem!")
+
+            formulario_fechamento_rota()
 
             url_geral, _ = obter_webhook_teams("Geral / Logística")
-            if url_geral:
-                if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                    resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
-                    enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
-                    if enviado: st.success("✅ Roteiro enviado!")
-                    else: st.error(f"Erro ao enviar: {detalhe}")
 
-            st.text_area("📋 Texto Pronto para WhatsApp", value=texto_whatsapp, height=150)
+            @fragmento_independente
+            def compartilhamento_rota():
+                if url_geral:
+                    if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
+                        resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
+                        enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
+                        if enviado: st.success("✅ Roteiro enviado!")
+                        else: st.error(f"Erro ao enviar: {detalhe}")
+
+                st.text_area("📋 Texto Pronto para WhatsApp", value=texto_whatsapp, height=150)
+
+            compartilhamento_rota()
 
         with col_dir:
             st.subheader("🗺️ Mapa da Rota")
