@@ -6,7 +6,6 @@ import time
 import base64
 import io
 import textwrap
-import threading
 import zipfile
 import urllib.request
 import urllib.parse
@@ -1911,6 +1910,7 @@ def inicializar_bd():
         "CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))",
         "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
         "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
+        "CREATE TABLE IF NOT EXISTS trello_cache (id SMALLINT PRIMARY KEY, dados JSONB NOT NULL DEFAULT '{}'::jsonb, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         "CREATE TABLE IF NOT EXISTS rota_ativa (id SERIAL PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)",
         SQL_TABELA_CHECKINS_DAVI,
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
@@ -1985,63 +1985,53 @@ except:
 # =====================================================================
 INTERVALO_TRELLO_SEGUNDOS = 5 * 60
 
-@st.cache_resource(show_spinner=False)
-def iniciar_atualizador_trello():
-    """Mantém um único atualizador por servidor, sem provocar rerun na interface."""
-    estado = {
-        "data": None,
-        "atualizado_em": 0.0,
-        "erro": "",
-        "lock": threading.RLock(),
-        "fetch_lock": threading.Lock(),
-        "parar": threading.Event(),
-    }
+def ler_cache_trello_supabase():
+    """Lê a cópia mantida pelo Cron, inclusive quando o Streamlit esteve dormindo."""
+    try:
+        registro = fetch_one("SELECT dados FROM trello_cache WHERE id = 1")
+        if not registro or registro[0] is None:
+            return None
+        dados = registro[0]
+        if isinstance(dados, str):
+            dados = json.loads(dados)
+        if isinstance(dados, dict) and isinstance(dados.get("cards"), list) and isinstance(dados.get("lists"), list):
+            return dados
+    except Exception:
+        pass
+    return None
 
-    def atualizar(forcar=False):
-        with estado["fetch_lock"]:
-            with estado["lock"]:
-                dados_atuais = estado["data"]
-                idade = time.monotonic() - estado["atualizado_em"]
-            if not forcar and dados_atuais is not None and idade < INTERVALO_TRELLO_SEGUNDOS:
-                return dados_atuais
-
-            try:
-                resposta = requests.get(TRELLO_JSON_URL, timeout=20)
-                resposta.raise_for_status()
-                novos_dados = resposta.json()
-                with estado["lock"]:
-                    estado["data"] = novos_dados
-                    estado["atualizado_em"] = time.monotonic()
-                    estado["erro"] = ""
-                return novos_dados
-            except Exception as erro:
-                # Conserva a última leitura válida se o Trello oscilar.
-                with estado["lock"]:
-                    estado["erro"] = str(erro)
-                    return estado["data"]
-
-    def executar_continuamente():
-        while not estado["parar"].is_set():
-            atualizar(forcar=True)
-            estado["parar"].wait(INTERVALO_TRELLO_SEGUNDOS)
-
-    estado["atualizar"] = atualizar
-    thread = threading.Thread(
-        target=executar_continuamente,
-        name="aproar-atualizador-trello",
-        daemon=True,
+def salvar_cache_trello_supabase(dados):
+    """Mantém o botão manual compatível com a mesma fonte usada pelo Cron."""
+    execute_db(
+        """
+        INSERT INTO trello_cache (id, dados, atualizado_em)
+        VALUES (1, CAST(:dados AS JSONB), NOW())
+        ON CONFLICT (id)
+        DO UPDATE SET dados=EXCLUDED.dados, atualizado_em=EXCLUDED.atualizado_em
+        """,
+        {"dados": json.dumps(dados, ensure_ascii=False)},
     )
-    estado["thread"] = thread
-    thread.start()
-    return estado
 
 def obter_dados_trello(forcar=False):
-    estado = iniciar_atualizador_trello()
-    with estado["lock"]:
-        dados = estado["data"]
-    if forcar or dados is None:
-        dados = estado["atualizar"](forcar=forcar)
-    return dados
+    if not forcar:
+        dados_cache = ler_cache_trello_supabase()
+        if dados_cache is not None:
+            return dados_cache
+
+    # Reserva para a primeira instalação e para o botão manual.
+    try:
+        resposta = requests.get(TRELLO_JSON_URL, timeout=20)
+        resposta.raise_for_status()
+        dados = resposta.json()
+        if not isinstance(dados, dict) or not isinstance(dados.get("cards"), list) or not isinstance(dados.get("lists"), list):
+            return None
+        try:
+            salvar_cache_trello_supabase(dados)
+        except Exception:
+            pass
+        return dados
+    except Exception:
+        return None
 
 def identificar_grupo_teams(destino, obra=""):
     texto = normalizar_local(f"{obra} {destino}")
