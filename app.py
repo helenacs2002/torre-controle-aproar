@@ -1327,12 +1327,20 @@ with tab_roteiro:
                             execute_db("UPDATE locais SET lat=:lat, lon=:lon WHERE apelido=:apelido", {"lat": lat, "lon": lon, "apelido": alvo})
                             locais_dict[p] = (lat, lon)
                             enderecos_dict[p] = end_str
+                else:
+                    # EMERGÊNCIA: Se o local não existir de jeito nenhum no banco, busca coordenadas na hora e cadastra na nuvem
+                    lat, lon = buscar_coordenadas(p)
+                    if lat is not None and lon is not None:
+                        execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) ON CONFLICT (apelido) DO NOTHING", {"apelido": p, "end": p, "lat": lat, "lon": lon})
+                        locais_dict[p] = (lat, lon)
+                        enderecos_dict[p] = p
+                    else:
+                        # Se falhar o geocode, joga na base do escritório para não quebrar a rota
+                        locais_dict[p] = LOCAL_BASE_COORDS
+                        enderecos_dict[p] = LOCAL_BASE_ENDERECO
                             
             st.session_state['enderecos_dict'] = enderecos_dict
             
-            faltando = sorted(p for p in pontos_necessarios if p not in locais_dict and p not in {"", "DESCONHECIDO", "NAN", "NONE"})
-            if faltando: st.warning(f"⚠️ Faltam endereços na Aba 2 para: **{', '.join(faltando)}**"); st.stop()
-
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
             dist_matrix, dur_matrix = calcular_matriz_rotas(coords)
@@ -1341,7 +1349,7 @@ with tab_roteiro:
                     idx1 = pontos_unicos.index(p1)
                     idx2 = pontos_unicos.index(p2)
                     return (dist_matrix[idx1][idx2], dur_matrix[idx1][idx2])
-                except ValueError:
+                except (ValueError, KeyError):
                     d = calcular_distancia_km(locais_dict[p1][0], locais_dict[p1][1], locais_dict[p2][0], locais_dict[p2][1]) * 1.3
                     return (d, (d / VELOCIDADE_MEDIA_KMH) * 60)
 
