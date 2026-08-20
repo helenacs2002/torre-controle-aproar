@@ -8,6 +8,7 @@ import urllib.request
 import urllib.parse
 import unicodedata
 import difflib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from html import escape as html_escape
 from html.parser import HTMLParser
@@ -262,8 +263,8 @@ if modo_url == "true":
         df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
-    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "08:00"
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
+    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "07:30"
 
     if not res:
         st.info("Nenhuma rota foi liberada pela Torre de Controle para hoje ainda. Aguarde a central calcular e tente atualizar a tela.")
@@ -441,6 +442,8 @@ def inicializar_bd():
         "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
         "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
         "CREATE TABLE IF NOT EXISTS rota_ativa (id SERIAL PRIMARY KEY, data_rota TEXT, json_route TEXT, json_locais TEXT, json_geometria TEXT, json_enderecos TEXT, total_km REAL)",
+        "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
+        "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS horario_matriz TEXT",
         "CREATE INDEX IF NOT EXISTS idx_historico_concluidos_data ON historico_concluidos (data_conclusao)",
         "CREATE INDEX IF NOT EXISTS idx_inicio_movimento_data ON inicio_movimento (data)",
         "CREATE INDEX IF NOT EXISTS idx_rastreio_paradas_data_placa ON rastreio_paradas (data, placa)",
@@ -486,13 +489,15 @@ def inicializar_bd():
 try:
     inicializar_bd()
     if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
-        res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
+        res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
         if res_rota:
             st.session_state['route_steps'] = json.loads(res_rota[0])
             st.session_state['locais_dict'] = json.loads(res_rota[1])
             st.session_state['geometria_rota'] = json.loads(res_rota[2])
             st.session_state['enderecos_dict'] = json.loads(res_rota[3])
             st.session_state['total_km'] = res_rota[4]
+            st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — malha viária sem trânsito ao vivo"
+            st.session_state['horario_matriz_rota'] = res_rota[6] or ""
             if st.session_state['route_steps']:
                 st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
                 h, m = map(int, st.session_state['route_steps'][-1]['saida'].split(':'))
@@ -610,7 +615,126 @@ def garantir_gps_local_base():
             execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:alias, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"alias": alias, "end": LOCAL_BASE_ENDERECO, "lat": coordenadas[0], "lon": coordenadas[1]})
     return coordenadas
 
-def calcular_matriz_rotas(coords):
+def carregar_chave_google_routes():
+    """Lê a chave sem expô-la no código e aceita nomes usuais nos Secrets."""
+    caminhos = [
+        ("google_routes", "api_key"),
+        ("google_maps", "api_key"),
+    ]
+    for secao, campo in caminhos:
+        try:
+            chave = str(st.secrets[secao][campo]).strip()
+            if chave:
+                return chave
+        except Exception:
+            pass
+
+    for campo in ("GOOGLE_MAPS_API_KEY", "google_maps_api_key"):
+        try:
+            chave = str(st.secrets[campo]).strip()
+            if chave:
+                return chave
+        except Exception:
+            pass
+    return ""
+
+def _duracao_google_minutos(valor):
+    try:
+        return float(str(valor).rstrip("s")) / 60.0
+    except (TypeError, ValueError):
+        return None
+
+def calcular_matriz_google_trafego(coords, horario_partida):
+    """Matriz viária com trânsito ao vivo/preditivo via Google Routes."""
+    chave = carregar_chave_google_routes()
+    quantidade = len(coords)
+    if not chave or quantidade < 2 or quantidade > 100:
+        return None
+
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    partida_rfc3339 = partida.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    destinos = [
+        {"waypoint": {"location": {"latLng": {"latitude": float(lat), "longitude": float(lon)}}}}
+        for lat, lon in coords
+    ]
+    distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+    duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+    elementos_por_bloco = 100
+    origens_por_bloco = max(1, elementos_por_bloco // quantidade)
+
+    url = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": chave,
+        "X-Goog-FieldMask": "originIndex,destinationIndex,duration,staticDuration,distanceMeters,status,condition",
+    }
+
+    def consultar_bloco(indices_origem):
+        origens = [
+            {
+                "waypoint": {"location": {"latLng": {"latitude": float(coords[i][0]), "longitude": float(coords[i][1])}}},
+                "routeModifiers": {"avoidFerries": True},
+            }
+            for i in indices_origem
+        ]
+        payload = {
+            "origins": origens,
+            "destinations": destinos,
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
+            "trafficModel": "BEST_GUESS",
+            "departureTime": partida_rfc3339,
+            "languageCode": "pt-BR",
+            "regionCode": "br",
+            "units": "METRIC",
+        }
+        resposta = requests.post(url, headers=headers, json=payload, timeout=20)
+        resposta.raise_for_status()
+        elementos = resposta.json()
+        if not isinstance(elementos, list):
+            raise ValueError("Resposta inválida da matriz do Google Routes")
+        return indices_origem, elementos
+
+    try:
+        blocos = [
+            list(range(inicio, min(inicio + origens_por_bloco, quantidade)))
+            for inicio in range(0, quantidade, origens_por_bloco)
+        ]
+        # A API limita a matriz de trânsito ótimo a 100 elementos por chamada.
+        # Os lotes independentes rodam juntos para não multiplicar a espera.
+        with ThreadPoolExecutor(max_workers=min(4, len(blocos))) as executor:
+            futuros = [executor.submit(consultar_bloco, indices) for indices in blocos]
+            for futuro in as_completed(futuros):
+                indices_origem, elementos = futuro.result()
+                for elemento in elementos:
+                    if elemento.get("condition") != "ROUTE_EXISTS":
+                        continue
+                    origem_global = indices_origem[int(elemento.get("originIndex", 0))]
+                    destino_global = int(elemento.get("destinationIndex", 0))
+                    duracao_min = _duracao_google_minutos(elemento.get("duration"))
+                    distancia_m = elemento.get("distanceMeters")
+                    if duracao_min is None or distancia_m is None:
+                        continue
+                    distancias[origem_global][destino_global] = float(distancia_m) / 1000.0
+                    duracoes[origem_global][destino_global] = duracao_min
+
+        for i in range(quantidade):
+            distancias[i][i], duracoes[i][i] = 0.0, 0.0
+        if any(valor is None for linha in distancias for valor in linha):
+            return None
+        if any(valor is None for linha in duracoes for valor in linha):
+            return None
+        return distancias, duracoes
+    except Exception:
+        return None
+
+def calcular_matriz_rotas(coords, horario_partida=None):
+    matriz_google = calcular_matriz_google_trafego(coords, horario_partida)
+    if matriz_google:
+        return matriz_google[0], matriz_google[1], "Google Routes — trânsito ao vivo e preditivo"
+
     try:
         coords_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
         url = f"https://router.project-osrm.org/table/v1/driving/{coords_str}?annotations=distance,duration"
@@ -620,7 +744,7 @@ def calcular_matriz_rotas(coords):
             if res.get('code') == 'Ok':
                 distancias = [[dist / 1000.0 for dist in row] for row in res['distances']]
                 duracoes = [[dur / 60.0 for dur in row] for row in res['durations']]
-                return distancias, duracoes
+                return distancias, duracoes, "OSRM — malha viária sem trânsito ao vivo"
     except: pass
     distancias, duracoes = [], []
     for i in range(len(coords)):
@@ -634,7 +758,7 @@ def calcular_matriz_rotas(coords):
             row_t.append((km / VELOCIDADE_MEDIA_KMH) * 60)
         distancias.append(row_d)
         duracoes.append(row_t)
-    return distancias, duracoes
+    return distancias, duracoes, "Estimativa geográfica de contingência"
 
 def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
     """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
@@ -712,11 +836,320 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
 
     return score, distancia, duracao
 
-def buscar_geometria_rota(coords_ordenadas):
+def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None):
+    """Busca em feixe para o problema de coleta e entrega com precedência.
+
+    Avalia sequências completas, agrupa ações no mesmo endereço e pondera
+    trânsito/tempo, distância, urgência, carga no veículo, almoço e hora extra.
+    """
+    if not tarefas:
+        return []
+
+    def numero_seguro(valor, padrao):
+        try:
+            numero = float(valor)
+            return padrao if math.isnan(numero) else numero
+        except (TypeError, ValueError):
+            return padrao
+
+    total_tarefas = len(tarefas)
+    if total_tarefas > 24:
+        # Contingência para dias excepcionalmente grandes: mantém as mesmas
+        # regras logísticas sem deixar o aplicativo preso em busca combinatória.
+        pendentes = list(tarefas)
+        no_carro = []
+        atual = ponto_inicial
+        ordem = []
+        for _ in range(total_tarefas * 2 + 5):
+            candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
+            if not candidatos:
+                break
+            proximo = min(candidatos, key=lambda p: pontuar_parada_rota(atual, p, pendentes, no_carro, estrategia, get_dist_dur)[0])
+            ordem.append(proximo)
+            no_carro = [t for t in no_carro if t['Destino'] != proximo]
+            coletadas = [t for t in pendentes if t['Origem'] == proximo]
+            pendentes = [t for t in pendentes if t['Origem'] != proximo]
+            no_carro.extend(coletadas)
+            atual = proximo
+        return ordem
+
+    origens = [t['Origem'] for t in tarefas]
+    destinos = [t['Destino'] for t in tarefas]
+    pesos = [numero_seguro(t.get('Peso', 1), 1.0) for t in tarefas]
+    tempos_coleta = [numero_seguro(t.get('Tempo_Coleta', 10), 10.0) for t in tarefas]
+    tempos_entrega = [numero_seguro(t.get('Tempo_Entrega', 10), 10.0) for t in tarefas]
+    mascara_total = (1 << total_tarefas) - 1
+
+    tarefas_por_origem = {}
+    tarefas_por_destino = {}
+    for indice, (origem, destino) in enumerate(zip(origens, destinos)):
+        tarefas_por_origem.setdefault(origem, []).append(indice)
+        tarefas_por_destino.setdefault(destino, []).append(indice)
+
+    if total_tarefas <= 8:
+        largura_feixe = 700
+    elif total_tarefas <= 14:
+        largura_feixe = 320
+    elif total_tarefas <= 19:
+        largura_feixe = 180
+    else:
+        largura_feixe = 100
+
+    def avancar_relogio(inicio, viagem, servico):
+        partida = inicio
+        if 12 * 60 <= partida < 13 * 60:
+            partida = 13 * 60
+        chegada = partida + viagem
+        if partida < 12 * 60 < chegada:
+            chegada += 60
+        if 12 * 60 <= chegada < 13 * 60:
+            chegada = 13 * 60
+        saida = chegada + servico
+        if chegada < 12 * 60 < saida:
+            saida += 60
+        return chegada, saida
+
+    def pontos_disponiveis(coletadas_mask, entregues_mask):
+        pontos = set()
+        for i in range(total_tarefas):
+            bit = 1 << i
+            if not (coletadas_mask & bit):
+                pontos.add(origens[i])
+            elif not (entregues_mask & bit):
+                pontos.add(destinos[i])
+        return pontos
+
+    def heuristica_restante(atual, coletadas_mask, entregues_mask):
+        pontos = pontos_disponiveis(coletadas_mask, entregues_mask)
+        if not pontos:
+            return 0.0
+        menor_tempo = min(get_dist_dur(atual, p)[1] for p in pontos)
+        return menor_tempo * 0.35 + len(pontos) * 0.8
+
+    estado_inicial = {
+        "atual": ponto_inicial,
+        "hora": float(horario_inicio),
+        "coletadas": 0,
+        "entregues": 0,
+        "ordem": tuple(),
+        "custo": 0.0,
+        "distancia": 0.0,
+        "viagem": 0.0,
+    }
+    estados = [estado_inicial]
+    concluidos = []
+    inicio_busca = time.perf_counter()
+    max_passos = total_tarefas * 2 + 3
+
+    for _ in range(max_passos):
+        proximos_por_estado = {}
+        for estado in estados:
+            if estado["entregues"] == mascara_total:
+                concluidos.append(estado)
+                continue
+
+            for ponto in pontos_disponiveis(estado["coletadas"], estado["entregues"]):
+                distancia, duracao = get_dist_dur(estado["atual"], ponto)
+
+                ids_entrega = [
+                    i for i in tarefas_por_destino.get(ponto, [])
+                    if (estado["coletadas"] & (1 << i)) and not (estado["entregues"] & (1 << i))
+                ]
+                ids_coleta = [
+                    i for i in tarefas_por_origem.get(ponto, [])
+                    if not (estado["coletadas"] & (1 << i))
+                ]
+                if not ids_entrega and not ids_coleta:
+                    continue
+
+                novas_coletadas = estado["coletadas"]
+                novas_entregues = estado["entregues"]
+                for i in ids_coleta:
+                    novas_coletadas |= 1 << i
+                for i in ids_entrega:
+                    novas_entregues |= 1 << i
+                # Origem e destino idênticos são resolvidos na mesma parada.
+                for i in ids_coleta:
+                    if destinos[i] == ponto:
+                        novas_entregues |= 1 << i
+                        ids_entrega.append(i)
+
+                tempo_servico = sum(tempos_coleta[i] for i in ids_coleta) + sum(tempos_entrega[i] for i in ids_entrega)
+                _, nova_hora = avancar_relogio(estado["hora"], duracao, tempo_servico)
+
+                if "Menor Distância" in estrategia:
+                    incremento = distancia * 3.2 + duracao * 0.35
+                else:
+                    incremento = duracao + distancia * 0.18
+
+                visitas_anteriores = estado["ordem"].count(ponto)
+                if visitas_anteriores:
+                    incremento += 75.0 * visitas_anteriores
+
+                # Evita entregar em um destino se ainda falta coletar outro
+                # material que também será entregue nele.
+                ainda_falta_para_o_ponto = [
+                    i for i in tarefas_por_destino.get(ponto, [])
+                    if not (novas_coletadas & (1 << i))
+                ]
+                if ids_entrega and ainda_falta_para_o_ponto:
+                    urgente_agora = max([pesos[i] for i in ids_entrega] + [1])
+                    urgente_depois = max([pesos[i] for i in ainda_falta_para_o_ponto] + [1])
+                    excecao_urgente = "Urgências" in estrategia and urgente_agora >= 4 and urgente_agora > urgente_depois
+                    if not excecao_urgente:
+                        incremento += 95.0
+
+                tempo_decorrido = max(0.0, nova_hora - horario_inicio)
+                if "Menor Distância" not in estrategia:
+                    for i in ids_entrega:
+                        if "Urgências" in estrategia:
+                            fator_urgencia = max(0.0, pesos[i] - 2.0) * 0.75
+                        else:
+                            fator_urgencia = {5: 0.65, 4: 0.32, 3: 0.10}.get(int(pesos[i]), 0.0)
+                        incremento += tempo_decorrido * fator_urgencia
+
+                carga_apos = (novas_coletadas & ~novas_entregues).bit_count()
+                if "Descarregar" in estrategia:
+                    incremento += carga_apos * (duracao + tempo_servico) * 0.55
+                elif "Equilibrada" in estrategia:
+                    incremento += carga_apos * (duracao + tempo_servico) * 0.05
+
+                extra_antes = max(0.0, estado["hora"] - 17 * 60)
+                extra_depois = max(0.0, nova_hora - 17 * 60)
+                incremento += (extra_depois - extra_antes) * 18.0
+
+                novo_estado = {
+                    "atual": ponto,
+                    "hora": nova_hora,
+                    "coletadas": novas_coletadas,
+                    "entregues": novas_entregues,
+                    "ordem": estado["ordem"] + (ponto,),
+                    "custo": estado["custo"] + incremento,
+                    "distancia": estado["distancia"] + distancia,
+                    "viagem": estado["viagem"] + duracao,
+                }
+                chave_estado = (ponto, novas_coletadas, novas_entregues)
+                anterior = proximos_por_estado.get(chave_estado)
+                if anterior is None or (novo_estado["custo"], novo_estado["hora"]) < (anterior["custo"], anterior["hora"]):
+                    proximos_por_estado[chave_estado] = novo_estado
+
+        if concluidos:
+            break
+        if not proximos_por_estado:
+            break
+
+        candidatos_ordenados = sorted(
+            proximos_por_estado.values(),
+            key=lambda e: e["custo"] + heuristica_restante(e["atual"], e["coletadas"], e["entregues"]),
+        )
+        estados = candidatos_ordenados[:largura_feixe]
+        if time.perf_counter() - inicio_busca > 5.0:
+            break
+
+    if not concluidos:
+        concluidos = [e for e in estados if e["entregues"] == mascara_total]
+    if concluidos:
+        def custo_final(estado):
+            custo = estado["custo"]
+            if retornar_base and ponto_base and estado["atual"] != ponto_base:
+                distancia, duracao = get_dist_dur(estado["atual"], ponto_base)
+                custo += duracao + distancia * 0.18
+            return custo
+        melhor = min(concluidos, key=custo_final)
+        return list(melhor["ordem"])
+
+    # Se a busca atingir o limite de tempo, conclui de forma determinística
+    # com o motor guloso seguro, sem travar a geração da rota.
+    pendentes = list(tarefas)
+    no_carro = []
+    atual = ponto_inicial
+    ordem = []
+    for _ in range(total_tarefas * 2 + 5):
+        candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
+        if not candidatos:
+            break
+        proximo = min(candidatos, key=lambda p: pontuar_parada_rota(atual, p, pendentes, no_carro, estrategia, get_dist_dur)[0])
+        ordem.append(proximo)
+        no_carro = [t for t in no_carro if t['Destino'] != proximo]
+        coletadas = [t for t in pendentes if t['Origem'] == proximo]
+        pendentes = [t for t in pendentes if t['Origem'] != proximo]
+        no_carro.extend(coletadas)
+        atual = proximo
+    return ordem
+
+def _decodificar_polyline_google(polyline):
+    pontos = []
+    indice = latitude = longitude = 0
+    while indice < len(polyline):
+        valores = []
+        for _ in range(2):
+            resultado = deslocamento = 0
+            while indice < len(polyline):
+                byte = ord(polyline[indice]) - 63
+                indice += 1
+                resultado |= (byte & 0x1F) << deslocamento
+                deslocamento += 5
+                if byte < 0x20:
+                    break
+            valores.append(~(resultado >> 1) if resultado & 1 else resultado >> 1)
+        latitude += valores[0]
+        longitude += valores[1]
+        pontos.append([latitude / 1e5, longitude / 1e5])
+    return pontos
+
+def buscar_geometria_google_trafego(coords_limpas, horario_partida=None):
+    chave = carregar_chave_google_routes()
+    if not chave or len(coords_limpas) < 2 or len(coords_limpas) > 27:
+        return None
+
+    def waypoint(coord, parada=False):
+        dado = {"location": {"latLng": {"latitude": float(coord[0]), "longitude": float(coord[1])}}}
+        if parada:
+            dado["vehicleStopover"] = True
+        return dado
+
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    payload = {
+        "origin": waypoint(coords_limpas[0]),
+        "destination": waypoint(coords_limpas[-1]),
+        "intermediates": [waypoint(c, parada=True) for c in coords_limpas[1:-1]],
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
+        "trafficModel": "BEST_GUESS",
+        "departureTime": partida.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "polylineQuality": "HIGH_QUALITY",
+        "polylineEncoding": "ENCODED_POLYLINE",
+        "routeModifiers": {"avoidFerries": True},
+        "languageCode": "pt-BR",
+        "regionCode": "br",
+        "units": "METRIC",
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": chave,
+        "X-Goog-FieldMask": "routes.polyline.encodedPolyline",
+    }
+    try:
+        resposta = requests.post("https://routes.googleapis.com/directions/v2:computeRoutes", headers=headers, json=payload, timeout=35)
+        resposta.raise_for_status()
+        rotas = resposta.json().get("routes", [])
+        encoded = rotas[0].get("polyline", {}).get("encodedPolyline", "") if rotas else ""
+        pontos = _decodificar_polyline_google(encoded) if encoded else []
+        return pontos if len(pontos) > 1 else None
+    except Exception:
+        return None
+
+def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
     coords_limpas = []
     for coord in coords_ordenadas:
         if not coords_limpas or coord != coords_limpas[-1]: coords_limpas.append(coord)
     if len(coords_limpas) < 2: return [[lat, lon] for lat, lon in coords_limpas], False
+
+    geometria_google = buscar_geometria_google_trafego(coords_limpas, horario_partida)
+    if geometria_google:
+        return geometria_google, True
+
     try:
         coords_str = ";".join(f"{lon},{lat}" for lat, lon in coords_limpas)
         url = f"https://router.project-osrm.org/route/v1/driving/{coords_str}?overview=full&geometries=geojson&steps=false"
@@ -1431,7 +1864,7 @@ with tab_roteiro:
             past_route_steps = []
             
             res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
-            current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (8 * 60 + 0)
+            current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (7 * 60 + 30)
             current_point = ponto_saida
 
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
@@ -1491,8 +1924,24 @@ with tab_roteiro:
 
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
-            dist_matrix, dur_matrix = calcular_matriz_rotas(coords)
+            horario_partida_matriz = datetime.combine(DATA_REF_ROTA_DATE, datetime.min.time()).replace(tzinfo=FUSO_LOCAL) + timedelta(minutes=current_time_tsp)
+            if DATA_REF_ROTA_DATE == AGORA_REAL.date() and horario_partida_matriz < AGORA_REAL:
+                horario_partida_matriz = AGORA_REAL + timedelta(minutes=1)
+
+            dist_matrix, dur_matrix, fonte_matriz = calcular_matriz_rotas(coords, horario_partida_matriz)
             def get_dist_dur(p1, p2): return (0.0, 0.0) if p1 == p2 else (dist_matrix[pontos_unicos.index(p1)][pontos_unicos.index(p2)], dur_matrix[pontos_unicos.index(p1)][pontos_unicos.index(p2)])
+
+            ordem_otimizada = otimizar_sequencia_rota(
+                unpicked,
+                current_point,
+                estrategia,
+                get_dist_dur,
+                current_time_tsp,
+                retornar_base=retornar_base,
+                ponto_base=ponto_saida,
+            )
+            st.session_state['fonte_matriz_rota'] = fonte_matriz
+            st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
             carrying = []
             current = current_point
@@ -1509,11 +1958,17 @@ with tab_roteiro:
                 candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
                 if not candidates: break
 
-                best_point, min_score, best_dist, best_dur = None, float('inf'), 0, 0
+                best_point = None
+                while ordem_otimizada:
+                    ponto_planejado = ordem_otimizada.pop(0)
+                    if ponto_planejado in candidates:
+                        best_point = ponto_planejado
+                        break
 
-                for p in candidates:
-                    score, d, dur = pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)
-                    if score < min_score: min_score, best_point, best_dist, best_dur = score, p, d, dur
+                if best_point is None:
+                    best_point = min(candidates, key=lambda p: pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)[0])
+
+                best_dist, best_dur = get_dist_dur(current, best_point)
 
                 if 12*60 <= current_time < 13*60 and not lunch_taken:
                     route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
@@ -1565,7 +2020,7 @@ with tab_roteiro:
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
                 if step.get("destino") in locais_dict: coords_ordenadas_rota.append(locais_dict[step.get("destino")])
-            geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordenadas_rota)
+            geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordenadas_rota, horario_partida_matriz)
             
             st.session_state['rota_gerada'] = True
             st.session_state['route_steps'] = route_steps
@@ -1577,7 +2032,7 @@ with tab_roteiro:
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
 
-            execute_db("INSERT INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km) VALUES (1, :data, :route, :locs, :geom, :end, :km) ON CONFLICT (id) DO UPDATE SET data_rota=EXCLUDED.data_rota, json_route=EXCLUDED.json_route, json_locais=EXCLUDED.json_locais, json_geometria=EXCLUDED.json_geometria, json_enderecos=EXCLUDED.json_enderecos, total_km=EXCLUDED.total_km", {"data": DATA_REF_ROTA_STR, "route": json.dumps(route_steps), "locs": json.dumps(locais_dict), "geom": json.dumps(geometria_rota), "end": json.dumps(enderecos_dict), "km": total_km})
+            execute_db("INSERT INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz) VALUES (1, :data, :route, :locs, :geom, :end, :km, :fonte, :horario) ON CONFLICT (id) DO UPDATE SET data_rota=EXCLUDED.data_rota, json_route=EXCLUDED.json_route, json_locais=EXCLUDED.json_locais, json_geometria=EXCLUDED.json_geometria, json_enderecos=EXCLUDED.json_enderecos, total_km=EXCLUDED.total_km, fonte_matriz=EXCLUDED.fonte_matriz, horario_matriz=EXCLUDED.horario_matriz", {"data": DATA_REF_ROTA_STR, "route": json.dumps(route_steps), "locs": json.dumps(locais_dict), "geom": json.dumps(geometria_rota), "end": json.dumps(enderecos_dict), "km": total_km, "fonte": fonte_matriz, "horario": horario_partida_matriz.strftime("%d/%m/%Y %H:%M")})
 
     if st.session_state.get('rota_gerada', False):
         route_steps, total_km, locais_dict = st.session_state['route_steps'], st.session_state['total_km'], st.session_state['locais_dict']
@@ -1589,7 +2044,7 @@ with tab_roteiro:
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         
         res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
+        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
         
         df_paradas = get_df("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=:data", {"data": DATA_REF_ROTA_STR})
 
@@ -1599,6 +2054,13 @@ with tab_roteiro:
         with col_esq:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
             st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
+
+            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
+            horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
+            if "Google Routes" in fonte_matriz_exibicao:
+                st.caption(f"🚦 Otimização viária: **{fonte_matriz_exibicao}** • referência {horario_matriz_exibicao}")
+            else:
+                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • para trânsito real, configure `google_routes.api_key` nos Secrets.")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
