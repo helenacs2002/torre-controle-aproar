@@ -1518,7 +1518,7 @@ if modo_url == "true":
         tipo_step = step.get('type', '')
         destino_step = str(step.get('destino', ''))
         is_start = (i == 0 and destino_step == p_saida)
-        classe_card, selo, titulo_card, meta_card, botao_gps = "normal", "ETAPA", destino_step, "", ""
+        classe_card, selo, titulo_card, meta_card, botao_gps, botao_feito = "normal", "ETAPA", destino_step, "", "", ""
 
         if tipo_step == 'lunch':
             classe_card, selo = "almoco", "PAUSA"
@@ -1564,15 +1564,23 @@ if modo_url == "true":
                     f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}</div>"
                 )
             corpo_acoes = status_tempo + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
+            chave_lembrete = html_escape(f"{DATA_REF_ROTA_STR}|{i}|{destino_step}", quote=True)
+            rotulo_lembrete = "preparação" if is_start else "parada"
+            concluida_oficialmente = "1" if step.get('is_concluded') else "0"
+            botao_feito = (
+                f"<button class='marcar-feita' data-chave='{chave_lembrete}' data-rotulo='{rotulo_lembrete}' "
+                f"data-oficial='{concluida_oficialmente}' onclick='alternarFeita(this)'>☐ Marcar {rotulo_lembrete} como feita</button>"
+            )
             if not is_start:
                 if link_gps:
                     botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
                 numero_parada_mobile += 1
 
+        rodape_card = f"<div class='rodape-card'>{botao_feito}{botao_gps}</div>" if botao_feito or botao_gps else ""
         cartoes_mobile.append(
             f"<article class='cartao {classe_card}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
             f"<h2>{titulo_card}</h2><div class='meta'>{meta_card}</div></div>"
-            f"<div class='conteudo-card'>{corpo_acoes}</div>{botao_gps}</article>"
+            f"<div class='conteudo-card'>{corpo_acoes}</div>{rodape_card}</article>"
         )
 
     if cartoes_mobile:
@@ -1582,6 +1590,8 @@ if modo_url == "true":
             * { box-sizing: border-box; }
             html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Inter, Arial, sans-serif; }
             .barra { display:flex; justify-content:space-between; align-items:center; margin:0 4px 8px; color:#8da0b8; font-size:13px; }
+            .resumo-topo { display:flex; align-items:center; gap:6px; }
+            .feitas { color:#86efac; font-weight:800; background:rgba(22,163,74,.13); border:1px solid rgba(34,197,94,.28); padding:6px 9px; border-radius:999px; }
             .contador { color:#e4e8f4; font-weight:800; background:#151a31; border:1px solid #2b3654; padding:6px 10px; border-radius:999px; }
             .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
             .trilho::-webkit-scrollbar { display:none; }
@@ -1589,6 +1599,8 @@ if modo_url == "true":
             .cartao.preparacao { border-color:#2563eb; }
             .cartao.almoco { border-color:#f59e0b; }
             .cartao.retorno { border-color:#16a34a; }
+            .cartao.feita { border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.18),0 10px 28px rgba(0,0,0,.32); }
+            .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
             .topo-card { padding:18px 18px 13px; border-bottom:1px solid rgba(141,160,184,.18); }
             .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
             .almoco .selo { background:#92400e; color:#fef3c7; }
@@ -1607,7 +1619,11 @@ if modo_url == "true":
             .obra { color:#8da0b8; font-size:11.5px; font-style:italic; margin-top:7px; }
             .baixa { color:#86efac; font-size:12px; font-weight:800; margin-top:7px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
-            .gps { display:block; margin:10px 14px 15px; padding:14px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
+            .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
+            .marcar-feita { width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; }
+            .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
+            .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
+            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
             .controle { border:1px solid #303a59; background:#151a31; color:#e4e8f4; border-radius:10px; padding:10px 8px; font-weight:800; cursor:pointer; }
             .controle:disabled { opacity:.35; }
@@ -1615,7 +1631,7 @@ if modo_url == "true":
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
             .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
         </style></head><body>
-            <div class="barra"><span>↔️ Deslize o cartão</span><span id="contador" class="contador">1 de __TOTAL__</span></div>
+            <div class="barra"><span>↔️ Deslize • lembrete local</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
             <div id="trilho" class="trilho">__CARTOES__</div>
             <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
         <script>
@@ -1625,13 +1641,22 @@ if modo_url == "true":
             const anterior = document.getElementById('anterior');
             const proxima = document.getElementById('proxima');
             const pontos = document.getElementById('pontos');
+            const feitasEl = document.getElementById('feitas');
+            const prefixoLembrete = 'aproar_davi_feita_v1:';
             let atual = 0;
             cartoes.forEach((_, i) => { const p=document.createElement('button'); p.className='ponto'; p.onclick=()=>ir(i); pontos.appendChild(p); });
+            function chaveLocal(botao) { return prefixoLembrete + botao.dataset.chave; }
+            function lerLocal(botao) { try { return localStorage.getItem(chaveLocal(botao)) === '1'; } catch (_) { return botao.dataset.feita === '1'; } }
+            function salvarLocal(botao, feita) { try { if (feita) localStorage.setItem(chaveLocal(botao),'1'); else localStorage.removeItem(chaveLocal(botao)); } catch (_) {} }
+            function atualizarFeitas() { const botoes=Array.from(document.querySelectorAll('.marcar-feita')); const total=botoes.length; const feitas=botoes.filter(b=>b.dataset.feita==='1').length; feitasEl.textContent=`${feitas}/${total} ${feitas===1?'feita':'feitas'}`; }
+            function aplicarFeita(botao, feita, persistir=false) { const oficial=botao.dataset.oficial==='1'; feita=oficial||feita; botao.dataset.feita=feita?'1':'0'; botao.classList.toggle('ativa',feita); botao.closest('.cartao').classList.toggle('feita',feita); if(oficial){botao.textContent='✅ Concluída no sistema';botao.disabled=true;}else{botao.textContent=feita?'✅ Marcada como feita':'☐ Marcar '+botao.dataset.rotulo+' como feita';} if(persistir) salvarLocal(botao,feita); atualizarFeitas(); }
+            function alternarFeita(botao) { if(botao.dataset.oficial==='1') return; aplicarFeita(botao,botao.dataset.feita!=='1',true); }
+            function restaurarMarcacoes() { document.querySelectorAll('.marcar-feita').forEach(botao=>aplicarFeita(botao,botao.dataset.oficial==='1'||lerLocal(botao),false)); }
             function atualizar(i) { atual=Math.max(0,Math.min(cartoes.length-1,i)); contador.textContent=`${atual+1} de ${cartoes.length}`; anterior.disabled=atual===0; proxima.disabled=atual===cartoes.length-1; Array.from(pontos.children).forEach((p,j)=>p.classList.toggle('ativo',j===atual)); }
             function ir(i) { const indice=Math.max(0,Math.min(cartoes.length-1,i)); const alvo=cartoes[indice]; trilho.scrollTo({left:alvo.offsetLeft-trilho.offsetLeft,behavior:'smooth'}); atualizar(indice); }
             function mover(delta) { ir(atual+delta); }
             let timer; trilho.addEventListener('scroll',()=>{ clearTimeout(timer); timer=setTimeout(()=>{ const centro=trilho.scrollLeft+trilho.clientWidth/2; let melhor=0,dist=Infinity; cartoes.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-centro); if(d<dist){dist=d;melhor=i;} }); atualizar(melhor); },80); },{passive:true});
-            atualizar(0);
+            restaurarMarcacoes(); atualizar(0);
         </script></body></html>
         """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile)))
         st.components.v1.html(html_carrossel, height=520, scrolling=False)
