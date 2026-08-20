@@ -1590,13 +1590,20 @@ def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto):
     extensao = "png" if "png" in tipo else "webp" if "webp" in tipo else "jpg"
 
     demanda_id = str(tarefa.get("id", "") or "")
-    obra = str(tarefa.get("Obra", "") or "")
+    obra = str(tarefa.get("Obra", "") or "").strip()
     agora = datetime.now(FUSO_LOCAL)
+
+    # Nome da pasta da obra enviado ao Power Automate.
+    # Remove apenas caracteres que podem invalidar nomes/caminhos no OneDrive.
+    obra_pasta = re.sub(r'[\\/:*?"<>|#%]+', '-', obra).strip(' .-')
+    obra_pasta = re.sub(r'\s+', ' ', obra_pasta)[:100] or "OBRA-SEM-NOME"
+
+    # Identificação curta e clara no Explorer/OneDrive:
+    # ID do Trello + recebedor + data e hora.
     nome_arquivo = (
-        f"{agora.strftime('%d-%m-%Y_%H-%M-%S')}_"
-        f"{_nome_seguro_comprovante(obra)}_"
-        f"{_nome_seguro_comprovante(recebedor, 30)}_"
-        f"{_nome_seguro_comprovante(demanda_id[-8:] or 'SEM-ID', 12)}.{extensao}"
+        f"ID-{_nome_seguro_comprovante(demanda_id or 'SEM-ID', 32)}__"
+        f"REC-{_nome_seguro_comprovante(recebedor, 32)}__"
+        f"{agora.strftime('%d-%m-%Y_%H-%M-%S')}.{extensao}"
     )
 
     payload = {
@@ -1604,6 +1611,7 @@ def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto):
         "foto_base64": base64.b64encode(foto_bytes).decode("ascii"),
         "recebedor": recebedor,
         "obra": obra,
+        "obra_pasta": obra_pasta,
         "demanda_id": demanda_id,
     }
 
