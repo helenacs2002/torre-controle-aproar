@@ -1400,21 +1400,24 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 PLACA_DAVI = "TIF-2123"
+HORA_INICIO_ROTA_DAVI = "08:00"
 
 def obter_hora_inicio_rota(data_rota):
-    """Prioriza a saída da Strada do Davi e mantém compatibilidade com registros antigos."""
-    inicio_davi = fetch_one(
-        "SELECT hora_inicio FROM inicio_movimento WHERE placa=:placa AND data=:data",
-        {"placa": PLACA_DAVI, "data": data_rota},
-    )
-    if inicio_davi and inicio_davi[0]:
-        return str(inicio_davi[0])
+    """A rota do Davi é planejada para iniciar às 08:00.
 
-    primeiro_inicio = fetch_one(
-        "SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data",
-        {"data": data_rota},
-    )
-    return str(primeiro_inicio[0]) if primeiro_inicio and primeiro_inicio[0] else "07:30"
+    No dia da execução, se o rastreador já tiver registrado a saída real da
+    Strada do Davi, esse horário real passa a alimentar as previsões dinâmicas.
+    Para rota futura ou sem saída registrada, usa 08:00.
+    """
+    if data_rota == DATA_HOJE_REAL_STR:
+        inicio_davi = fetch_one(
+            "SELECT hora_inicio FROM inicio_movimento WHERE placa=:placa AND data=:data",
+            {"placa": PLACA_DAVI, "data": data_rota},
+        )
+        if inicio_davi and inicio_davi[0]:
+            return str(inicio_davi[0])
+
+    return HORA_INICIO_ROTA_DAVI
 
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     """Atualiza ETAs sem empurrar a rota de amanhã para o horário de agora.
@@ -1423,12 +1426,12 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     Para uma rota futura (ex.: planejamento do dia seguinte após 18h), conserva-se
     a linha do tempo planejada. A preparação inicial também permanece no horário
     planejado, evitando mensagens confusas como 20:37–21:07 para uma preparação
-    originalmente prevista para 07:00–07:30.
+    originalmente prevista para 07:30–08:00.
     """
     rota_eh_hoje = DATA_REF_ROTA_DATE == AGORA_REAL.date()
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
     agora_min_efetivo = (13 * 60 if 12 * 60 <= agora_min < 13 * 60 else agora_min) if rota_eh_hoje else None
-    current_min = parse_time_to_mins(start_time_str) if start_time_str else (7 * 60 + 30)
+    current_min = parse_time_to_mins(start_time_str) if start_time_str else (8 * 60)
 
     for indice_step, step in enumerate(route_steps):
         if step['type'] == 'lunch':
@@ -1923,7 +1926,7 @@ if modo_url == "true":
         df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
-    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "07:30"
+    except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, HORA_INICIO_ROTA_DAVI
 
     if not res:
         st.info("Nenhuma rota foi liberada pela Torre de Controle para hoje ainda. Aguarde a central calcular e tente atualizar a tela.")
@@ -3933,11 +3936,11 @@ with tab_rastreador:
                     index=placas_disponiveis.index(PLACA_DAVI) if PLACA_DAVI in placas_disponiveis else 0,
                     key="placa_inicio_manual",
                 )
-                hora_registrada = str(start_times.get(placa_manual, "07:30"))
+                hora_registrada = str(start_times.get(placa_manual, HORA_INICIO_ROTA_DAVI))
                 try:
                     hora_padrao = datetime.strptime(hora_registrada, "%H:%M").time()
                 except (TypeError, ValueError):
-                    hora_padrao = datetime.strptime("07:30", "%H:%M").time()
+                    hora_padrao = datetime.strptime(HORA_INICIO_ROTA_DAVI, "%H:%M").time()
                 hora_manual = col_hora.time_input(
                     "Horário real de saída",
                     value=hora_padrao,
@@ -4559,7 +4562,7 @@ with tab_roteiro:
         col_esq, col_dir = st.columns([1.2, 0.8])
         with col_esq:
             st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
-            st.caption(f"🕖 Expediente: 07:00 às 17:00  •  Início da Rota do Veículo: {hora_inicio_real}")
+            st.caption(f"🕖 Expediente: 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -4600,7 +4603,7 @@ with tab_roteiro:
             nova_previsao_str = format_mins_to_time(final_dyn_min)
             renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
             
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🏁 Saída do Pátio: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
+            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
             for i, step in enumerate(route_steps):
