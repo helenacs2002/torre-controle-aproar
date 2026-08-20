@@ -1387,6 +1387,23 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
     return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
+PLACA_DAVI = "TIF-2123"
+
+def obter_hora_inicio_rota(data_rota):
+    """Prioriza a saída da Strada do Davi e mantém compatibilidade com registros antigos."""
+    inicio_davi = fetch_one(
+        "SELECT hora_inicio FROM inicio_movimento WHERE placa=:placa AND data=:data",
+        {"placa": PLACA_DAVI, "data": data_rota},
+    )
+    if inicio_davi and inicio_davi[0]:
+        return str(inicio_davi[0])
+
+    primeiro_inicio = fetch_one(
+        "SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data",
+        {"data": data_rota},
+    )
+    return str(primeiro_inicio[0]) if primeiro_inicio and primeiro_inicio[0] else "07:30"
+
 def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
     agora_min_efetivo = 13*60 if 12*60 <= agora_min < 13*60 else agora_min
@@ -1556,8 +1573,7 @@ if modo_url == "true":
         res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
         df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
-        res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
+        hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
     except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, "07:30"
 
     if not res:
@@ -3116,6 +3132,55 @@ with tab_rastreador:
 
                 start_times = {row[0]: row[1] for row in fetch_all("SELECT placa, hora_inicio FROM inicio_movimento WHERE data=:data", {"data": DATA_HOJE_REAL_STR})}
 
+                st.markdown("#### ✏️ Corrigir início da rota")
+                st.caption(
+                    "Use quando o rastreador tiver sido consultado depois da saída. "
+                    "O horário salvo aqui passa a valer no roteiro e nas previsões do Davi."
+                )
+                placas_disponiveis = sorted({str(p.get("Placa", "")).strip() for p in posicoes if p.get("Placa")})
+                if PLACA_DAVI not in placas_disponiveis:
+                    placas_disponiveis.insert(0, PLACA_DAVI)
+
+                col_placa, col_hora, col_salvar = st.columns([1.2, 1, 1])
+                placa_manual = col_placa.selectbox(
+                    "Veículo",
+                    placas_disponiveis,
+                    index=placas_disponiveis.index(PLACA_DAVI) if PLACA_DAVI in placas_disponiveis else 0,
+                    key="placa_inicio_manual",
+                )
+                hora_registrada = str(start_times.get(placa_manual, "07:30"))
+                try:
+                    hora_padrao = datetime.strptime(hora_registrada, "%H:%M").time()
+                except (TypeError, ValueError):
+                    hora_padrao = datetime.strptime("07:30", "%H:%M").time()
+                hora_manual = col_hora.time_input(
+                    "Horário real de saída",
+                    value=hora_padrao,
+                    step=timedelta(minutes=1),
+                    key=f"hora_inicio_manual_{placa_manual}",
+                )
+                col_salvar.write("")
+                col_salvar.write("")
+                if col_salvar.button("💾 Salvar horário", type="primary", use_container_width=True, key="salvar_inicio_manual"):
+                    hora_manual_str = hora_manual.strftime("%H:%M")
+                    execute_db(
+                        """
+                        INSERT INTO inicio_movimento (placa, data, hora_inicio)
+                        VALUES (:placa, :data, :hora)
+                        ON CONFLICT (placa, data)
+                        DO UPDATE SET hora_inicio=EXCLUDED.hora_inicio
+                        """,
+                        {"placa": placa_manual, "data": DATA_HOJE_REAL_STR, "hora": hora_manual_str},
+                    )
+                    st.session_state["confirmacao_inicio_manual"] = (
+                        f"✅ Início da rota de {placa_manual} corrigido para {hora_manual_str}."
+                    )
+                    st.rerun()
+
+                confirmacao_inicio = st.session_state.pop("confirmacao_inicio_manual", "")
+                if confirmacao_inicio:
+                    st.success(confirmacao_inicio)
+
                 for p in posicoes: p['🟢 Início da Rota (Hoje)'] = start_times.get(p['Placa'], "Ainda não saiu (Raio 500m)")
 
                 velocidades = [p["Velocidade (km/h)"] for p in posicoes]
@@ -3512,8 +3577,7 @@ with tab_roteiro:
             
             past_route_steps = []
             
-            res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
-            current_time_tsp = parse_time_to_mins(res_inicio[0]) if res_inicio and res_inicio[0] else (7 * 60 + 30)
+            current_time_tsp = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
             current_point = ponto_saida
 
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
@@ -3696,8 +3760,7 @@ with tab_roteiro:
         except Exception:
             dict_checkins_torre = {}
         
-        res_inicio = fetch_one("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=:data", {"data": DATA_REF_ROTA_STR})
-        hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "07:30"
+        hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
         
         df_paradas = get_df("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=:data", {"data": DATA_REF_ROTA_STR})
 
