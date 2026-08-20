@@ -486,6 +486,59 @@ def _dados_grafico_resumo(df):
             return titulo, itens
     return None, []
 
+def _organizar_secoes_relatorio(titulo, tabelas):
+    """Separa o resumo e escolhe a tabela operacional principal de cada relatório."""
+    def normalizar(valor):
+        return re.sub(r"[^a-z0-9]+", " ", remover_acentos(str(valor or "")).lower()).strip()
+
+    resumo = next((df for nome, df in tabelas if normalizar(nome) == "resumo analitico"), pd.DataFrame())
+    dados = [(nome, df) for nome, df in tabelas if normalizar(nome) != "resumo analitico"]
+    if not dados:
+        return resumo, [], None
+
+    titulo_norm = normalizar(titulo)
+    indice_principal = None
+    preferencias = []
+    if "roteiro" in titulo_norm:
+        preferencias = ["paradas e demandas", "paradas"]
+    elif "fechamento" in titulo_norm:
+        preferencias = ["resumo", "gastos"]
+    elif "registros e historico" in titulo_norm:
+        preferencias = ["paradas rastreadas", "abastecimentos e manutencao"]
+    for preferencia in preferencias:
+        indice_principal = next((i for i, (nome, _) in enumerate(dados) if preferencia in normalizar(nome)), None)
+        if indice_principal is not None:
+            break
+    if indice_principal is None:
+        indice_principal = max(range(len(dados)), key=lambda i: len(dados[i][1]))
+
+    principal = dados[indice_principal]
+    ordenadas = [principal] + [item for i, item in enumerate(dados) if i != indice_principal]
+    return resumo, ordenadas, principal[0]
+
+def _colunas_relevantes_pdf(df, limite=9):
+    """Mantém no PDF as colunas de maior utilidade operacional quando a tabela é muito larga."""
+    if df is None or len(df.columns) <= limite:
+        return df
+
+    def pontuacao(coluna):
+        nome = remover_acentos(str(coluna)).lower()
+        regras = [
+            ("status", 120), ("situacao", 118), ("data", 115), ("placa", 112),
+            ("veiculo", 110), ("obra", 108), ("parada", 106), ("acao", 104),
+            ("origem", 102), ("destino", 101), ("local", 100), ("material", 98),
+            ("descricao", 96), ("prazo", 94), ("prioridade", 92), ("urgencia", 92),
+            ("tempo", 90), ("hora", 89), ("km", 88), ("distancia", 87),
+            ("custo", 86), ("valor", 85), ("litro", 84), ("manutencao", 83),
+            ("endereco", 80), ("estrategia", 78), ("responsavel", 76),
+        ]
+        return max((pontos for chave, pontos in regras if chave in nome), default=50)
+
+    posicoes = {coluna: indice for indice, coluna in enumerate(df.columns)}
+    escolhidas = sorted(df.columns, key=lambda coluna: (-pontuacao(coluna), posicoes[coluna]))[:limite]
+    escolhidas = sorted(escolhidas, key=lambda coluna: posicoes[coluna])
+    return df.loc[:, escolhidas]
+
 def _criar_csv_relatorio(tabelas):
     secoes = []
     for nome, df in tabelas:
@@ -597,7 +650,7 @@ def _criar_xlsx_basico(tabelas):
             arquivo.writestr(f"xl/worksheets/sheet{i}.xml", planilha)
     return saida.getvalue()
 
-def _criar_excel_relatorio(tabelas):
+def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
     def coluna_data_excel(coluna):
         nome = remover_acentos(str(coluna)).lower().strip()
         if "quantidade" in nome or "contagem" in nome:
@@ -625,6 +678,13 @@ def _criar_excel_relatorio(tabelas):
         nome = remover_acentos(str(coluna)).lower()
         return any(chave in nome for chave in ("numero da oc", "numero da cotacao", "solicitacoes"))
 
+    resumo_analitico, secoes_dados, _ = _organizar_secoes_relatorio(titulo, tabelas)
+    tabelas_excel = list(secoes_dados)
+    if not resumo_analitico.empty:
+        tabelas_excel.insert(1 if tabelas_excel else 0, ("Resumo Analítico", resumo_analitico))
+    if not tabelas_excel:
+        tabelas_excel = list(tabelas)
+
     try:
         saida = io.BytesIO()
         with pd.ExcelWriter(
@@ -632,28 +692,30 @@ def _criar_excel_relatorio(tabelas):
             engine_kwargs={"options": {"strings_to_formulas": False, "strings_to_urls": False}},
         ) as escritor:
             workbook = escritor.book
-            titulo_fmt = workbook.add_format({"bold": True, "font_size": 16, "font_color": "#FFFFFF", "bg_color": "#173B72", "align": "left", "valign": "vcenter"})
+            titulo_fmt = workbook.add_format({"bold": True, "font_size": 15, "font_color": "#FFFFFF", "bg_color": "#08B7B7", "align": "center", "valign": "vcenter"})
             meta_fmt = workbook.add_format({"font_size": 9, "font_color": "#64748B", "italic": True})
-            texto_fmt = workbook.add_format({"valign": "top", "text_wrap": True})
-            moeda_fmt = workbook.add_format({"num_format": 'R$ #,##0.00', "valign": "top"})
-            numero_fmt = workbook.add_format({"num_format": '#,##0.00', "valign": "top"})
-            data_fmt = workbook.add_format({"num_format": 'dd/mm/yyyy', "valign": "top"})
-            identificador_fmt = workbook.add_format({"num_format": "@", "valign": "top", "text_wrap": True})
-            cartao_rotulo_fmt = workbook.add_format({"bold": True, "font_size": 9, "font_color": "#173B72", "bg_color": "#DBEAFE", "align": "center", "valign": "vcenter", "border": 1, "border_color": "#BFDBFE"})
-            cartao_valor_fmt = workbook.add_format({"bold": True, "font_size": 18, "font_color": "#0F172A", "bg_color": "#FFFFFF", "align": "center", "valign": "vcenter", "border": 1, "border_color": "#BFDBFE"})
-            subtitulo_fmt = workbook.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "left", "valign": "vcenter"})
+            texto_fmt = workbook.add_format({"valign": "top", "text_wrap": True, "border": 1, "border_color": "#20C4C4"})
+            moeda_fmt = workbook.add_format({"num_format": 'R$ #,##0.00', "valign": "top", "border": 1, "border_color": "#20C4C4"})
+            numero_fmt = workbook.add_format({"num_format": '#,##0.00', "valign": "top", "border": 1, "border_color": "#20C4C4"})
+            data_fmt = workbook.add_format({"num_format": 'dd/mm/yyyy', "valign": "top", "border": 1, "border_color": "#20C4C4"})
+            identificador_fmt = workbook.add_format({"num_format": "@", "valign": "top", "text_wrap": True, "border": 1, "border_color": "#20C4C4"})
+            cartao_rotulo_fmt = workbook.add_format({"bold": True, "font_size": 8.5, "font_color": "#FFFFFF", "bg_color": "#4B4B4B", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
+            cartao_valor_fmt = workbook.add_format({"bold": True, "font_size": 13, "font_color": "#334155", "bg_color": "#F3FAF3", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#B7D9D9"})
+            subtitulo_fmt = workbook.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": "#08B7B7", "align": "left", "valign": "vcenter"})
+            cabecalho_tabela_fmt = workbook.add_format({"bold": True, "font_size": 9, "font_color": "#FFFFFF", "bg_color": "#08B7B7", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
             usados = set()
 
-            for nome, df_original in tabelas:
+            for ordem_item, (nome, df_original) in enumerate(tabelas_excel):
                 df = preparar_datas_excel(df_original)
                 nome_aba = _nome_aba_excel(nome, usados)
                 eh_resumo_analitico = nome_aba == "Resumo Analítico"
-                inicio_tabela = 18 if eh_resumo_analitico else 3
+                eh_principal = ordem_item == 0 and not eh_resumo_analitico
+                inicio_tabela = 18 if eh_resumo_analitico else 6 if eh_principal else 3
                 df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=inicio_tabela)
                 worksheet = escritor.sheets[nome_aba]
                 ultima_coluna = max(0, len(df.columns) - 1)
                 if eh_resumo_analitico:
-                    worksheet.merge_range(0, 0, 0, 13, str(nome), titulo_fmt)
+                    worksheet.merge_range(0, 0, 0, 13, f"{titulo.upper()} - ANÁLISES", titulo_fmt)
                     worksheet.merge_range(1, 0, 1, 13, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} indicador(es)", meta_fmt)
                     worksheet.set_row(0, 29)
                     worksheet.set_row(1, 19)
@@ -694,7 +756,7 @@ def _criar_excel_relatorio(tabelas):
                         worksheet.set_column(15, 16, None, None, {"hidden": True})
                         grafico = workbook.add_chart({"type": "doughnut"})
                         pontos = [{"fill": {"color": "#16A34A"}}, {"fill": {"color": "#F59E0B"}}]
-                        if "custos" in remover_acentos(titulo_grafico).lower(): pontos = [{"fill": {"color": "#2563EB"}}, {"fill": {"color": "#F59E0B"}}]
+                        if "custos" in remover_acentos(titulo_grafico).lower(): pontos = [{"fill": {"color": "#08B7B7"}}, {"fill": {"color": "#F59E0B"}}]
                         grafico.add_series({
                             "name": titulo_grafico,
                             "categories": [nome_aba, linha_auxiliar + 1, 15, linha_auxiliar + len(dados_grafico), 15],
@@ -702,7 +764,7 @@ def _criar_excel_relatorio(tabelas):
                             "points": pontos[:len(dados_grafico)],
                             "data_labels": {"percentage": True, "leader_lines": True},
                         })
-                        grafico.set_title({"name": titulo_grafico, "name_font": {"size": 12, "bold": True, "color": "#173B72"}})
+                        grafico.set_title({"name": titulo_grafico, "name_font": {"size": 12, "bold": True, "color": "#334155"}})
                         grafico.set_hole_size(58)
                         grafico.set_legend({"position": "bottom", "font": {"size": 9}})
                         grafico.set_chartarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
@@ -715,8 +777,8 @@ def _criar_excel_relatorio(tabelas):
                     if len(df):
                         worksheet.add_table(inicio_tabela, 0, inicio_tabela + len(df), ultima_coluna, {
                             "name": f"Tabela_{len(usados)}_ResumoAnalitico",
-                            "style": "Table Style Medium 2",
-                            "columns": [{"header": str(coluna)} for coluna in df.columns],
+                            "style": "Table Style Light 9",
+                            "columns": [{"header": str(coluna), "header_format": cabecalho_tabela_fmt} for coluna in df.columns],
                         })
                     worksheet.set_column(0, 0, 34, texto_fmt)
                     worksheet.set_column(1, 1, 22, texto_fmt)
@@ -727,33 +789,49 @@ def _criar_excel_relatorio(tabelas):
                     worksheet.freeze_panes(inicio_tabela + 1, 0)
                     continue
 
-                aba_de_dados = nome_aba in {"Base Completa", "OCs Fora do Prazo", "OCs Ignoradas"}
-                if ultima_coluna and not aba_de_dados:
-                    worksheet.merge_range(0, 0, 0, ultima_coluna, str(nome), titulo_fmt)
+                largura_modelo = max(ultima_coluna, 5 if eh_principal else ultima_coluna)
+                titulo_planilha = titulo.upper() if eh_principal else f"{titulo} - {nome}".upper()
+                if largura_modelo:
+                    worksheet.merge_range(0, 0, 0, largura_modelo, titulo_planilha, titulo_fmt)
                 else:
-                    worksheet.write(0, 0, str(nome), titulo_fmt)
-                    for coluna_titulo in range(1, ultima_coluna + 1): worksheet.write_blank(0, coluna_titulo, None, titulo_fmt)
-                tipo_linha = "indicador(es)" if nome_aba == "Resumo Analítico" else "registro(s)"
-                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {tipo_linha}", meta_fmt)
+                    worksheet.write(0, 0, titulo_planilha, titulo_fmt)
+                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} registro(s) • Seção: {nome}", meta_fmt)
                 worksheet.set_row(0, 27)
-                worksheet.set_row(3, 26)
-                worksheet.freeze_panes(4, 0)
+                worksheet.set_row(inicio_tabela, 28)
+                worksheet.freeze_panes(inicio_tabela + 1, 0)
                 worksheet.hide_gridlines(2)
                 worksheet.set_landscape()
                 worksheet.fit_to_pages(1, 0)
                 worksheet.set_margins(0.35, 0.35, 0.55, 0.55)
                 worksheet.set_footer("&LAPROAR Engenharia&CRelatório operacional&R Página &P de &N")
 
+                if eh_principal:
+                    total_colunas_painel = largura_modelo + 1
+                    worksheet.set_column(0, largura_modelo, 14)
+                    for indice_kpi, (_, indicador) in enumerate(resumo_analitico.head(6).iterrows()):
+                        coluna_inicial = (indice_kpi * total_colunas_painel) // 6
+                        coluna_final = ((indice_kpi + 1) * total_colunas_painel) // 6 - 1
+                        rotulo = str(indicador.get("Indicador", "Indicador"))
+                        resultado = str(indicador.get("Resultado", "-"))
+                        if coluna_inicial == coluna_final:
+                            worksheet.write(3, coluna_inicial, rotulo, cartao_rotulo_fmt)
+                            worksheet.write(4, coluna_inicial, resultado, cartao_valor_fmt)
+                        else:
+                            worksheet.merge_range(3, coluna_inicial, 3, coluna_final, rotulo, cartao_rotulo_fmt)
+                            worksheet.merge_range(4, coluna_inicial, 4, coluna_final, resultado, cartao_valor_fmt)
+                    worksheet.set_row(3, 31)
+                    worksheet.set_row(4, 34)
+
                 if len(df.columns):
                     if len(df):
-                        worksheet.add_table(3, 0, 3 + len(df), ultima_coluna, {
+                        worksheet.add_table(inicio_tabela, 0, inicio_tabela + len(df), ultima_coluna, {
                             "name": f"Tabela_{len(usados)}_{re.sub(r'[^A-Za-z0-9]', '', nome_aba)[:15] or 'Dados'}",
-                            "style": "Table Style Medium 2",
-                            "columns": [{"header": str(coluna)} for coluna in df.columns],
+                            "style": "Table Style Light 9",
+                            "columns": [{"header": str(coluna), "header_format": cabecalho_tabela_fmt} for coluna in df.columns],
                         })
                     else:
-                        cabecalho_fmt = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "center"})
-                        worksheet.set_row(3, 25, cabecalho_fmt)
+                        for indice, coluna in enumerate(df.columns):
+                            worksheet.write(inicio_tabela, indice, str(coluna), cabecalho_tabela_fmt)
 
                     for indice, coluna in enumerate(df.columns):
                         valores = df[coluna].astype(str).head(250).tolist()
@@ -766,25 +844,25 @@ def _criar_excel_relatorio(tabelas):
                         formato = identificador_fmt if coluna_identificador(coluna) else data_fmt if coluna_data_excel(coluna) else moeda_fmt if "r$" in nome_coluna or "custo" in nome_coluna or "valor" in nome_coluna or "manutencao" in nome_coluna else numero_fmt if nome_coluna in {"km", "litros", "distancia (km)"} else texto_fmt
                         worksheet.set_column(indice, indice, largura, formato)
                         if coluna_identificador(coluna):
-                            for deslocamento, valor in enumerate(df[coluna].tolist(), start=4):
+                            for deslocamento, valor in enumerate(df[coluna].tolist(), start=inicio_tabela + 1):
                                 texto_valor = "" if pd.isna(valor) else str(valor)
                                 worksheet.write_string(deslocamento, indice, texto_valor, identificador_fmt)
 
-                    for linha, valores in enumerate(df.astype(str).values.tolist(), start=4):
+                    for linha, valores in enumerate(df.astype(str).values.tolist(), start=inicio_tabela + 1):
                         maior_texto = max([len(valor) for valor in valores] + [0])
-                        altura = 32 if nome_aba == "Resumo Analítico" else min(72, 18 + 12 * max(0, maior_texto // 70))
+                        altura = min(72, 18 + 12 * max(0, maior_texto // 70))
                         worksheet.set_row(linha, altura)
 
                     for indice, coluna in enumerate(df.columns):
                         if "status" in remover_acentos(str(coluna)).lower() and len(df):
-                            intervalo = (4, indice, 3 + len(df), indice)
+                            intervalo = (inicio_tabela + 1, indice, inicio_tabela + len(df), indice)
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Dentro", "format": workbook.add_format({"bg_color": "#DCFCE7", "font_color": "#166534"})})
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Conclu", "format": workbook.add_format({"bg_color": "#DCFCE7", "font_color": "#166534"})})
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Fora", "format": workbook.add_format({"bg_color": "#FEE2E2", "font_color": "#991B1B"})})
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Sem Recebimento", "format": workbook.add_format({"bg_color": "#E2E8F0", "font_color": "#334155"})})
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "Pend", "format": workbook.add_format({"bg_color": "#FEF3C7", "font_color": "#92400E"})})
                         if "observacao" in remover_acentos(str(coluna)).lower() and len(df):
-                            intervalo = (4, indice, 3 + len(df), indice)
+                            intervalo = (inicio_tabela + 1, indice, inicio_tabela + len(df), indice)
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "corre", "format": workbook.add_format({"bg_color": "#FEF3C7", "font_color": "#92400E"})})
         return saida.getvalue()
     except (ImportError, ModuleNotFoundError):
@@ -796,26 +874,40 @@ def _criar_excel_relatorio(tabelas):
         saida = io.BytesIO()
         with pd.ExcelWriter(saida, engine="openpyxl") as escritor:
             usados = set()
-            for nome, df_original in tabelas:
+            for ordem_item, (nome, df_original) in enumerate(tabelas_excel):
                 df = preparar_datas_excel(df_original)
                 nome_aba = _nome_aba_excel(nome, usados)
-                df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=3)
+                eh_resumo_analitico = nome_aba == "Resumo Analítico"
+                eh_principal = ordem_item == 0 and not eh_resumo_analitico
+                inicio_tabela = 6 if eh_principal else 3
+                df.to_excel(escritor, sheet_name=nome_aba, index=False, startrow=inicio_tabela)
                 ws = escritor.sheets[nome_aba]
-                ultima_coluna = max(1, len(df.columns))
-                if nome_aba not in {"Base Completa", "OCs Fora do Prazo", "OCs Ignoradas"}:
-                    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ultima_coluna)
-                ws.cell(1, 1, str(nome))
+                ultima_coluna = max(6 if eh_principal else 1, len(df.columns))
+                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ultima_coluna)
+                ws.cell(1, 1, titulo.upper() if eh_principal else f"{titulo} - {nome}".upper())
                 ws.cell(1, 1).font = Font(bold=True, size=16, color="FFFFFF")
-                for coluna_titulo in range(1, ultima_coluna + 1): ws.cell(1, coluna_titulo).fill = PatternFill("solid", fgColor="173B72")
+                ws.cell(1, 1).alignment = Alignment(horizontal="center", vertical="center")
+                for coluna_titulo in range(1, ultima_coluna + 1): ws.cell(1, coluna_titulo).fill = PatternFill("solid", fgColor="08B7B7")
                 tipo_linha = "indicador(es)" if nome_aba == "Resumo Analítico" else "registro(s)"
                 ws.cell(2, 1, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {tipo_linha}")
                 ws.cell(2, 1).font = Font(size=9, italic=True, color="64748B")
-                ws.freeze_panes = "A5"
+                if eh_principal:
+                    for indice_kpi, (_, indicador) in enumerate(resumo_analitico.head(6).iterrows(), start=1):
+                        ws.cell(4, indice_kpi, str(indicador.get("Indicador", "Indicador")))
+                        ws.cell(5, indice_kpi, str(indicador.get("Resultado", "-")))
+                        ws.cell(4, indice_kpi).font = Font(bold=True, color="FFFFFF", size=9)
+                        ws.cell(4, indice_kpi).fill = PatternFill("solid", fgColor="4B4B4B")
+                        ws.cell(5, indice_kpi).font = Font(bold=True, color="334155", size=12)
+                        ws.cell(5, indice_kpi).fill = PatternFill("solid", fgColor="F3FAF3")
+                        ws.cell(4, indice_kpi).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                        ws.cell(5, indice_kpi).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                linha_cabecalho = inicio_tabela + 1
+                ws.freeze_panes = f"A{linha_cabecalho + 1}"
                 ws.sheet_view.showGridLines = False
-                ws.auto_filter.ref = f"A4:{get_column_letter(ultima_coluna)}{max(4, 4 + len(df))}"
-                for celula in ws[4]:
+                ws.auto_filter.ref = f"A{linha_cabecalho}:{get_column_letter(max(1, len(df.columns)))}{max(linha_cabecalho, linha_cabecalho + len(df))}"
+                for celula in ws[linha_cabecalho]:
                     celula.font = Font(bold=True, color="FFFFFF")
-                    celula.fill = PatternFill("solid", fgColor="2563EB")
+                    celula.fill = PatternFill("solid", fgColor="08B7B7")
                     celula.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 for indice, coluna in enumerate(df.columns, start=1):
                     valores = df[coluna].astype(str).head(250).tolist()
@@ -826,16 +918,16 @@ def _criar_excel_relatorio(tabelas):
                     elif nome_aba == "Resumo Analítico" and "indicador" in nome_coluna: largura = 34
                     else: largura = 52 if longa else min(32, max(12, maior + 2))
                     ws.column_dimensions[get_column_letter(indice)].width = largura
-                    for linha in range(5, 5 + len(df)):
+                    for linha in range(linha_cabecalho + 1, linha_cabecalho + 1 + len(df)):
                         ws.cell(linha, indice).alignment = Alignment(vertical="top", wrap_text=True)
                         if coluna_data_excel(coluna): ws.cell(linha, indice).number_format = "dd/mm/yyyy"
                         if coluna_identificador(coluna): ws.cell(linha, indice).number_format = "@"
                 if nome_aba == "Resumo Analítico":
-                    for linha in range(5, 5 + len(df)): ws.row_dimensions[linha].height = 32
+                    for linha in range(linha_cabecalho + 1, linha_cabecalho + 1 + len(df)): ws.row_dimensions[linha].height = 32
         return saida.getvalue()
     except (ImportError, ModuleNotFoundError):
         pass
-    return _criar_xlsx_basico(tabelas)
+    return _criar_xlsx_basico(tabelas_excel)
 
 def _texto_pdf(valor):
     bytes_texto = str(valor).encode("cp1252", errors="replace")
@@ -891,254 +983,172 @@ def _criar_pdf_relatorio(titulo, tabelas):
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_CENTER, TA_LEFT
-        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
-        from reportlab.graphics.charts.piecharts import Pie
-        from reportlab.graphics.shapes import Drawing, Rect, String
-        from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except (ImportError, ModuleNotFoundError):
         return _criar_pdf_textual(titulo, tabelas)
 
     def texto_pdf_limpo(valor):
         return str(valor).replace("—", "-").replace("–", "-").replace("‑", "-").replace("•", "-")
 
-    def paragrafo(valor, estilo):
-        texto = html_escape(texto_pdf_limpo(valor)).replace("\n", "<br/>")
+    def paragrafo(valor, estilo, limite=700):
+        texto = texto_pdf_limpo(valor)
+        if len(texto) > limite:
+            texto = texto[:limite - 3].rstrip() + "..."
+        texto = html_escape(texto).replace("\n", "<br/>")
         return Paragraph(texto or "-", estilo)
 
-    azul_escuro = colors.HexColor("#173B72")
-    azul = colors.HexColor("#2563EB")
-    azul_claro = colors.HexColor("#EFF6FF")
+    teal = colors.HexColor("#08B7B7")
+    teal_borda = colors.HexColor("#20C4C4")
+    cinza_escuro = colors.HexColor("#4B4B4B")
     cinza_fundo = colors.HexColor("#F8FAFC")
-    cinza_borda = colors.HexColor("#D8E1EC")
+    cinza_borda = colors.HexColor("#CBD5E1")
     cinza_texto = colors.HexColor("#475569")
-    largura_util = A4[0] - 30 * mm
+    verde_claro = colors.HexColor("#DDF4D5")
+    amarelo_claro = colors.HexColor("#FEF3C7")
+    vermelho_claro = colors.HexColor("#FECACA")
+    pagina = landscape(A4)
+    largura_util = pagina[0] - 24 * mm
 
     estilos = getSampleStyleSheet()
-    estilo_titulo = ParagraphStyle("TituloAproar", parent=estilos["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=azul_escuro, alignment=TA_LEFT, spaceAfter=5)
-    estilo_meta = ParagraphStyle("MetaAproar", parent=estilos["Normal"], fontName="Helvetica", fontSize=8.5, leading=11, textColor=cinza_texto, spaceAfter=12)
-    estilo_secao = ParagraphStyle("SecaoAproar", parent=estilos["Heading2"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=colors.white, backColor=azul, borderPadding=(6, 8, 6, 8), spaceBefore=5, spaceAfter=7, keepWithNext=1)
-    estilo_cabecalho = ParagraphStyle("CabecalhoTabela", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.5, leading=9, textColor=colors.white, alignment=TA_CENTER)
-    estilo_celula = ParagraphStyle("CelulaTabela", parent=estilos["Normal"], fontName="Helvetica", fontSize=7.3, leading=9.2, textColor=colors.HexColor("#1E293B"))
-    estilo_rotulo = ParagraphStyle("RotuloCard", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.3, leading=9, textColor=azul_escuro)
-    estilo_valor = ParagraphStyle("ValorCard", parent=estilos["Normal"], fontName="Helvetica", fontSize=7.8, leading=10, textColor=colors.HexColor("#1E293B"))
-    estilo_card_titulo = ParagraphStyle("TituloCard", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=9, leading=11, textColor=colors.white)
-    estilo_vazio = ParagraphStyle("Vazio", parent=estilos["Normal"], fontName="Helvetica-Oblique", fontSize=8.5, textColor=cinza_texto)
-    estilo_kpi_rotulo = ParagraphStyle("RotuloKPI", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=8.2, leading=10, textColor=azul_escuro, alignment=TA_CENTER)
-    estilo_kpi_valor = ParagraphStyle("ValorKPI", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=16, leading=19, textColor=colors.HexColor("#0F172A"), alignment=TA_CENTER)
-    estilo_subsecao = ParagraphStyle("SubsecaoAnalitica", parent=estilos["Heading3"], fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=azul_escuro, spaceBefore=6, spaceAfter=5)
+    estilo_titulo = ParagraphStyle("TituloModelo", parent=estilos["Title"], fontName="Helvetica-Bold", fontSize=13, leading=16, textColor=colors.white, alignment=TA_CENTER)
+    estilo_meta = ParagraphStyle("MetaModelo", parent=estilos["Normal"], fontName="Helvetica", fontSize=8, leading=10, textColor=cinza_texto, alignment=TA_LEFT)
+    estilo_secao = ParagraphStyle("SecaoModelo", parent=estilos["Heading2"], fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=colors.white, backColor=teal, borderPadding=(5, 7, 5, 7), spaceBefore=7, spaceAfter=0, keepWithNext=1)
+    estilo_cabecalho = ParagraphStyle("CabecalhoModelo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.5, textColor=colors.white, alignment=TA_CENTER)
+    estilo_celula = ParagraphStyle("CelulaModelo", parent=estilos["Normal"], fontName="Helvetica", fontSize=6.8, leading=8.4, textColor=colors.HexColor("#334155"))
+    estilo_kpi_rotulo = ParagraphStyle("RotuloKPIModelo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.5, textColor=colors.white, alignment=TA_CENTER)
+    estilo_kpi_valor = ParagraphStyle("ValorKPIModelo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=colors.HexColor("#334155"), alignment=TA_CENTER)
+    estilo_vazio = ParagraphStyle("VazioModelo", parent=estilos["Normal"], fontName="Helvetica-Oblique", fontSize=8, textColor=cinza_texto, spaceBefore=5, spaceAfter=7)
 
     titulo_limpo = texto_pdf_limpo(titulo)
-    total_registros = sum(len(df) for nome, df in tabelas if remover_acentos(str(nome)).lower() != "resumo analitico")
+    resumo_analitico, secoes_dados, _ = _organizar_secoes_relatorio(titulo, tabelas)
+    total_registros = sum(len(df) for _, df in secoes_dados)
     saida = io.BytesIO()
     documento = SimpleDocTemplate(
-        saida, pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm,
-        topMargin=23 * mm, bottomMargin=16 * mm,
+        saida, pagesize=pagina, rightMargin=12 * mm, leftMargin=12 * mm,
+        topMargin=19 * mm, bottomMargin=14 * mm,
         title=titulo_limpo, author="APROAR Engenharia",
     )
 
     def cabecalho_rodape(canvas, doc):
-        largura, altura = A4
+        largura, altura = pagina
         canvas.saveState()
-        canvas.setFillColor(azul_escuro)
-        canvas.rect(0, altura - 14 * mm, largura, 14 * mm, stroke=0, fill=1)
+        canvas.setFillColor(cinza_escuro)
+        canvas.rect(0, altura - 10 * mm, largura, 10 * mm, stroke=0, fill=1)
         canvas.setFillColor(colors.white)
-        canvas.setFont("Helvetica-Bold", 10)
-        canvas.drawString(15 * mm, altura - 9 * mm, "APROAR ENGENHARIA")
-        canvas.setFont("Helvetica", 7.5)
-        canvas.drawRightString(largura - 15 * mm, altura - 9 * mm, "Torre de Controle Logístico")
+        canvas.setFont("Helvetica-Bold", 8.5)
+        canvas.drawString(12 * mm, altura - 6.5 * mm, "APROAR ENGENHARIA")
+        canvas.setFont("Helvetica", 7)
+        canvas.drawRightString(largura - 12 * mm, altura - 6.5 * mm, "Torre de Controle Logístico")
         canvas.setStrokeColor(cinza_borda)
-        canvas.line(15 * mm, 11 * mm, largura - 15 * mm, 11 * mm)
+        canvas.line(12 * mm, 9 * mm, largura - 12 * mm, 9 * mm)
         canvas.setFillColor(cinza_texto)
         canvas.setFont("Helvetica", 7)
-        canvas.drawString(15 * mm, 7 * mm, "Relatório operacional")
-        canvas.drawRightString(largura - 15 * mm, 7 * mm, f"Página {doc.page}")
+        canvas.drawString(12 * mm, 5 * mm, "Relatório operacional")
+        canvas.drawRightString(largura - 12 * mm, 5 * mm, f"Página {doc.page}")
         canvas.restoreState()
 
+    faixa_titulo = Table([[Paragraph(html_escape(titulo_limpo.upper()), estilo_titulo)]], colWidths=[largura_util], rowHeights=[26])
+    faixa_titulo.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), teal), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
     elementos = [
-        Paragraph(html_escape(titulo_limpo), estilo_titulo),
-        Paragraph(
-            f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} &nbsp;&nbsp;|&nbsp;&nbsp; {total_registros} registro(s)",
-            estilo_meta,
-        ),
+        faixa_titulo,
+        Spacer(1, 5),
+        Paragraph(f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} &nbsp;&nbsp;|&nbsp;&nbsp; {total_registros} registro(s)", estilo_meta),
+        Spacer(1, 7),
     ]
 
-    for nome, df in tabelas:
-        tipo_linha = "indicador(es)" if remover_acentos(str(nome)).lower() == "resumo analitico" else "registro(s)"
-        cabecalho_secao = Paragraph(f"{html_escape(texto_pdf_limpo(nome))} &nbsp; • &nbsp; {len(df)} {tipo_linha}", estilo_secao)
-        elementos.append(cabecalho_secao)
-        if df.empty or not len(df.columns):
-            elementos.extend([Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio), Spacer(1, 8)])
+    if not resumo_analitico.empty:
+        kpis = resumo_analitico.head(6)
+        dados_kpi = [
+            [paragrafo(linha.get("Indicador", "Indicador"), estilo_kpi_rotulo, 90) for _, linha in kpis.iterrows()],
+            [paragrafo(linha.get("Resultado", "-"), estilo_kpi_valor, 80) for _, linha in kpis.iterrows()],
+        ]
+        while len(dados_kpi[0]) < 6:
+            dados_kpi[0].append("")
+            dados_kpi[1].append("")
+        painel_kpi = Table(dados_kpi, colWidths=[largura_util / 6] * 6, rowHeights=[28, 32])
+        painel_kpi.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), cinza_escuro),
+            ("BACKGROUND", (0, 1), (-1, 1), verde_claro),
+            ("GRID", (0, 0), (-1, -1), 0.55, colors.white),
+            ("BOX", (0, 0), (-1, -1), 0.55, cinza_borda),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        elementos.extend([painel_kpi, Spacer(1, 6)])
+
+    for nome, df_original in secoes_dados:
+        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome).upper())} &nbsp; - &nbsp; {len(df_original)} registro(s)", estilo_secao))
+        if df_original.empty or not len(df_original.columns):
+            elementos.append(Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio))
             continue
 
-        eh_resumo_analitico = remover_acentos(str(nome)).lower() == "resumo analitico"
-        if eh_resumo_analitico:
-            largura_cartao = (largura_util - 8) / 2
-            cartoes, linha_cartoes = [], []
-            for _, indicador in df.head(6).iterrows():
-                cartao = Table([
-                    [paragrafo(indicador.get("Indicador", "Indicador"), estilo_kpi_rotulo)],
-                    [paragrafo(indicador.get("Resultado", "-"), estilo_kpi_valor)],
-                ], colWidths=[largura_cartao], rowHeights=[24, 35])
-                cartao.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (0, 0), azul_claro),
-                    ("BACKGROUND", (0, 1), (0, 1), colors.white),
-                    ("BOX", (0, 0), (-1, -1), 0.7, cinza_borda),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ]))
-                linha_cartoes.append(cartao)
-                if len(linha_cartoes) == 2:
-                    cartoes.append(linha_cartoes)
-                    linha_cartoes = []
-            if linha_cartoes:
-                linha_cartoes.append("")
-                cartoes.append(linha_cartoes)
-            painel_kpis = Table(cartoes, colWidths=[largura_cartao, largura_cartao], hAlign="LEFT")
-            painel_kpis.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ]))
-            elementos.extend([painel_kpis, Spacer(1, 6)])
+        df = _colunas_relevantes_pdf(df_original, limite=9)
+        pesos = []
+        for coluna in df.columns:
+            nome_coluna = remover_acentos(str(coluna)).lower()
+            amostra = [len(str(coluna))] + [len(str(valor)) for valor in df[coluna].astype(str).head(80)]
+            peso = max(8, min(30, max(amostra)))
+            if any(chave in nome_coluna for chave in ("material", "descricao", "endereco", "observacao")):
+                peso = max(peso, 25)
+            pesos.append(peso)
+        total_pesos = sum(pesos) or 1
+        larguras = [largura_util * peso / total_pesos for peso in pesos]
+        dados_tabela = [[paragrafo(coluna, estilo_cabecalho, 70) for coluna in df.columns]]
+        dados_tabela.extend([[paragrafo(valor, estilo_celula) for valor in linha] for linha in df.astype(str).values.tolist()])
+        tabela = Table(dados_tabela, colWidths=larguras, repeatRows=1, hAlign="LEFT")
+        comandos = [
+            ("BACKGROUND", (0, 0), (-1, 0), teal),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("GRID", (0, 0), (-1, -1), 0.35, teal_borda),
+        ]
+        for indice_linha in range(1, len(dados_tabela)):
+            comandos.append(("BACKGROUND", (0, indice_linha), (-1, indice_linha), cinza_fundo if indice_linha % 2 == 0 else colors.white))
+        for indice_coluna, coluna in enumerate(df.columns):
+            nome_coluna = remover_acentos(str(coluna)).lower()
+            if "status" not in nome_coluna and "situacao" not in nome_coluna:
+                continue
+            for indice_linha, valor in enumerate(df[coluna].astype(str), start=1):
+                texto_status = remover_acentos(valor).lower()
+                cor = verde_claro if re.search(r"conclu|entregue|dentro", texto_status) else vermelho_claro if re.search(r"fora|atras|vencid", texto_status) else amarelo_claro if re.search(r"pend|aguard", texto_status) else None
+                if cor:
+                    comandos.append(("BACKGROUND", (indice_coluna, indice_linha), (indice_coluna, indice_linha), cor))
+        tabela.setStyle(TableStyle(comandos))
+        elementos.extend([tabela, Spacer(1, 7)])
 
-            titulo_grafico, dados_grafico = _dados_grafico_resumo(df)
-            if dados_grafico:
-                desenho = Drawing(largura_util, 118)
-                grafico = Pie()
-                grafico.x, grafico.y, grafico.width, grafico.height = 16, 7, 103, 103
-                grafico.data = [valor for _, valor in dados_grafico]
-                grafico.labels = None
-                grafico.slices.strokeColor = colors.white
-                grafico.slices.strokeWidth = 1
-                cores_grafico = [colors.HexColor("#16A34A"), colors.HexColor("#F59E0B")]
-                if "custos" in remover_acentos(titulo_grafico).lower():
-                    cores_grafico = [azul, colors.HexColor("#F59E0B")]
-                for indice_cor, cor in enumerate(cores_grafico[:len(dados_grafico)]):
-                    grafico.slices[indice_cor].fillColor = cor
-                desenho.add(grafico)
-                desenho.add(String(145, 94, titulo_grafico, fontName="Helvetica-Bold", fontSize=11, fillColor=azul_escuro))
-                for indice_item, ((rotulo, valor), cor) in enumerate(zip(dados_grafico, cores_grafico)):
-                    y = 68 - indice_item * 30
-                    desenho.add(Rect(146, y - 2, 10, 10, fillColor=cor, strokeColor=cor))
-                    valor_legenda = f"{valor:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    if "custos" in remover_acentos(titulo_grafico).lower(): valor_legenda = f"R$ {valor_legenda}"
-                    desenho.add(String(164, y, f"{rotulo}: {valor_legenda}", fontName="Helvetica", fontSize=9, fillColor=cinza_texto))
-                elementos.extend([desenho, Spacer(1, 2)])
-
-            complementares = df.iloc[6:][["Indicador", "Resultado"]] if len(df) > 6 else pd.DataFrame()
-            if not complementares.empty:
-                elementos.append(Paragraph("Indicadores complementares", estilo_subsecao))
-                dados_complementares = [[paragrafo("Indicador", estilo_cabecalho), paragrafo("Resultado", estilo_cabecalho)]]
-                dados_complementares.extend([[paragrafo(linha["Indicador"], estilo_celula), paragrafo(linha["Resultado"], estilo_celula)] for _, linha in complementares.iterrows()])
-                tabela_complementares = Table(dados_complementares, colWidths=[largura_util * 0.68, largura_util * 0.32], repeatRows=1)
-                tabela_complementares.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), azul_escuro), ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ]))
-                elementos.extend([tabela_complementares, Spacer(1, 5)])
-
-            leituras = df[df["Leitura para análise"].astype(str).str.strip() != ""][["Indicador", "Leitura para análise"]]
-            if not leituras.empty:
-                elementos.append(Paragraph("Leituras gerenciais", estilo_subsecao))
-                dados_leituras = [[paragrafo("Indicador", estilo_cabecalho), paragrafo("Interpretação", estilo_cabecalho)]]
-                dados_leituras.extend([[paragrafo(linha["Indicador"], estilo_celula), paragrafo(linha["Leitura para análise"], estilo_celula)] for _, linha in leituras.iterrows()])
-                tabela_leituras = Table(dados_leituras, colWidths=[largura_util * 0.36, largura_util * 0.64], repeatRows=1)
-                tabela_leituras.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), azul), ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
-                    ("BACKGROUND", (0, 1), (-1, -1), cinza_fundo), ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ]))
-                elementos.extend([tabela_leituras, Spacer(1, 10)])
-            continue
-
-        maximo_texto = max([len(str(valor)) for valor in df.astype(str).head(100).values.flatten()] + [0])
-        usar_tabela = len(df.columns) <= 6 and maximo_texto <= 45
-
-        if usar_tabela:
-            pesos = []
-            for coluna in df.columns:
-                amostra = [len(str(coluna))] + [len(str(valor)) for valor in df[coluna].astype(str).head(100)]
-                pesos.append(max(8, min(28, max(amostra))))
-            total_pesos = sum(pesos) or 1
-            larguras = [largura_util * peso / total_pesos for peso in pesos]
-            dados_tabela = [[paragrafo(coluna, estilo_cabecalho) for coluna in df.columns]]
-            dados_tabela.extend([[paragrafo(valor, estilo_celula) for valor in linha] for linha in df.astype(str).values.tolist()])
-            tabela = Table(dados_tabela, colWidths=larguras, repeatRows=1, hAlign="LEFT")
-            comandos = [
-                ("BACKGROUND", (0, 0), (-1, 0), azul_escuro),
+    if not resumo_analitico.empty:
+        leituras = resumo_analitico[resumo_analitico["Leitura para análise"].astype(str).str.strip() != ""]
+        complementares = resumo_analitico.iloc[6:]
+        analises = pd.concat([leituras, complementares], ignore_index=True).drop_duplicates(subset=["Indicador"])
+        if not analises.empty:
+            elementos.append(Paragraph("ANÁLISES COMPLEMENTARES", estilo_secao))
+            dados_analise = [[
+                paragrafo("Indicador", estilo_cabecalho),
+                paragrafo("Resultado", estilo_cabecalho),
+                paragrafo("Interpretação", estilo_cabecalho),
+            ]]
+            dados_analise.extend([
+                [paragrafo(linha.get("Indicador", ""), estilo_celula), paragrafo(linha.get("Resultado", ""), estilo_celula), paragrafo(linha.get("Leitura para análise", ""), estilo_celula)]
+                for _, linha in analises.iterrows()
+            ])
+            tabela_analise = Table(dados_analise, colWidths=[largura_util * 0.27, largura_util * 0.18, largura_util * 0.55], repeatRows=1)
+            tabela_analise.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), cinza_escuro),
+                ("BACKGROUND", (0, 1), (-1, -1), cinza_fundo),
+                ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("GRID", (0, 0), (-1, -1), 0.35, cinza_borda),
-            ]
-            for linha in range(1, len(dados_tabela)):
-                comandos.append(("BACKGROUND", (0, linha), (-1, linha), cinza_fundo if linha % 2 == 0 else colors.white))
-            tabela.setStyle(TableStyle(comandos))
-            elementos.extend([tabela, Spacer(1, 10)])
-            continue
-
-        chaves_titulo = ["Obra", "Placa", "Veículo", "Local", "Data", "Destino"]
-        campos_longos = ("material", "endereco", "observacao", "motivo", "descrição")
-        # Nos relatórios em cartões, o título da seção acompanha obrigatoriamente
-        # o primeiro registro, evitando um cabeçalho isolado no fim da página.
-        if elementos and elementos[-1] is cabecalho_secao:
-            elementos.pop()
-        for numero, (_, registro) in enumerate(df.iterrows(), start=1):
-            chave_principal = next((chave for chave in chaves_titulo if chave in df.columns and str(registro.get(chave, "")).strip()), None)
-            titulo_registro = f"Registro {numero:02d}"
-            if chave_principal:
-                titulo_registro += f" - {registro.get(chave_principal, '')}"
-            linhas_card = [[paragrafo(titulo_registro, estilo_card_titulo), "", "", ""]]
-            compactos, longos = [], []
-            for coluna, valor in registro.items():
-                valor_texto = str(valor).strip()
-                if not valor_texto:
-                    continue
-                coluna_normalizada = remover_acentos(str(coluna)).lower()
-                if len(valor_texto) > 70 or any(chave in coluna_normalizada for chave in campos_longos):
-                    longos.append((coluna, valor_texto))
-                else:
-                    compactos.append((coluna, valor_texto))
-            for inicio in range(0, len(compactos), 2):
-                par = compactos[inicio:inicio + 2]
-                linha = [paragrafo(par[0][0], estilo_rotulo), paragrafo(par[0][1], estilo_valor)]
-                linha += [paragrafo(par[1][0], estilo_rotulo), paragrafo(par[1][1], estilo_valor)] if len(par) > 1 else ["", ""]
-                linhas_card.append(linha)
-            indices_longos = []
-            for coluna, valor in longos:
-                indices_longos.append(len(linhas_card))
-                linhas_card.append([paragrafo(coluna, estilo_rotulo), paragrafo(valor, estilo_valor), "", ""])
-
-            tabela_card = Table(linhas_card, colWidths=[31 * mm, 61 * mm, 31 * mm, 61 * mm], hAlign="LEFT", repeatRows=1)
-            comandos = [
-                ("SPAN", (0, 0), (3, 0)), ("BACKGROUND", (0, 0), (3, 0), azul_escuro),
-                ("BOX", (0, 0), (3, -1), 0.6, cinza_borda),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
-                ("BACKGROUND", (0, 1), (0, -1), azul_claro),
-                ("BACKGROUND", (2, 1), (2, -1), azul_claro),
-                ("LINEBELOW", (0, 1), (-1, -2), 0.3, cinza_borda),
-            ]
-            for indice_longo in indices_longos:
-                comandos.extend([
-                    ("SPAN", (1, indice_longo), (3, indice_longo)),
-                    ("BACKGROUND", (0, indice_longo), (0, indice_longo), azul_claro),
-                    ("BACKGROUND", (1, indice_longo), (3, indice_longo), cinza_fundo),
-                ])
-            tabela_card.setStyle(TableStyle(comandos))
-            conteudo_card = [tabela_card, Spacer(1, 7)]
-            if numero == 1:
-                conteudo_card.insert(0, cabecalho_secao)
-            elementos.append(KeepTogether(conteudo_card))
-        elementos.append(Spacer(1, 4))
+                ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            elementos.append(tabela_analise)
 
     documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
     return saida.getvalue()
@@ -1153,7 +1163,7 @@ def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
     if formato == "CSV":
         arquivo, extensao, mime = _criar_csv_relatorio(tabelas), "csv", "text/csv"
     elif formato == "Excel":
-        arquivo, extensao, mime = _criar_excel_relatorio(tabelas), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        arquivo, extensao, mime = _criar_excel_relatorio(tabelas, titulo), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     else:
         arquivo, extensao, mime = _criar_pdf_relatorio(titulo, tabelas), "pdf", "application/pdf"
     col_download.download_button(
