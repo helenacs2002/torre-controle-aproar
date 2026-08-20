@@ -1548,6 +1548,80 @@ def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
             {"data": data_rota, "indice": etapa_indice, "destino": destino},
         )
 
+
+# =====================================================================
+# COMPROVANTE DE ENTREGA — POWER AUTOMATE / ONEDRIVE
+# Implementação isolada: não altera banco, Trello, rota ou check-ins.
+# =====================================================================
+def _nome_seguro_comprovante(valor, limite=45):
+    texto = remover_acentos(str(valor or "")).upper().strip()
+    texto = re.sub(r"[^A-Z0-9]+", "-", texto).strip("-")
+    return (texto[:limite] or "SEM-NOME")
+
+
+def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto):
+    """Envia uma foto para o fluxo do Power Automate configurado em st.secrets."""
+    recebedor = str(recebedor or "").strip()
+    if not recebedor:
+        return False, "Informe quem recebeu o material."
+    if foto is None:
+        return False, "Tire ou selecione uma foto antes de enviar."
+
+    try:
+        flow_url = str(st.secrets["onedrive"]["flow_url"]).strip()
+    except Exception:
+        return False, "O Secret [onedrive].flow_url não está configurado no Streamlit."
+
+    if not flow_url:
+        return False, "O endereço do Power Automate está vazio nos Secrets."
+
+    try:
+        foto_bytes = foto.getvalue()
+    except Exception:
+        try:
+            foto_bytes = foto.read()
+        except Exception:
+            foto_bytes = b""
+
+    if not foto_bytes:
+        return False, "A foto está vazia. Tire a foto novamente."
+
+    tipo = str(getattr(foto, "type", "") or "").lower()
+    extensao = "png" if "png" in tipo else "webp" if "webp" in tipo else "jpg"
+
+    demanda_id = str(tarefa.get("id", "") or "")
+    obra = str(tarefa.get("Obra", "") or "")
+    agora = datetime.now(FUSO_LOCAL)
+    nome_arquivo = (
+        f"{agora.strftime('%d-%m-%Y_%H-%M-%S')}_"
+        f"{_nome_seguro_comprovante(obra)}_"
+        f"{_nome_seguro_comprovante(recebedor, 30)}_"
+        f"{_nome_seguro_comprovante(demanda_id[-8:] or 'SEM-ID', 12)}.{extensao}"
+    )
+
+    payload = {
+        "nome_arquivo": nome_arquivo,
+        "foto_base64": base64.b64encode(foto_bytes).decode("ascii"),
+        "recebedor": recebedor,
+        "obra": obra,
+        "demanda_id": demanda_id,
+    }
+
+    try:
+        resposta = requests.post(flow_url, json=payload, timeout=45)
+        if 200 <= resposta.status_code < 300:
+            return True, nome_arquivo
+
+        detalhe = (resposta.text or "").replace("\n", " ").strip()
+        if len(detalhe) > 220:
+            detalhe = detalhe[:220] + "..."
+        return False, f"Power Automate respondeu HTTP {resposta.status_code}. {detalhe}".strip()
+    except requests.Timeout:
+        return False, "O Power Automate demorou demais para responder. Tente novamente."
+    except Exception as erro:
+        return False, f"Não foi possível enviar a foto: {erro}"
+
+
 # =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
@@ -1627,6 +1701,102 @@ if modo_url == "true":
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
     renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+
+
+    # ---------------------------------------------------------------
+    # COMPROVANTE DE ENTREGA
+    # Fica somente no modo mobile e só faz chamada externa ao clicar.
+    # ---------------------------------------------------------------
+    entregas_para_comprovar = []
+    numero_parada_comprovante = 0
+    for indice_step, step_comprovante in enumerate(route_steps):
+        if step_comprovante.get("type") != "stop":
+            continue
+        destino_comprovante = str(step_comprovante.get("destino", ""))
+        is_inicio_comprovante = (indice_step == 0 and destino_comprovante == p_saida)
+        if not is_inicio_comprovante:
+            numero_parada_comprovante += 1
+
+        for acao_comprovante, tarefa_comprovante in step_comprovante.get("actions", []):
+            if acao_comprovante != "ENTREGAR":
+                continue
+            card_id_comprovante = str(tarefa_comprovante.get("id", "") or "")
+            rotulo = (
+                f"Parada {max(1, numero_parada_comprovante)} • "
+                f"{str(tarefa_comprovante.get('Obra', '') or '')} • "
+                f"{str(tarefa_comprovante.get('Materiais', '') or '')[:70]}"
+            )
+            entregas_para_comprovar.append(
+                (rotulo, card_id_comprovante, tarefa_comprovante)
+            )
+
+    if entregas_para_comprovar:
+        with st.expander("📷 Registrar comprovante de entrega", expanded=False):
+            opcoes_comprovante = {
+                f"{indice + 1}. {item[0]}": item
+                for indice, item in enumerate(entregas_para_comprovar)
+            }
+            escolha_comprovante = st.selectbox(
+                "Entrega",
+                list(opcoes_comprovante.keys()),
+                key="davi_comprovante_entrega",
+            )
+            _, demanda_id_escolhida_comprovante, tarefa_escolhida_comprovante = opcoes_comprovante[escolha_comprovante]
+            chave_comprovante = _nome_seguro_comprovante(demanda_id_escolhida_comprovante or "SEM-ID", 20)
+
+            st.caption(
+                f"Obra: {tarefa_escolhida_comprovante.get('Obra', '')} • "
+                f"Material: {tarefa_escolhida_comprovante.get('Materiais', '')}"
+            )
+
+            recebedor_comprovante = st.text_input(
+                "👤 Quem recebeu?",
+                placeholder="Ex.: João da Silva",
+                key=f"davi_comprovante_recebedor_{chave_comprovante}",
+            )
+
+            modo_foto_comprovante = st.radio(
+                "Foto",
+                ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
+                horizontal=True,
+                key=f"davi_comprovante_modo_foto_{chave_comprovante}",
+            )
+
+            if modo_foto_comprovante == "📷 Tirar foto agora":
+                foto_comprovante = st.camera_input(
+                    "Foto do material entregue",
+                    key=f"davi_comprovante_camera_{chave_comprovante}",
+                )
+            else:
+                foto_comprovante = st.file_uploader(
+                    "Selecione a foto do material",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    accept_multiple_files=False,
+                    key=f"davi_comprovante_arquivo_{chave_comprovante}",
+                )
+
+            if st.button(
+                "✅ ENVIAR COMPROVANTE",
+                type="primary",
+                use_container_width=True,
+                key=f"davi_enviar_comprovante_{chave_comprovante}",
+            ):
+                if not str(recebedor_comprovante or "").strip():
+                    st.error("Informe quem recebeu o material.")
+                elif foto_comprovante is None:
+                    st.error("Tire ou selecione uma foto.")
+                else:
+                    with st.spinner("Enviando comprovante para o OneDrive..."):
+                        sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
+                            tarefa_escolhida_comprovante,
+                            recebedor_comprovante,
+                            foto_comprovante,
+                        )
+                    if sucesso_comprovante:
+                        st.success(f"✅ Foto enviada com sucesso: {retorno_comprovante}")
+                    else:
+                        st.error(retorno_comprovante)
+
 
     st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
     st.caption("Deslize para o lado para avançar pelas etapas da rota.")
