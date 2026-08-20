@@ -938,33 +938,203 @@ def _texto_pdf(valor):
     )
 
 def _criar_pdf_textual(titulo, tabelas):
-    """Contingência legível para ambientes sem ReportLab."""
-    linhas = ["APROAR ENGENHARIA", titulo, f"Gerado em: {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y %H:%M')}", ""]
-    for nome, df in tabelas:
-        linhas.extend([str(nome).upper(), f"{len(df)} registro(s)", ""])
-        if df.empty:
-            linhas.extend(["Nenhum registro disponível.", ""])
-            continue
-        for numero, (_, registro) in enumerate(df.iterrows(), start=1):
-            linhas.append(f"REGISTRO {numero:02d}")
-            for coluna, valor in registro.items():
-                texto_linha = f"{coluna}: {valor}".replace("—", "-").replace("–", "-").replace("•", "-")
-                linhas.extend(textwrap.wrap(texto_linha, width=92, subsequent_indent="  ", break_long_words=True) or [""])
-            linhas.append("")
-        linhas.append("")
+    """PDF visual independente de bibliotecas externas, usado como contingência."""
+    largura_pagina, altura_pagina = 842.0, 595.0
+    margem_x, limite_inferior = 34.0, 42.0
+    largura_util = largura_pagina - 2 * margem_x
+    cores = {
+        "teal": (0.031, 0.718, 0.718),
+        "teal_borda": (0.125, 0.769, 0.769),
+        "cinza": (0.294, 0.294, 0.294),
+        "texto": (0.204, 0.255, 0.333),
+        "borda": (0.796, 0.835, 0.882),
+        "branco": (1.0, 1.0, 1.0),
+        "fundo": (0.973, 0.980, 0.988),
+        "verde": (0.867, 0.957, 0.835),
+        "amarelo": (0.996, 0.953, 0.780),
+        "vermelho": (0.996, 0.792, 0.792),
+    }
 
-    paginas = [linhas[i:i + 54] for i in range(0, len(linhas), 54)] or [[titulo]]
-    objetos = [b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"]
+    def limpo(valor):
+        return str(valor).replace("—", "-").replace("–", "-").replace("‑", "-").replace("•", "-").replace("\n", " ").strip()
+
+    def rgb(cor, operador):
+        return f"{cor[0]:.3f} {cor[1]:.3f} {cor[2]:.3f} {operador}"
+
+    def retangulo(comandos, x, y, largura, altura, preenchimento, contorno=None, espessura=0.5):
+        comandos.append(rgb(preenchimento, "rg"))
+        if contorno:
+            comandos.extend([rgb(contorno, "RG"), f"{espessura:.2f} w", f"{x:.2f} {y:.2f} {largura:.2f} {altura:.2f} re B"])
+        else:
+            comandos.append(f"{x:.2f} {y:.2f} {largura:.2f} {altura:.2f} re f")
+
+    def largura_texto(texto, tamanho):
+        return len(str(texto)) * tamanho * 0.50
+
+    def escrever(comandos, texto, x, y, tamanho=8, negrito=False, cor=None, alinhamento="esquerda"):
+        texto = limpo(texto)
+        cor = cor or cores["texto"]
+        if alinhamento == "centro":
+            x -= largura_texto(texto, tamanho) / 2
+        elif alinhamento == "direita":
+            x -= largura_texto(texto, tamanho)
+        fonte = "F2" if negrito else "F1"
+        comandos.extend([
+            rgb(cor, "rg"),
+            f"BT /{fonte} {tamanho:.2f} Tf {x:.2f} {y:.2f} Td ({_texto_pdf(texto)}) Tj ET",
+        ])
+
+    def quebrar_texto(valor, largura, tamanho=7, limite=240):
+        texto = limpo(valor)
+        if len(texto) > limite:
+            texto = texto[:limite - 3].rstrip() + "..."
+        caracteres = max(4, int(largura / max(3.5, tamanho * 0.50)))
+        return textwrap.wrap(texto, width=caracteres, break_long_words=True, break_on_hyphens=False) or ["-"]
+
+    def escrever_caixa(comandos, valor, x, y, largura, altura, tamanho=7, negrito=False, cor=None, alinhamento="esquerda", limite=240):
+        linhas = quebrar_texto(valor, largura - 8, tamanho, limite)
+        entrelinha = tamanho + 1.6
+        bloco = len(linhas) * entrelinha
+        inicio = y + altura - 5 - tamanho if alinhamento == "esquerda" else y + (altura + bloco) / 2 - tamanho
+        for indice, linha in enumerate(linhas):
+            eixo_x = x + 4 if alinhamento == "esquerda" else x + largura / 2
+            escrever(comandos, linha, eixo_x, inicio - indice * entrelinha, tamanho, negrito, cor, alinhamento)
+
+    paginas, comandos, y = [], [], 0.0
+
+    def nova_pagina():
+        nonlocal comandos, y
+        if comandos:
+            paginas.append(comandos)
+        comandos = []
+        y = 548.0
+
+    def garantir(altura_necessaria):
+        if y - altura_necessaria < limite_inferior:
+            nova_pagina()
+            return True
+        return False
+
+    def desenhar_cabecalho_tabela(colunas, larguras, y_topo):
+        altura = 27.0
+        x = margem_x
+        for coluna, largura in zip(colunas, larguras):
+            retangulo(comandos, x, y_topo - altura, largura, altura, cores["teal"], cores["branco"], 0.45)
+            escrever_caixa(comandos, coluna, x, y_topo - altura, largura, altura, 7.0, True, cores["branco"], "centro", 100)
+            x += largura
+        return y_topo - altura
+
+    def desenhar_secao(nome, df_original):
+        nonlocal y
+        df = _colunas_relevantes_pdf(df_original, limite=9)
+        garantir(28)
+        retangulo(comandos, margem_x, y - 21, largura_util, 21, cores["teal"])
+        escrever(comandos, f"{limpo(nome).upper()} - {len(df_original)} registro(s)", margem_x + 7, y - 14, 9, True, cores["branco"])
+        y -= 21
+        if df.empty or not len(df.columns):
+            escrever(comandos, "Nenhum registro disponível nesta seção.", margem_x + 6, y - 15, 8, False, cores["texto"])
+            y -= 27
+            return
+
+        pesos = []
+        for coluna in df.columns:
+            nome_coluna = remover_acentos(str(coluna)).lower()
+            amostra = [len(str(coluna))] + [len(str(valor)) for valor in df[coluna].astype(str).head(80)]
+            peso = max(8, min(30, max(amostra)))
+            if any(chave in nome_coluna for chave in ("material", "descricao", "endereco", "observacao")):
+                peso = max(peso, 25)
+            pesos.append(peso)
+        soma_pesos = sum(pesos) or 1
+        larguras = [largura_util * peso / soma_pesos for peso in pesos]
+        y = desenhar_cabecalho_tabela(list(df.columns), larguras, y)
+
+        for indice_registro, (_, registro) in enumerate(df.iterrows(), start=1):
+            linhas_celulas = [quebrar_texto(registro[coluna], largura - 8, 6.7, 240) for coluna, largura in zip(df.columns, larguras)]
+            altura_linha = max(20.0, min(68.0, 8.3 * max(len(linhas) for linhas in linhas_celulas) + 7))
+            if y - altura_linha < limite_inferior:
+                nova_pagina()
+                retangulo(comandos, margem_x, y - 21, largura_util, 21, cores["teal"])
+                escrever(comandos, f"{limpo(nome).upper()} - CONTINUAÇÃO", margem_x + 7, y - 14, 9, True, cores["branco"])
+                y -= 21
+                y = desenhar_cabecalho_tabela(list(df.columns), larguras, y)
+            x = margem_x
+            fundo_linha = cores["fundo"] if indice_registro % 2 == 0 else cores["branco"]
+            for indice_coluna, (coluna, largura, linhas) in enumerate(zip(df.columns, larguras, linhas_celulas)):
+                fundo_celula = fundo_linha
+                nome_coluna = remover_acentos(str(coluna)).lower()
+                if "status" in nome_coluna or "situacao" in nome_coluna:
+                    status = remover_acentos(str(registro[coluna])).lower()
+                    if re.search(r"conclu|entregue|dentro", status): fundo_celula = cores["verde"]
+                    elif re.search(r"fora|atras|vencid", status): fundo_celula = cores["vermelho"]
+                    elif re.search(r"pend|aguard", status): fundo_celula = cores["amarelo"]
+                retangulo(comandos, x, y - altura_linha, largura, altura_linha, fundo_celula, cores["teal_borda"], 0.35)
+                entrelinha = 8.3
+                for indice_linha, linha in enumerate(linhas[:7]):
+                    escrever(comandos, linha, x + 4, y - 11 - indice_linha * entrelinha, 6.7, False, cores["texto"])
+                x += largura
+            y -= altura_linha
+        y -= 8
+
+    resumo_analitico, secoes_dados, _ = _organizar_secoes_relatorio(titulo, tabelas)
+    total_registros = sum(len(df) for _, df in secoes_dados)
+    nova_pagina()
+
+    retangulo(comandos, margem_x, y - 29, largura_util, 29, cores["teal"])
+    escrever(comandos, limpo(titulo).upper(), largura_pagina / 2, y - 19, 13, True, cores["branco"], "centro")
+    y -= 36
+    escrever(comandos, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} | {total_registros} registro(s)", margem_x + 6, y - 8, 8, False, cores["texto"])
+    y -= 19
+
+    if not resumo_analitico.empty:
+        kpis = resumo_analitico.head(6).to_dict("records")
+        while len(kpis) < 6:
+            kpis.append({"Indicador": "", "Resultado": ""})
+        largura_kpi = largura_util / 6
+        altura_rotulo, altura_valor = 28.0, 31.0
+        x = margem_x
+        for kpi in kpis:
+            retangulo(comandos, x, y - altura_rotulo, largura_kpi, altura_rotulo, cores["cinza"], cores["branco"], 0.5)
+            escrever_caixa(comandos, kpi.get("Indicador", ""), x, y - altura_rotulo, largura_kpi, altura_rotulo, 7.0, True, cores["branco"], "centro", 90)
+            retangulo(comandos, x, y - altura_rotulo - altura_valor, largura_kpi, altura_valor, cores["verde"], cores["borda"], 0.5)
+            escrever_caixa(comandos, kpi.get("Resultado", ""), x, y - altura_rotulo - altura_valor, largura_kpi, altura_valor, 10.5, True, cores["texto"], "centro", 70)
+            x += largura_kpi
+        y -= altura_rotulo + altura_valor + 9
+
+    for nome, df in secoes_dados:
+        desenhar_secao(nome, df)
+
+    if not resumo_analitico.empty:
+        leituras = resumo_analitico[resumo_analitico["Leitura para análise"].astype(str).str.strip() != ""]
+        complementares = resumo_analitico.iloc[6:]
+        analises = pd.concat([leituras, complementares], ignore_index=True).drop_duplicates(subset=["Indicador"])
+        if not analises.empty:
+            desenhar_secao("Análises complementares", analises[["Indicador", "Resultado", "Leitura para análise"]].rename(columns={"Leitura para análise": "Interpretação"}))
+
+    if comandos:
+        paginas.append(comandos)
+
+    objetos = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ]
     ids_paginas = []
-    for linhas_pagina in paginas:
+    total_paginas = len(paginas)
+    for numero_pagina, comandos_pagina in enumerate(paginas, start=1):
+        moldura = []
+        retangulo(moldura, 0, altura_pagina - 28, largura_pagina, 28, cores["cinza"])
+        escrever(moldura, "APROAR ENGENHARIA", margem_x, altura_pagina - 18, 8.5, True, cores["branco"])
+        escrever(moldura, "Torre de Controle Logístico", largura_pagina - margem_x, altura_pagina - 18, 7, False, cores["branco"], "direita")
+        moldura.extend([rgb(cores["borda"], "RG"), "0.5 w", f"{margem_x:.2f} 30 m {largura_pagina - margem_x:.2f} 30 l S"])
+        escrever(moldura, "Relatório operacional", margem_x, 18, 7, False, cores["texto"])
+        escrever(moldura, f"Página {numero_pagina} de {total_paginas}", largura_pagina - margem_x, 18, 7, False, cores["texto"], "direita")
+        conteudo_bytes = ("\n".join(moldura + comandos_pagina)).encode("ascii")
         id_pagina = len(objetos) + 1
         id_conteudo = id_pagina + 1
         ids_paginas.append(id_pagina)
-        conteudo = "BT /F1 8 Tf 32 810 Td 11 TL\n" + "\n".join(f"({_texto_pdf(linha)}) Tj T*" for linha in linhas_pagina) + "\nET"
-        objetos.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {id_conteudo} 0 R >>".encode("ascii"))
-        conteudo_bytes = conteudo.encode("ascii")
+        objetos.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {largura_pagina:.0f} {altura_pagina:.0f}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {id_conteudo} 0 R >>".encode("ascii"))
         objetos.append(f"<< /Length {len(conteudo_bytes)} >>\nstream\n".encode("ascii") + conteudo_bytes + b"\nendstream")
-    objetos[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
     objetos[1] = f"<< /Type /Pages /Kids [{' '.join(f'{i} 0 R' for i in ids_paginas)}] /Count {len(ids_paginas)} >>".encode("ascii")
 
     arquivo = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
