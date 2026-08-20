@@ -22,7 +22,7 @@ from streamlit_folium import st_folium
 # =====================================================================
 # CONFIGURAÇÕES DE TELA E RELÓGIO (VIRADA DE TURNO)
 # =====================================================================
-st.set_page_config(page_title="Aproar - Organizador de Rota", page_icon="🚚", layout="wide")
+st.set_page_config(page_title="Aproar - Torre de Controle", page_icon="🚚", layout="wide")
 
 FUSO_LOCAL = ZoneInfo("America/Fortaleza")
 AGORA_REAL = datetime.now(FUSO_LOCAL)
@@ -51,46 +51,141 @@ def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
 
-# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM DARK) ---
+# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM E DASHBOARD CORPORATIVO) ---
 def aplicar_estilo_customizado():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        html, body, [class*="css"], .stMarkdown, .stText, p, span, div, h1, h2, h3, h4, h5, h6 { font-family: 'Inter', sans-serif !important; color: #e4e8f4; }
-        [data-testid="stAppViewContainer"] { background-color: #080b1a !important; }
-        [data-testid="stSidebar"] { background-color: #0d1025 !important; border-right: 1px solid rgba(64,116,146,.2) !important; }
-        [data-testid="stHeader"] { background-color: rgba(8, 11, 26, 0.8) !important; backdrop-filter: blur(5px); }
         
+        /* Tipografia e Cores Globais */
+        html, body, [class*="css"], .stMarkdown, .stText, p, span, div, h1, h2, h3, h4, h5, h6 { 
+            font-family: 'Inter', sans-serif !important; 
+            color: #e4e8f4; 
+        }
+        
+        /* Fundos (Backgrounds) Premium */
+        [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
+        [data-testid="stSidebar"] { 
+            background-color: #0b0e1e !important; 
+            border-right: 1px solid rgba(64,116,146,.15) !important; 
+        }
+        [data-testid="stHeader"] { 
+            background-color: rgba(7, 9, 19, 0.8) !important; 
+            backdrop-filter: blur(8px); 
+        }
+        
+        /* Botões Primários - Aspecto de App Moderno */
         button[kind="primary"], [data-testid="baseButton-primary"] { 
-            background-color: #2563eb !important; 
+            background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; 
             color: #ffffff !important; 
-            border-radius: 5px !important; 
-            border: 1px solid #2563eb !important;
-            font-weight: 700 !important; 
-            transition: all .15s;
+            border-radius: 8px !important; 
+            border: none !important;
+            font-weight: 600 !important; 
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+            transition: all 0.2s ease-in-out;
+            padding: 10px 20px !important;
         }
         button[kind="primary"]:hover { 
-            background-color: #1d4ed8 !important; 
-            border-color: #1d4ed8 !important;
-            transform: translateY(-1px); 
+            transform: translateY(-2px); 
+            box-shadow: 0 6px 15px rgba(37, 99, 235, 0.5);
         }
-        button[kind="primary"] *, [data-testid="baseButton-primary"] * { color: #ffffff !important; }
         
-        button[kind="primary"]:disabled, [data-testid="baseButton-primary"]:disabled {
-            background-color: #1e293b !important;
-            border-color: #1e293b !important;
+        /* Botões Desativados */
+        button[kind="primary"]:disabled {
+            background: #1e293b !important;
             color: #64748b !important;
-            cursor: not-allowed !important;
+            box-shadow: none !important;
             transform: none !important;
-        }
-        button[kind="primary"]:disabled *, [data-testid="baseButton-primary"]:disabled * {
-            color: #64748b !important;
+            cursor: not-allowed !important;
         }
 
-        [data-testid="baseButton-secondary"] { background-color: transparent !important; color: #8da0b8 !important; border: 1px solid rgba(64,116,146,.35) !important; border-radius: 5px !important; }
-        [data-testid="baseButton-secondary"]:hover { background-color: rgba(64,116,146,.1) !important; color: #ffffff !important; }
-        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div { background-color: #171c3a !important; border: 1px solid rgba(64,116,146,.2) !important; color: #e4e8f4 !important; border-radius: 5px !important; }
-        [data-testid="stDataFrame"], [data-testid="stVerticalBlockBorderWrapper"], [data-testid="stAlert"] { background-color: #121530 !important; border: 1px solid rgba(64,116,146,.2) !important; border-radius: 7px !important; }
+        /* Abas (Tabs) no Estilo Pílula */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 12px;
+            background-color: rgba(18, 21, 48, 0.6);
+            padding: 8px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(64,116,146,.15);
+        }
+        .stTabs [data-baseweb="tab"] {
+            background-color: transparent;
+            border-radius: 8px;
+            color: #8da0b8;
+            padding: 10px 18px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            border: none !important;
+        }
+        .stTabs [data-baseweb="tab"]:hover {
+            color: #ffffff;
+            background-color: rgba(255,255,255,0.05);
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #2563eb !important;
+            color: white !important;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+        }
+
+        /* Cartões de Métricas (Glassmorphism) */
+        div[data-testid="stMetric"] {
+            background-color: rgba(25, 30, 56, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(64, 116, 146, 0.25);
+            padding: 20px 25px;
+            border-radius: 14px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            transition: transform 0.2s ease;
+        }
+        div[data-testid="stMetric"]:hover {
+            transform: translateY(-3px);
+            border-color: rgba(37, 99, 235, 0.5);
+        }
+
+        /* Formulários e Containers */
+        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {
+            background-color: rgba(18, 21, 48, 0.4) !important;
+            border-radius: 14px !important;
+            padding: 24px !important;
+            border: 1px solid rgba(64,116,146,.2) !important;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        /* Inputs (Caixas de texto e seleção) */
+        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div { 
+            background-color: rgba(13, 16, 37, 0.8) !important; 
+            border: 1px solid rgba(64,116,146,.3) !important; 
+            color: #e4e8f4 !important; 
+            border-radius: 8px !important; 
+            transition: border-color 0.2s;
+        }
+        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within {
+            border-color: #2563eb !important;
+            box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3) !important;
+        }
+
+        /* Tabelas (DataFrames) Premium */
+        [data-testid="stDataFrame"] { 
+            background-color: rgba(18, 21, 48, 0.6) !important; 
+            border: 1px solid rgba(64,116,146,.2) !important; 
+            border-radius: 12px !important; 
+            overflow: hidden;
+        }
+        
+        /* Estilo da barra de rolagem */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #070913; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2563eb; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #1d4ed8; 
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -185,14 +280,14 @@ def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     cor_previsao = "#16a34a" if final_dyn_min <= (17 * 60) else "#f59e0b" if final_dyn_min <= (17 * 60 + 30) else "#ef4444"
             
     st.markdown(f'''
-    <div style="background-color: #121530; padding: 12px 20px; border-radius: 8px; border: 1px solid rgba(64,116,146,.4); display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-       <div style="font-size: 13px; color: #8da0b8; text-align: left;">
-            <span style="font-size: 18px;">⏰</span> Atualizada:<br>
-            <b style="color: #e4e8f4; font-size: 18px;">{hora_atual_str}</b>
+    <div style="background: linear-gradient(145deg, rgba(18,21,48,0.8), rgba(13,16,37,0.9)); padding: 15px 25px; border-radius: 12px; border: 1px solid rgba(64,116,146,.3); display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; box-shadow: 0 8px 20px rgba(0,0,0,0.2);">
+       <div style="font-size: 14px; color: #8da0b8; text-align: left;">
+            <span style="font-size: 20px;">⏱️</span> Atualizada:<br>
+            <b style="color: #e4e8f4; font-size: 20px;">{hora_atual_str}</b>
        </div>
-       <div style="font-size: 13px; color: #8da0b8; text-align: right;">
-            <span style="font-size: 18px;">🏁</span> Previsão de Término:<br>
-            <b style="color: {cor_previsao}; font-size: 18px;">{nova_previsao_str}</b>
+       <div style="font-size: 14px; color: #8da0b8; text-align: right;">
+            <span style="font-size: 20px;">🏁</span> Previsão de Término:<br>
+            <b style="color: {cor_previsao}; font-size: 20px;">{nova_previsao_str}</b>
        </div>
     </div>
     ''', unsafe_allow_html=True)
@@ -212,7 +307,7 @@ if modo_url == "true":
     """, unsafe_allow_html=True)
 
     st.markdown("<h2 style='text-align: center; color: #e4e8f4; margin-bottom: 0;'>📱 App do Motorista</h2>", unsafe_allow_html=True)
-    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px;'>Rota Oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
+    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px; color: #8da0b8;'>Rota Oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
 
     if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"): st.rerun()
 
@@ -243,7 +338,7 @@ if modo_url == "true":
     nova_previsao_str = format_mins_to_time(final_dyn_min)
     renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
-    st.markdown(f"#### Roteiro Passo a Passo ({total_km:.1f} km)")
+    st.markdown(f"<h4 style='color: #e4e8f4;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
     p_num = 1
 
     for i, step in enumerate(route_steps):
@@ -259,13 +354,13 @@ if modo_url == "true":
         link_gps = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
         with st.container(border=True):
-            status_tempo = f"<span style='color: #16a34a;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
+            status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
             
             if is_start:
-                st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}**")
+                st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
                 st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']}", unsafe_allow_html=True)
             else:
-                st.markdown(f"**📍 PARADA {p_num}: {step['destino']}**")
+                st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {p_num}: {step['destino']}</h3>", unsafe_allow_html=True)
                 st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
             
             for acao, t in step['actions']:
@@ -275,7 +370,7 @@ if modo_url == "true":
                 st.markdown(f":{cor}[**{icone} {acao}**] {t['Materiais']} <br>*(Obra: {t['Obra']})*{texto_check}", unsafe_allow_html=True)
                 
             if not is_start:
-                st.markdown(f"<a href='{link_gps}' target='_blank'><button style='width:100%; padding:15px; background-color:#2563eb; color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer;'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
+                st.markdown(f"<a href='{link_gps}' target='_blank' style='text-decoration:none;'><button style='width:100%; padding:15px; background:linear-gradient(135deg, #2563eb, #1d4ed8); color:white; font-size:16px; font-weight:bold; border-radius:8px; border:none; margin-top:10px; cursor: pointer; box-shadow: 0 4px 10px rgba(37,99,235,0.3);'>🧭 ABRIR GPS DA PARADA {p_num}</button></a>", unsafe_allow_html=True)
                 p_num += 1
 
     st.divider()
@@ -318,7 +413,7 @@ if modo_url == "true":
     if p_saida in locais_dict: folium.Marker([path_points_mobile[0][0], path_points_mobile[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
-    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
     st.divider()
     st.caption("Central de Logística APROAR")
     st.stop()
@@ -536,6 +631,7 @@ def canonicalizar_ponto_rota(nome):
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
     texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
     
+    # Tenta usar o banco de sinônimos antes de retornar
     texto_limpo = remover_acentos(texto)
     for sin, oficial in DICIONARIO_SINONIMOS.items():
         if texto_limpo == remover_acentos(sin):
@@ -904,8 +1000,8 @@ def loop_automacoes_background():
 # =====================================================================
 try:
     with open("logo.png", "rb") as image_file: encoded_string = base64.b64encode(image_file.read()).decode()
-    st.markdown(f'<div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;"><img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;"><h1 style="margin: 0; padding: 0; line-height: 1.2;">ORGANIZADOR DE ROTA - SUPRIMENTOS</h1></div>', unsafe_allow_html=True)
-except: st.title("🚚 ORGANIZADOR DE ROTA - SUPRIMENTOS")
+    st.markdown(f'<div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;"><img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;"><h1 style="margin: 0; padding: 0; line-height: 1.2; color: #e4e8f4;">TORRE DE CONTROLE LOGÍSTICO</h1></div>', unsafe_allow_html=True)
+except: st.title("🚚 TORRE DE CONTROLE LOGÍSTICO")
 
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
@@ -929,11 +1025,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
-    st.components.v1.html("""<script>function copyLink() { try { var tempInput = document.createElement("input"); tempInput.value = window.parent.location.origin + window.parent.location.pathname + "?davi=true"; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput); var btn = document.getElementById("btn"); btn.innerText = "✅ Copiado!"; btn.style.backgroundColor = "#16a34a"; btn.style.color = "white"; btn.style.border = "1px solid #16a34a"; setTimeout(() => { btn.innerText = "🔗 Copiar Link do Davi"; btn.style.backgroundColor = "transparent"; btn.style.color = "#8da0b8"; btn.style.border = "1px solid rgba(64,116,146,.35)"; }, 2500); } catch (err) { alert("Erro ao copiar."); } }</script><button id="btn" onclick="copyLink()" style="width:100%; padding:8px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:5px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer;">🔗 Copiar Link do Davi</button>""", height=45)
+    st.components.v1.html("""<script>function copyLink() { try { var tempInput = document.createElement("input"); tempInput.value = window.parent.location.origin + window.parent.location.pathname + "?davi=true"; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput); var btn = document.getElementById("btn"); btn.innerText = "✅ Copiado!"; btn.style.background = "linear-gradient(135deg, #16a34a, #15803d)"; btn.style.color = "white"; btn.style.border = "none"; setTimeout(() => { btn.innerText = "🔗 Copiar Link do Davi"; btn.style.background = "transparent"; btn.style.color = "#8da0b8"; btn.style.border = "1px solid rgba(64,116,146,.35)"; }, 2500); } catch (err) { alert("Erro ao copiar."); } }</script><button id="btn" onclick="copyLink()" style="width:100%; padding:10px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:8px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer; transition: all 0.2s;">🔗 Copiar Link do Davi</button>""", height=50)
     st.markdown("---")
 
-    if st.button("🔄 Sincronizar Manualmente com Trello", use_container_width=True, type="primary"):
-        with st.spinner("Puxando demandas ao vivo (Rápido)..."):
+    if st.button("🔄 Sincronizar Manualmente (Trello)", use_container_width=True, type="primary"):
+        with st.spinner("Puxando demandas ao vivo..."):
             obter_dados_trello.clear() # Limpa o cache para forçar a versão mais nova
             if sincronizar_demandas(manual=True):
                 st.success("✅ Trello Sincronizado e Demandas Importadas!")
@@ -946,7 +1042,7 @@ with st.sidebar:
     st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Mescla urgência com proximidade para fazer a rota mais lógica e eficiente.', '🏢 Foco em Descarregar': 'Prioriza entregar os materiais o quanto antes para esvaziar a caçamba.', '⛽ Menor Distância': 'Foca 100% no menor KM percorrido (Economia de combustível).', '🚨 Priorizar Urgências': 'Foca 100% nas demandas Vencidas ou programadas para Hoje.'}[estrategia] }*")
     retornar_base = st.checkbox("Retornar à base no fim do dia", value=True)
 
-if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar com Trello'** no menu lateral para puxar as demandas ao vivo e começar.")
+if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar Manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
 
 tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_registros = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "💰 Dashboard & Custos", "🗂️ Registros da Frota"])
 
@@ -998,7 +1094,7 @@ with tab_rastreador:
                 met2.metric("Em movimento", sum(1 for v in velocidades if v > 0))
                 met3.metric("Última leitura", datetime.now(FUSO_LOCAL).strftime("%H:%M:%S"))
 
-                mapa = folium.Map(location=[sum(p["Latitude"] for p in posicoes) / len(posicoes), sum(p["Longitude"] for p in posicoes) / len(posicoes)], zoom_start=11, tiles="OpenStreetMap")
+                mapa = folium.Map(location=[sum(p["Latitude"] for p in posicoes) / len(posicoes), sum(p["Longitude"] for p in posicoes) / len(posicoes)], zoom_start=11, tiles="CartoDB dark_matter")
                 limites = []
                 for p in posicoes:
                     cor, icone = ("green", "play") if p["Velocidade (km/h)"] > 0 else ("red", "stop")
@@ -1174,29 +1270,23 @@ with tab_custos:
 
     col_strada, col_l200 = st.columns(2)
     with col_strada:
-        st.markdown("<div style='background-color: #121530; padding: 15px; border-radius: 8px; border: 1px solid rgba(64,116,146,.3);'>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align:center; color:#e4e8f4; margin-bottom: 20px;'>🚗 TIF-2123 (Strada)</h4>", unsafe_allow_html=True)
         s1, s2 = st.columns(2)
-        s1.metric("KM Rodado", f"{km_strada:.1f} km", delta_color="off")
-        s2.metric("Custo Real / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
-        st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8;'>⛽ Gasolina: <b>R$ {gas_strada:.2f}</b> &nbsp;|&nbsp; 🔧 Manutenção: <b>R$ {manut_strada:.2f}</b></p>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        s1.metric("🚗 Strada (KM)", f"{km_strada:.1f} km", delta_color="off")
+        s2.metric("Custo / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
+        st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_strada:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_strada:.2f}</p>", unsafe_allow_html=True)
 
     with col_l200:
-        st.markdown("<div style='background-color: #121530; padding: 15px; border-radius: 8px; border: 1px solid rgba(64,116,146,.3);'>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align:center; color:#e4e8f4; margin-bottom: 20px;'>🚙 OSC-3842 (L200)</h4>", unsafe_allow_html=True)
         l1, l2 = st.columns(2)
-        l1.metric("KM Rodado", f"{km_l200:.1f} km", delta_color="off")
-        l2.metric("Custo Real / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
-        st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8;'>⛽ Gasolina: <b>R$ {gas_l200:.2f}</b> &nbsp;|&nbsp; 🔧 Manutenção: <b>R$ {manut_l200:.2f}</b></p>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        l1.metric("🚙 L200 (KM)", f"{km_l200:.1f} km", delta_color="off")
+        l2.metric("Custo / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
+        st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_l200:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_l200:.2f}</p>", unsafe_allow_html=True)
 
     conn.close()
 
 # --- NOVA ABA: REGISTROS DA FROTA ---
 with tab_registros:
     st.subheader("🗂️ Registros e Histórico da Frota")
-    st.caption("Acompanhe os horários de operação, as rotas e os gastos detalhados dos veículos.")
+    st.caption("Acompanhe os horários de operação, as rotas e edite os gastos detalhados dos veículos.")
     
     conn = sqlite3.connect(DB_FILE)
     
@@ -1231,7 +1321,7 @@ with tab_registros:
         df_abastec_all = pd.read_sql_query("SELECT * FROM abastecimentos ORDER BY id DESC", conn)
         if not df_abastec_all.empty:
             edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
-            if st.button("💾 Salvar Alterações (Abastecimentos)"):
+            if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
                 edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
                 conn.execute("DROP TABLE abastecimentos")
                 conn.execute('''CREATE TABLE abastecimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT, veiculo TEXT)''')
@@ -1246,7 +1336,7 @@ with tab_registros:
         df_km_all = pd.read_sql_query("SELECT * FROM registro_km ORDER BY id DESC", conn)
         if not df_km_all.empty:
             edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
-            if st.button("💾 Salvar Alterações (KM)"):
+            if st.button("💾 Salvar Alterações (KM)", type="primary"):
                 edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
                 conn.execute("DROP TABLE registro_km")
                 conn.execute('''CREATE TABLE registro_km (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, km REAL, obs TEXT, veiculo TEXT)''')
@@ -1319,26 +1409,19 @@ with tab_roteiro:
             
             locais_dict, enderecos_dict = {}, {}
             
-            # Busca locais cadastrados e aplica lógica IA
             locais_db_raw = conn.execute("SELECT apelido, endereco, lat, lon FROM locais").fetchall()
             locais_db = {row[0]: (row[1], row[2], row[3]) for row in locais_db_raw}
             
             for p in pontos_necessarios:
                 alvo = p
-                # 1. Tenta achar o exato
                 if alvo not in locais_db:
                     p_sem_acento = remover_acentos(p)
-                    # 2. Ignora Acentos (Ex: ELETRICA x ELÉTRICA)
                     encontrado = next((loc for loc in locais_db.keys() if remover_acentos(loc) == p_sem_acento), None)
-                    
-                    # 3. Fuzzy Match Ortográfico (Corretor de erros de digitação)
                     if not encontrado:
                         matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.8)
                         if matches: encontrado = matches[0]
-                        
                     if encontrado: alvo = encontrado
 
-                # Associa o endereço encontrado de volta à variável original do Trello
                 if alvo in locais_db:
                     end_str, lat_db, lon_db = locais_db[alvo]
                     if lat_db is not None and lon_db is not None:
@@ -1476,7 +1559,6 @@ with tab_roteiro:
         res_inicio = conn.execute("SELECT MIN(hora_inicio) FROM inicio_movimento WHERE data=?", (DATA_REF_ROTA_STR,)).fetchone()
         hora_inicio_real = res_inicio[0] if res_inicio and res_inicio[0] else "08:00"
         
-        # Puxar o extrato real de paradas baseado no rastreador
         df_paradas = pd.read_sql_query("SELECT local, hora_chegada, hora_saida FROM rastreio_paradas WHERE data=?", conn, params=(DATA_REF_ROTA_STR,))
         
         conn.close()
@@ -1510,14 +1592,14 @@ with tab_roteiro:
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
                 with st.container(border=True):
-                    status_tempo = f"<span style='color: #16a34a;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
+                    status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Atualizado: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
 
                     if is_start:
-                        st.markdown(f"**🏁 PREPARAÇÃO: {step['destino']}**")
+                        st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"{status_tempo} | Base original: {step['chegada']} às {step['saida']}", unsafe_allow_html=True)
                         texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n"
                     else:
-                        st.markdown(f"**📍 PARADA {num_parada}: {step['destino']}**")
+                        st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"{status_tempo} | Base: {step['chegada']} às {step['saida']} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
                         texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n🧭 *GPS:* {link_parada}\n"
                     
@@ -1525,13 +1607,12 @@ with tab_roteiro:
                         cor, icone = ("orange", "📦 COLETAR:") if acao == "COLETAR" else ("green", "📬 ENTREGAR:")
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
-                        check_ui = f"&nbsp;<span style='color: #16a34a; font-size: 0.95em;'>✅ (Baixa às {dict_concluidos_torre[card_id_torre]})</span>" if concluida else ""
+                        check_ui = f"&nbsp;<span style='color: #16a34a; font-size: 0.95em; font-weight: bold;'>✅ (Baixa às {dict_concluidos_torre[card_id_torre]})</span>" if concluida else ""
                         
                         col_demanda, col_status = st.columns([9, 1])
                         col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*{check_ui}", unsafe_allow_html=True)
                         texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                     
-                    # --- BLOCO DE EXIBIÇÃO DO TEMPO REAL NA PARADA (GEOFENCE) ---
                     texto_paradas_reais = ""
                     paradas_local = df_paradas[df_paradas['local'] == step['destino']]
                     if not paradas_local.empty:
@@ -1542,11 +1623,10 @@ with tab_roteiro:
                                 duracao = max(0, parse_time_to_mins(h_s) - parse_time_to_mins(h_c))
                                 texto_paradas_reais += f"⏱️ **Tempo no local:** Chegou às {h_c} • Saiu às {h_s} <b>({duracao} min)</b><br>"
                             else:
-                                texto_paradas_reais += f"📡 **Rastreador:** Chegou às {h_c} • (Ainda descarregando)<br>"
+                                texto_paradas_reais += f"📡 **Rastreador:** Chegou às {h_c} • (Ainda no local)<br>"
                                 
                     if texto_paradas_reais:
-                        st.markdown(f"<div style='background-color:rgba(37, 99, 235, 0.1); border-left:3px solid #2563eb; padding:8px 12px; margin-top:10px; margin-bottom:5px; font-size:13px; border-radius:4px; color:#93c5fd;'>{texto_paradas_reais}</div>", unsafe_allow_html=True)
-                    # -------------------------------------------------------------
+                        st.markdown(f"<div style='background-color:rgba(37, 99, 235, 0.15); border-left:4px solid #2563eb; padding:10px 15px; margin-top:10px; margin-bottom:5px; font-size:14px; border-radius:6px; color:#bfdbfe;'>{texto_paradas_reais}</div>", unsafe_allow_html=True)
                         
                     texto_whatsapp += "\n"
                     if not is_start: num_parada += 1
@@ -1599,7 +1679,7 @@ with tab_roteiro:
 
         with col_dir:
             st.subheader("🗺️ Mapa da Rota")
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12)
+            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="CartoDB dark_matter")
             path_points, offsets_dict = [], {}
             
             def apply_offset(lat, lon):
@@ -1629,7 +1709,7 @@ with tab_roteiro:
 
             if geometria_viaria and len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m)
             if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
-            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background-color: #2563eb; color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
+            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
