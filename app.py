@@ -2764,7 +2764,35 @@ if modo_url == "true":
     if erro_checkin_mobile:
         st.error(erro_checkin_mobile)
 
-    route_steps = atualizar_tempos_por_parada(route_steps, p_saida)
+    # No modo ?davi=true o Streamlit executa este bloco antes de chegar às
+    # funções de planejamento declaradas mais abaixo no arquivo. Portanto, não
+    # podemos chamar atualizar_tempos_por_parada() diretamente aqui, pois ela
+    # ainda não existe neste ponto da execução e causava NameError no app móvel.
+    #
+    # A rota liberada pela Torre já vem com tempo_local calculado. Aqui apenas
+    # saneamos rotas antigas/salvas para a faixa operacional atual (15–25 min),
+    # preservando a preparação inicial da base. Quando a função completa estiver
+    # disponível (em outros fluxos), ela continua sendo usada normalmente.
+    _atualizador_paradas = globals().get("atualizar_tempos_por_parada")
+    if callable(_atualizador_paradas):
+        route_steps = _atualizador_paradas(route_steps, p_saida)
+    else:
+        for _idx_step, _step in enumerate(route_steps or []):
+            if _step.get("type") != "stop":
+                continue
+            _destino_step = str(_step.get("destino", "") or "")
+            _eh_preparacao_base = (_idx_step == 0 and _destino_step == p_saida)
+            if _eh_preparacao_base:
+                continue
+            try:
+                _tempo_salvo = float(_step.get("tempo_local", 20) or 20)
+            except (TypeError, ValueError):
+                _tempo_salvo = 20.0
+            if not math.isfinite(_tempo_salvo):
+                _tempo_salvo = 20.0
+            _step["tempo_local"] = int(round(min(max(_tempo_salvo, 15.0), 25.0)))
+            _step.setdefault("tempo_local_fonte", "estimativa salva da rota")
+
     route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
     
