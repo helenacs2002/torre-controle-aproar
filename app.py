@@ -148,6 +148,125 @@ def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
 
+
+def normalizar_preparacao_escritorio_rota(route_steps):
+    """Elimina coletas duplicadas depois que a carga já entrou no carro no ESCRITÓRIO.
+
+    Regra operacional definitiva:
+    - toda ação COLETAR presente na preparação do ESCRITÓRIO/ALMOXARIFADO é carga já embarcada;
+    - o mesmo cartão não pode gerar outra COLETA em UNIFOR, FIEC, fornecedor ou qualquer outro ponto;
+    - a preparação visual fica sempre em 07:30–08:00;
+    - entregas/coletas de outros cartões no mesmo local continuam normalmente.
+
+    Retorna (passos_normalizados, houve_correcao).
+    """
+    passos = list(route_steps or [])
+    if not passos:
+        return passos, False
+
+    def eh_escritorio(valor):
+        nome = remover_acentos(str(valor or "")).upper().strip()
+        nome = re.sub(r"[\\*_`]+", "", nome).strip(" :-\\t\\r\\n")
+        return nome in {"ESCRITORIO", "ALMOXARIFADO"}
+
+    tarefas_preparadas = {}
+    for step in passos:
+        if str(step.get("type", "")) != "stop" or not eh_escritorio(step.get("destino", "")):
+            continue
+        for item in step.get("actions", []) or []:
+            try:
+                acao, tarefa = item
+            except Exception:
+                continue
+            card_id = str((tarefa or {}).get("id", "") or "")
+            if str(acao).upper() == "COLETAR" and card_id:
+                tarefas_preparadas[card_id] = tarefa
+
+    if not tarefas_preparadas:
+        return passos, False
+
+    ids_preparados = set(tarefas_preparadas)
+    novos_passos = []
+    preparacao_inserida = False
+    houve_correcao = False
+
+    for step in passos:
+        if str(step.get("type", "")) != "stop":
+            novos_passos.append(step)
+            continue
+
+        destino = step.get("destino", "")
+        acoes_originais = list(step.get("actions", []) or [])
+
+        if eh_escritorio(destino):
+            acoes_nao_preparacao = []
+            for item in acoes_originais:
+                try:
+                    acao, tarefa = item
+                except Exception:
+                    acoes_nao_preparacao.append(item)
+                    continue
+                card_id = str((tarefa or {}).get("id", "") or "")
+                if str(acao).upper() == "COLETAR" and card_id in ids_preparados:
+                    continue
+                acoes_nao_preparacao.append(item)
+
+            if not preparacao_inserida:
+                modelo = dict(step)
+                modelo.update({
+                    "type": "stop",
+                    "destino": "ESCRITÓRIO",
+                    "dist": 0.0,
+                    "travel_mins": 0.0,
+                    "travel_mins_api": 0.0,
+                    "tempo_local": 30,
+                    "tempo_local_fonte": "preparação fixa da base",
+                    "chegada": "07:30",
+                    "saida": "08:00",
+                    "actions": [("COLETAR", tarefa) for tarefa in tarefas_preparadas.values()],
+                })
+                if step.get("chegada") != "07:30" or step.get("saida") != "08:00" or destino != "ESCRITÓRIO":
+                    houve_correcao = True
+                novos_passos.append(modelo)
+                preparacao_inserida = True
+
+            if acoes_nao_preparacao:
+                restante = dict(step)
+                restante["actions"] = acoes_nao_preparacao
+                novos_passos.append(restante)
+            elif acoes_originais:
+                # A parada era somente a preparação; ela já foi consolidada acima.
+                if preparacao_inserida and novos_passos[-1].get("actions") != acoes_originais:
+                    houve_correcao = True
+            continue
+
+        acoes_filtradas = []
+        removeu_aqui = False
+        for item in acoes_originais:
+            try:
+                acao, tarefa = item
+            except Exception:
+                acoes_filtradas.append(item)
+                continue
+            card_id = str((tarefa or {}).get("id", "") or "")
+            if str(acao).upper() == "COLETAR" and card_id in ids_preparados:
+                removeu_aqui = True
+                continue
+            acoes_filtradas.append(item)
+
+        if removeu_aqui:
+            houve_correcao = True
+        if acoes_originais and not acoes_filtradas:
+            # Ex.: UNIFOR existia apenas para "coletar" um cartão já preparado no escritório.
+            # A parada inteira deixa de existir.
+            continue
+
+        novo = dict(step)
+        novo["actions"] = acoes_filtradas
+        novos_passos.append(novo)
+
+    return novos_passos, houve_correcao
+
 # --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM E DASHBOARD CORPORATIVO) ---
 def aplicar_estilo_customizado():
     st.markdown("""
@@ -3606,7 +3725,15 @@ try:
     if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
         res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
         if res_rota:
-            st.session_state['route_steps'] = json.loads(res_rota[0])
+            _route_steps_salvos = json.loads(res_rota[0])
+            _route_steps_limpos, _rota_preparacao_corrigida = normalizar_preparacao_escritorio_rota(_route_steps_salvos)
+            st.session_state['route_steps'] = _route_steps_limpos
+            if _rota_preparacao_corrigida:
+                # O JSON antigo pode conter uma coleta duplicada (ex.: UNIFOR) para um
+                # cartão que já estava na preparação do escritório. Assim que as
+                # demandas forem carregadas, a rota será refeita para corrigir também
+                # geometria, quilometragem e ETAs.
+                st.session_state['_rota_precisa_recalculo_preparacao'] = True
             st.session_state['locais_dict'] = json.loads(res_rota[1])
             st.session_state['geometria_rota'] = json.loads(res_rota[2])
             st.session_state['enderecos_dict'] = json.loads(res_rota[3])
@@ -6193,6 +6320,9 @@ with tab_roteiro:
     txt_botao = "🔄 Recalcular / Atualizar Rota" if rota_ativa_hoje else "🚀 Calcular Rota Otimizada / Atualizar Rota"
 
     recalculo_automatico = bool(st.session_state.pop("_recalcular_rota_automatico", False))
+    if st.session_state.get("_rota_precisa_recalculo_preparacao") and not df_ativos.empty:
+        recalculo_automatico = True
+        st.session_state.pop("_rota_precisa_recalculo_preparacao", None)
     recalculo_manual = st.button(txt_botao, type="primary", disabled=df_ativos.empty)
 
     if (recalculo_manual or recalculo_automatico) and not df_ativos.empty:
@@ -6216,6 +6346,10 @@ with tab_roteiro:
             if rota_salva:
                 try:
                     old_steps = json.loads(rota_salva[0]) or []
+                    # Limpa a rota antiga ANTES de reaproveitar histórico/posição atual.
+                    # Assim uma coleta duplicada na UNIFOR já carregada no escritório
+                    # não contamina current_point, horário, quilometragem nem a nova ordem.
+                    old_steps, _ = normalizar_preparacao_escritorio_rota(old_steps)
                 except Exception:
                     old_steps = []
 
@@ -6251,24 +6385,46 @@ with tab_roteiro:
                     pass
 
             registros_ativos = df_ativos.to_dict('records')
+            ativos_por_id = {str(t.get('id', '')): t for t in registros_ativos if t.get('id')}
+
+            # Tudo que tiver origem no escritório entra naturalmente na preparação.
+            # Além disso, se um cartão JÁ constava na preparação salva, ele continua
+            # sendo tratado como carregado mesmo que o texto do Trello diga UNIFOR,
+            # FIEC, fornecedor etc. A preparação representa o que aconteceu fisicamente.
             for tarefa in registros_ativos:
                 if canonicalizar_ponto_rota(tarefa.get('Origem', '')) == ponto_saida and tarefa.get('id'):
                     tarefas_preparacao_por_id[str(tarefa.get('id'))] = tarefa
 
-            pendentes = [t for t in registros_ativos if str(t.get('id', '')) not in dict_concluidos_torre]
-            carrying_inicial = [t for t in pendentes if canonicalizar_ponto_rota(t.get('Origem', '')) == ponto_saida]
-            unpicked = [t for t in pendentes if canonicalizar_ponto_rota(t.get('Origem', '')) != ponto_saida]
-            ids_precarregados = {str(t.get('id', '')) for t in carrying_inicial}
+            # Atualiza os dados de cartões recuperados da preparação antiga com a
+            # versão atual do Trello, sem perder a informação de que já foram carregados.
+            for card_id in list(tarefas_preparacao_por_id):
+                if card_id in ativos_por_id:
+                    tarefas_preparacao_por_id[card_id] = ativos_por_id[card_id]
 
-            # A preparação é sempre uma única etapa 07:30–08:00 contendo tudo o
-            # que sai do escritório, inclusive itens que já foram entregues depois.
+            pendentes = [t for t in registros_ativos if str(t.get('id', '')) not in dict_concluidos_torre]
+            ids_pendentes = {str(t.get('id', '')) for t in pendentes if t.get('id')}
+            ids_preparados_salvos = set(tarefas_preparacao_por_id).intersection(ids_pendentes)
+
+            # REGRA DEFINITIVA: cartão presente na PREPARAÇÃO: ESCRITÓRIO já está no carro.
+            # Portanto ele vai direto ao destino e nunca volta a gerar uma coleta separada
+            # na UNIFOR (ou em qualquer outra origem textual do Trello).
+            carrying_inicial = [
+                t for t in pendentes
+                if str(t.get('id', '')) in ids_preparados_salvos
+                or canonicalizar_ponto_rota(t.get('Origem', '')) == ponto_saida
+            ]
+            ids_precarregados = {str(t.get('id', '')) for t in carrying_inicial}
+            unpicked = [t for t in pendentes if str(t.get('id', '')) not in ids_precarregados]
+
+            # A preparação é fixa, independentemente do horário real detectado pelo
+            # rastreador. O horário real continua sendo usado nos ETAs após a saída.
             preparation_step = None
             if tarefas_preparacao_por_id:
-                hora_saida_base = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
                 preparation_step = {
                     "type": "stop", "destino": ponto_saida, "dist": 0.0, "travel_mins": 0.0,
+                    "travel_mins_api": 0.0,
                     "tempo_local": 30, "tempo_local_fonte": "preparação fixa da base",
-                    "chegada": format_time(hora_saida_base - 30), "saida": format_time(hora_saida_base),
+                    "chegada": "07:30", "saida": "08:00",
                     "actions": [("COLETAR", t) for t in tarefas_preparacao_por_id.values()],
                 }
 
@@ -6454,6 +6610,7 @@ with tab_roteiro:
                 current_time += dur
 
             route_steps = ([preparation_step] if preparation_step else []) + past_route_steps + route_steps_new
+            route_steps, _ = normalizar_preparacao_escritorio_rota(route_steps)
 
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
