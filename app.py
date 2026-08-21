@@ -1983,6 +1983,7 @@ if modo_url == "true":
     if erro_checkin_mobile:
         st.error(erro_checkin_mobile)
 
+    route_steps = atualizar_tempos_por_parada(route_steps, p_saida)
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
     
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
@@ -2323,17 +2324,17 @@ if modo_url == "true":
                 status_rastreio_html = html_status_rastreio_local(
                     obter_status_rastreio_local(df_paradas_mobile, destino_step, DATA_REF_ROTA_STR)
                 )
-            # Linha do tempo interna da parada: cada demanda consome o seu próprio
-            # Tempo_Coleta/Tempo_Entrega. Demandas no mesmo endereço não geram
-            # deslocamento entre si; o deslocamento só existe entre paradas físicas.
-            cursor_acao_min = None
-            if not is_start:
-                hora_base_acao = str(step.get('dyn_chegada', '') or '')
-                match_hora_acao = re.match(r"^(\d{2}):(\d{2})", hora_base_acao)
-                if not match_hora_acao:
-                    match_hora_acao = re.match(r"^(\d{2}):(\d{2})", str(step.get('chegada', '') or ''))
-                if match_hora_acao:
-                    cursor_acao_min = int(match_hora_acao.group(1)) * 60 + int(match_hora_acao.group(2))
+            # O tempo é calculado por PARADA FÍSICA, não somando um atendimento
+            # completo para cada demanda que acontece no mesmo endereço.
+            if not is_start and step.get('actions'):
+                tempo_parada_mobile = int(round(float(step.get('tempo_local', 0) or 0)))
+                fonte_parada_mobile = str(step.get('tempo_local_fonte', 'média operacional') or 'média operacional')
+                status_tempo += (
+                    f"<div style='margin:-4px 0 12px;padding:9px 11px;border-radius:10px;"
+                    f"color:#cbd5e1;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);"
+                    f"font-size:12.5px;'>⏱️ Permanência estimada no local: <b>{tempo_parada_mobile} min</b>"
+                    f" <span style='color:#94a3b8;'>• {html_escape(fonte_parada_mobile)}</span></div>"
+                )
 
             blocos_acao = []
             for indice_acao, (acao, tarefa) in enumerate(step.get('actions', []), start=1):
@@ -2354,27 +2355,9 @@ if modo_url == "true":
                 obra_acao = html_escape(str(tarefa.get('Obra', '') or 'Obra não informada'))
                 rotulo_acao = "COLETA" if eh_coleta else "ENTREGA"
 
-                campo_tempo_acao = 'Tempo_Coleta' if eh_coleta else 'Tempo_Entrega'
-                try:
-                    tempo_acao_min = max(0.0, float(tarefa.get(campo_tempo_acao, 10) or 10))
-                    if math.isnan(tempo_acao_min):
-                        tempo_acao_min = 10.0
-                except (TypeError, ValueError):
-                    tempo_acao_min = 10.0
-
-                if cursor_acao_min is not None:
-                    inicio_acao_min = cursor_acao_min
-                    fim_acao_min = cursor_acao_min + tempo_acao_min
-                    janela_acao = f" • {format_mins_to_time(inicio_acao_min)} às {format_mins_to_time(fim_acao_min)}"
-                    cursor_acao_min = fim_acao_min
-                else:
-                    janela_acao = ""
-                texto_tempo_acao = f"⏱️ {tempo_acao_min:g} min previstos neste atendimento{janela_acao}"
-
                 blocos_acao.append(
                     f"<div class='acao {classe_acao}'>"
                     f"<div class='acao-cabecalho'><div class='acao-tipo'>{icone} {rotulo_acao} {indice_acao}</div><div class='acao-obra'>🏗️ {obra_acao}</div></div>"
-                    f"<div class='acao-tempo'>{html_escape(texto_tempo_acao)}</div>"
                     f"<div class='materiais-lista'>{materiais_html_acao}</div>"
                     f"{concluido}</div>"
                 )
@@ -2948,6 +2931,346 @@ def canonicalizar_ponto_rota(nome):
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def carregar_medias_historicas_paradas():
+    """Calcula a permanência típica por local usando as paradas reais do rastreador.
+
+    Usa apenas visitas concluídas e limita durações absurdas. Quando há amostras
+    suficientes, remove o menor e o maior valor antes da média para uma conversa,
+    café ou parada muito curta não distorcerem sozinhos a previsão.
+    """
+    try:
+        df_hist = get_df(
+            "SELECT local, hora_chegada, hora_saida FROM rastreio_paradas "
+            "WHERE hora_saida IS NOT NULL ORDER BY id DESC LIMIT 800"
+        )
+    except Exception:
+        return {}
+
+    if df_hist is None or df_hist.empty:
+        return {}
+
+    por_local = {}
+    for _, linha in df_hist.iterrows():
+        local = canonicalizar_ponto_rota(linha.get('local', ''))
+        chegada = str(linha.get('hora_chegada', '') or '')
+        saida = str(linha.get('hora_saida', '') or '')
+        if not local or not chegada or not saida:
+            continue
+        try:
+            ini = parse_time_to_mins(chegada)
+            fim = parse_time_to_mins(saida)
+            if fim < ini:
+                fim += 24 * 60
+            dur = float(fim - ini)
+        except Exception:
+            continue
+        # Menos de 3 min costuma ser passagem/ruído de geofence. Acima de 120 min
+        # normalmente é uma ocorrência excepcional e não deve dominar a média.
+        if 3 <= dur <= 120:
+            por_local.setdefault(local, []).append(dur)
+
+    resultado = {}
+    for local, valores in por_local.items():
+        # Prioriza as visitas mais recentes que vieram primeiro da consulta.
+        valores = valores[:20]
+        if len(valores) >= 5:
+            ordenados = sorted(valores)
+            usados = ordenados[1:-1]
+        else:
+            usados = valores
+        if usados:
+            resultado[local] = {
+                'media': sum(usados) / len(usados),
+                'amostras': len(valores),
+            }
+    return resultado
+
+
+# Tempos típicos informados pela operação. São a base de permanência de uma
+# visita normal; volume, peso, coleta e histórico real ajustam esse valor.
+TEMPOS_BASE_UNIDADES_DAVI = {
+    "FIEC": 20,
+    "MARACANAÚ": 30,
+    "UNIFOR": 30,
+    "MUSEU": 15,
+    "CENTRO": 20,
+}
+
+
+def _grupo_tempo_base_local(ponto):
+    """Resolve os nomes usados na rota para as unidades de referência do Davi."""
+    local = remover_acentos(canonicalizar_ponto_rota(ponto)).upper()
+    if "MARACANAU" in local or local in {"SESI ALBANO FRANCO", "SESI CLUBE DA PARCERIA", "SENAI ISTEMM", "SENAI CETAFR"}:
+        return "MARACANAÚ"
+    if "UNIFOR" in local:
+        return "UNIFOR"
+    if "MUSEU" in local:
+        return "MUSEU"
+    if local == "FIEC" or local.startswith("FIEC "):
+        return "FIEC"
+    if local in {"CENTRO", "SENAI CENTRO", "ESCOLA CENTRO", "NR SAUDE"}:
+        return "CENTRO"
+    return None
+
+
+def _quantidade_inicial_material(descricao):
+    """Lê apenas a quantidade inicial do item para não confundir 2,5mm/20kg com quantidade."""
+    texto = str(descricao or "").strip()
+    match = re.match(r"^(\d+(?:[\.,]\d+)?)\b", texto)
+    if not match:
+        return 1.0
+    try:
+        return max(1.0, float(match.group(1).replace(',', '.')))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _analisar_carga_parada(entregas, coletas):
+    """Estima volume e esforço de manuseio a partir dos materiais das demandas.
+
+    Não tenta adivinhar peso em kg. O objetivo é classificar operacionalmente a carga
+    (leve, média ou pesada/volumosa) usando quantidade + palavras do material.
+    """
+    tarefas = list(entregas or []) + list(coletas or [])
+    itens = []
+    for tarefa in tarefas:
+        materiais = str(tarefa.get('Materiais', '') or '')
+        partes = [p.strip() for p in re.split(r'\s*\|\s*', materiais) if p.strip()]
+        itens.extend(partes or ([materiais.strip()] if materiais.strip() else []))
+
+    if not itens:
+        return {
+            'ajuste': 0, 'volume': 'baixo volume', 'peso': 'carga leve',
+            'itens': 0, 'qtd_aprox': 0,
+        }
+
+    # Materiais que normalmente exigem mais força, espaço ou tempo de carga/descarga.
+    palavras_pesadas = (
+        'CIMENTO', 'ARGAMASSA', 'REJUNTE', 'MASSA', 'SACO', 'SACOS', 'SACA', 'SACAS',
+        'CERAMICA', 'CERÂMICA', 'PORCELANATO', 'PISO ', 'TELHA', 'BLOCO ',
+        'CHAPA', 'PORTA', 'VIDRO', 'MADEIRA', 'PERFIL', 'GALAO', 'GALOES',
+        'LATA', 'LATAS', 'TINTA', 'ESMALTE', 'SOLVENTE', 'THINNER', 'BOBINA',
+        'TUBO', 'ELETRODUTO', 'CABO', 'MOTOR', 'BOMBA', 'COMPRESSOR',
+    )
+    palavras_volumosas = (
+        'CAIXA', 'CAIXAS', 'ROLO', 'ROLOS', 'BOBINA', 'TUBO', 'ELETRODUTO',
+        'PERFIL', 'CHAPA', 'PORTA', 'TELHA', 'CERAMICA', 'CERÂMICA',
+        'PORCELANATO', 'PAINEL ', 'LUMINARIA', 'LUMINÁRIA',
+    )
+    palavras_leves = (
+        'LUVA', 'OCULOS', 'PROTETOR AURICULAR', 'LAPIS',
+        'PARAFUSO', 'ABRACADEIRA', 'FITA', 'CONECTOR',
+        'DISCO DE CORTE', 'TOMADA', 'INTERRUPTOR', 'PLUG', 'BUCHA',
+    )
+
+    pontos_volume = 0.0
+    pontos_peso = 0.0
+    qtd_aprox = 0.0
+    pesados = 0
+    volumosos = 0
+    leves = 0
+
+    for item in itens:
+        qtd = _quantidade_inicial_material(item)
+        qtd_aprox += qtd
+        item_norm = remover_acentos(item).upper()
+
+        # Quantidade aumenta volume de forma saturada: 300 parafusos não equivalem
+        # a 300 caixas, mas ainda exigem conferência/manuseio.
+        if qtd >= 200:
+            pontos_volume += 4.0
+        elif qtd >= 100:
+            pontos_volume += 3.0
+        elif qtd >= 50:
+            pontos_volume += 2.2
+        elif qtd >= 20:
+            pontos_volume += 1.5
+        elif qtd >= 10:
+            pontos_volume += 1.0
+        elif qtd >= 5:
+            pontos_volume += 0.5
+
+        eh_pesado = any(remover_acentos(p).upper() in item_norm for p in palavras_pesadas)
+        eh_volumoso = any(remover_acentos(p).upper() in item_norm for p in palavras_volumosas)
+        eh_leve = any(remover_acentos(p).upper() in item_norm for p in palavras_leves)
+
+        if eh_pesado:
+            pesados += 1
+            pontos_peso += 2.5
+            if qtd >= 20:
+                pontos_peso += 2.0
+            elif qtd >= 5:
+                pontos_peso += 1.0
+        elif eh_leve:
+            leves += 1
+        else:
+            # Item sem classificação conhecida conta como carga intermediária.
+            pontos_peso += 0.45
+
+        if eh_volumoso:
+            volumosos += 1
+            pontos_volume += 1.8
+
+    # Muitas linhas diferentes geram conferência, separação e organização, mesmo
+    # quando os itens são leves.
+    pontos_volume += min(max(len(itens) - 2, 0) * 0.55, 4.0)
+
+    if pontos_volume < 3.0:
+        ajuste_volume, rotulo_volume = 0, 'baixo volume'
+    elif pontos_volume < 7.0:
+        ajuste_volume, rotulo_volume = 4, 'volume moderado'
+    elif pontos_volume < 12.0:
+        ajuste_volume, rotulo_volume = 8, 'volume alto'
+    else:
+        ajuste_volume, rotulo_volume = 13, 'volume muito alto'
+
+    if pontos_peso < 2.5 and pesados == 0:
+        ajuste_peso, rotulo_peso = 0, 'carga leve'
+    elif pontos_peso < 6.0:
+        ajuste_peso, rotulo_peso = 4, 'carga de peso médio'
+    elif pontos_peso < 11.0:
+        ajuste_peso, rotulo_peso = 8, 'carga pesada'
+    else:
+        ajuste_peso, rotulo_peso = 13, 'carga muito pesada'
+
+    # Se quase tudo for EPI/ferragem pequena, evita penalizar só por uma quantidade
+    # numérica grande (ex.: 100 abraçadeiras ou 72 pares de luva).
+    if leves >= max(2, len(itens) - 1) and pesados == 0 and volumosos == 0:
+        ajuste_volume = min(ajuste_volume, 4)
+        rotulo_volume = 'volume moderado' if ajuste_volume else 'baixo volume'
+        ajuste_peso = 0
+        rotulo_peso = 'carga leve'
+
+    return {
+        'ajuste': ajuste_volume + ajuste_peso,
+        'volume': rotulo_volume,
+        'peso': rotulo_peso,
+        'itens': len(itens),
+        'qtd_aprox': qtd_aprox,
+        'ajuste_volume': ajuste_volume,
+        'ajuste_peso': ajuste_peso,
+    }
+
+
+def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=False):
+    """Estima UMA permanência por local com base, carga atual e histórico real.
+
+    Os tempos típicos por unidade são a âncora. Demandas no mesmo endereço não
+    recebem um tempo cheio individual: são atendidas dentro da mesma permanência.
+    A carga atual (volume/peso), a complexidade manual e o fato de haver coleta
+    ajustam a estimativa. O histórico do rastreador corrige hábitos reais do local.
+    """
+    entregas = list(entregas or [])
+    coletas = list(coletas or [])
+
+    # Evita contar a mesma demanda duas vezes em casos raros de origem=destino.
+    vistos = set()
+    entregas_unicas, coletas_unicas = [], []
+    for tipo, lista_origem, lista_destino in (('E', entregas, entregas_unicas), ('C', coletas, coletas_unicas)):
+        for tarefa in lista_origem:
+            chave = (tipo, str(tarefa.get('id', id(tarefa))))
+            if chave not in vistos:
+                vistos.add(chave)
+                lista_destino.append(tarefa)
+    entregas, coletas = entregas_unicas, coletas_unicas
+
+    qtd_acoes = len(entregas) + len(coletas)
+    if qtd_acoes <= 0:
+        return (0, 'sem atendimento') if retornar_fonte else 0
+
+    grupo_local = _grupo_tempo_base_local(ponto)
+    if grupo_local:
+        tempo_base = float(TEMPOS_BASE_UNIDADES_DAVI[grupo_local])
+        fonte_base = f"base {grupo_local.title()} {int(tempo_base)} min"
+    elif coletas and not entregas:
+        # Fornecedor/loja: espera, separação, nota e carregamento costumam pesar mais.
+        tempo_base = 30.0
+        fonte_base = "base de coleta/fornecedor 30 min"
+    elif coletas and entregas:
+        tempo_base = 30.0
+        fonte_base = "base de coleta + entrega 30 min"
+    else:
+        tempo_base = 20.0
+        fonte_base = "base de entrega 20 min"
+
+    # Histórico corrige a base do local, mas as referências informadas pela operação
+    # continuam sendo a principal âncora para FIEC/Maracanaú/Unifor/Museu/Centro.
+    historico = carregar_medias_historicas_paradas().get(canonicalizar_ponto_rota(ponto))
+    fonte_hist = ""
+    if historico:
+        media_hist = float(historico.get('media', tempo_base))
+        amostras = int(historico.get('amostras', 0))
+        if grupo_local:
+            peso_hist = 0.20 if amostras < 5 else 0.30
+        else:
+            peso_hist = 0.35 if amostras < 5 else 0.55
+        tempo_contexto = tempo_base * (1.0 - peso_hist) + media_hist * peso_hist
+        fonte_hist = f" + histórico {amostras} visita{'s' if amostras != 1 else ''}"
+    else:
+        tempo_contexto = tempo_base
+
+    carga = _analisar_carga_parada(entregas, coletas)
+
+    def tempo_num(tarefa, campo, padrao):
+        try:
+            valor = float(tarefa.get(campo, padrao) or padrao)
+            if math.isnan(valor):
+                return float(padrao)
+            return max(1.0, valor)
+        except (TypeError, ValueError):
+            return float(padrao)
+
+    # Tempos manuais continuam úteis para uma demanda excepcionalmente complicada,
+    # mas não são somados um a um. Só o maior desvio acima do padrão pesa na parada.
+    desvios = []
+    for tarefa in entregas:
+        desvios.append(max(0.0, tempo_num(tarefa, 'Tempo_Entrega', 10) - 10.0))
+    for tarefa in coletas:
+        desvios.append(max(0.0, tempo_num(tarefa, 'Tempo_Coleta', 20) - 20.0))
+    ajuste_manual = min(max(desvios or [0.0]) * 0.45, 10.0)
+
+    # Coleta tende a consumir mais tempo que entrega no mesmo local. Quando a base já
+    # é uma coleta de fornecedor (30 min), não duplica essa margem.
+    ajuste_coleta = 0.0
+    if grupo_local and coletas:
+        ajuste_coleta = 5.0 if not entregas else 7.0
+    elif not grupo_local and coletas and entregas:
+        ajuste_coleta = 4.0
+
+    # Múltiplas demandas no mesmo endereço compartilham chegada/saída. Acrescenta só
+    # uma pequena conferência administrativa, não 10 min por demanda.
+    ajuste_multiplas = min(max(qtd_acoes - 1, 0) * 1.2, 6.0)
+
+    estimativa = tempo_contexto + carga['ajuste'] + ajuste_manual + ajuste_coleta + ajuste_multiplas
+    estimativa = int(round(min(max(estimativa, 10.0), 90.0)))
+
+    detalhes = [fonte_base, carga['volume'], carga['peso']]
+    if ajuste_coleta > 0:
+        detalhes.append('margem de coleta')
+    if ajuste_manual >= 2:
+        detalhes.append('complexidade manual')
+    fonte = " • ".join(detalhes) + fonte_hist
+
+    return (estimativa, fonte) if retornar_fonte else estimativa
+
+def atualizar_tempos_por_parada(route_steps, ponto_saida=''):
+    """Recalcula a permanência das paradas já salvas usando o modelo atual."""
+    for indice, step in enumerate(route_steps or []):
+        if step.get('type') != 'stop':
+            continue
+        destino = str(step.get('destino', '') or '')
+        is_start = indice == 0 and destino == ponto_saida
+        if is_start:
+            continue
+        entregas = [t for acao, t in step.get('actions', []) if acao == 'ENTREGAR']
+        coletas = [t for acao, t in step.get('actions', []) if acao == 'COLETAR']
+        tempo, fonte = estimar_tempo_parada(destino, entregas, coletas, retornar_fonte=True)
+        step['tempo_local'] = tempo
+        step['tempo_local_fonte'] = fonte
+    return route_steps
+
 def garantir_gps_local_base():
     coordenadas = None
     for alias in ("ESCRITÓRIO", "ALMOXARIFADO"):
@@ -3400,7 +3723,9 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                         novas_entregues |= 1 << i
                         ids_entrega.append(i)
 
-                tempo_servico = sum(tempos_coleta[i] for i in ids_coleta) + sum(tempos_entrega[i] for i in ids_entrega)
+                tarefas_entrega_parada = [tarefas[i] for i in ids_entrega]
+                tarefas_coleta_parada = [tarefas[i] for i in ids_coleta]
+                tempo_servico = estimar_tempo_parada(ponto, tarefas_entrega_parada, tarefas_coleta_parada)
                 _, nova_hora = avancar_relogio(estado["hora"], duracao, tempo_servico)
 
                 if "Menor Distância" in estrategia:
@@ -4103,6 +4428,7 @@ with tab_demandas:
         st.session_state.demandas = st.data_editor(st.session_state.demandas, column_config={"Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120), "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120), "Peso": None, "id": None, "Supervisor": None}, disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"], hide_index=True, use_container_width=True, key="editor_tempos_demandas")
 
     editor_tempos_demandas()
+    st.caption("⏱️ Os tempos de coleta/entrega representam a complexidade de cada demanda. Quando várias demandas acontecem no mesmo endereço, o sistema calcula uma única permanência no local — não soma 10/20 minutos completos para cada cartão.")
     st.divider()
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
     st.caption("Acompanhe em tempo real as entregas da rota gerada.")
@@ -4776,12 +5102,18 @@ with tab_roteiro:
                     
                 current_time = arr_time
                 total_km += best_dist
-                actions_here, service_mins = [], 0
+                actions_here = []
 
-                for t in [t for t in carrying if t['Destino'] == best_point]:
-                    actions_here.append(("ENTREGAR", t)); carrying.remove(t); service_mins += t['Tempo_Entrega']
-                for t in [t for t in unpicked if t['Origem'] == best_point]:
-                    actions_here.append(("COLETAR", t)); unpicked.remove(t); carrying.append(t); service_mins += t['Tempo_Coleta']
+                entregas_here = [t for t in carrying if t['Destino'] == best_point]
+                coletas_here = [t for t in unpicked if t['Origem'] == best_point]
+                for t in entregas_here:
+                    actions_here.append(("ENTREGAR", t)); carrying.remove(t)
+                for t in coletas_here:
+                    actions_here.append(("COLETAR", t)); unpicked.remove(t); carrying.append(t)
+
+                service_mins, fonte_tempo_local = estimar_tempo_parada(
+                    best_point, entregas_here, coletas_here, retornar_fonte=True
+                )
 
                 is_start_load = (best_point == ponto_saida and current_time == current_time_tsp and not any(a[0] == "ENTREGAR" for a in actions_here) and len(past_route_steps) == 0)
                 
@@ -4797,7 +5129,7 @@ with tab_roteiro:
                         
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(dep_time), service_mins
 
-                route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "tempo_local": tempo_local_exibicao, "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
+                route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "tempo_local": tempo_local_exibicao, "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local), "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
                 current_time = dep_time
                 current = best_point
 
@@ -4850,6 +5182,7 @@ with tab_roteiro:
         
         df_paradas = carregar_paradas_rastreadas_rota(DATA_REF_ROTA_STR, PLACA_DAVI)
 
+        route_steps = atualizar_tempos_por_parada(route_steps, ponto_saida)
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
         col_esq, col_dir = st.columns([1.2, 0.8])
@@ -4947,17 +5280,15 @@ with tab_roteiro:
                             unsafe_allow_html=True,
                         )
                     
-                    # Horário de cada demanda dentro da parada. O trecho rodoviário é
-                    # contabilizado uma vez entre locais; dentro do mesmo local, as
-                    # demandas são executadas em sequência e seus tempos são somados.
-                    cursor_demanda_torre = None
-                    if not is_start:
-                        hora_base_torre = str(step.get('dyn_chegada', '') or '')
-                        match_hora_torre = re.match(r"^(\d{2}):(\d{2})", hora_base_torre)
-                        if not match_hora_torre:
-                            match_hora_torre = re.match(r"^(\d{2}):(\d{2})", str(step.get('chegada', '') or ''))
-                        if match_hora_torre:
-                            cursor_demanda_torre = int(match_hora_torre.group(1)) * 60 + int(match_hora_torre.group(2))
+                    # Uma visita ao endereço tem uma única permanência estimada.
+                    # Várias demandas no mesmo local compartilham esse tempo.
+                    if not is_start and step.get('actions'):
+                        tempo_parada_torre = int(round(float(step.get('tempo_local', 0) or 0)))
+                        fonte_parada_torre = str(step.get('tempo_local_fonte', 'média operacional') or 'média operacional')
+                        st.caption(
+                            f"⏱️ **Permanência estimada no local: {tempo_parada_torre} min** • {fonte_parada_torre}. "
+                            f"As {len(step.get('actions', []))} demanda(s) desta parada compartilham esse período."
+                        )
 
                     for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
                         eh_coleta_torre = acao == "COLETAR"
@@ -4966,22 +5297,6 @@ with tab_roteiro:
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
-
-                        campo_tempo_torre = 'Tempo_Coleta' if eh_coleta_torre else 'Tempo_Entrega'
-                        try:
-                            tempo_demanda_torre = max(0.0, float(t.get(campo_tempo_torre, 10) or 10))
-                            if math.isnan(tempo_demanda_torre):
-                                tempo_demanda_torre = 10.0
-                        except (TypeError, ValueError):
-                            tempo_demanda_torre = 10.0
-
-                        if cursor_demanda_torre is not None:
-                            inicio_demanda_torre = cursor_demanda_torre
-                            fim_demanda_torre = cursor_demanda_torre + tempo_demanda_torre
-                            janela_demanda_torre = f" • {format_mins_to_time(inicio_demanda_torre)} às {format_mins_to_time(fim_demanda_torre)}"
-                            cursor_demanda_torre = fim_demanda_torre
-                        else:
-                            janela_demanda_torre = ""
 
                         cor_torre = "#22c55e" if not eh_coleta_torre else "#f59e0b"
                         fundo_torre = "rgba(34,197,94,.10)" if not eh_coleta_torre else "rgba(245,158,11,.10)"
@@ -4999,9 +5314,6 @@ with tab_roteiro:
                                 </div>
                                 """,
                                 unsafe_allow_html=True,
-                            )
-                            st.caption(
-                                f"⏱️ **{tempo_demanda_torre:g} min** previstos neste atendimento{janela_demanda_torre}"
                             )
 
                             if materiais_torre:
