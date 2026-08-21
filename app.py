@@ -1995,6 +1995,66 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
     return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
+def normalizar_geometria_mapa(geometria, referencias=None):
+    """Normaliza uma geometria para o formato [lat, lon] esperado pelo Folium.
+
+    O GeoJSON do OSRM devolve [lon, lat]. Versões anteriores do app armazenaram
+    algumas dessas geometrias sem inverter os eixos; nesses casos a linha ficava
+    milhares de quilômetros fora do mapa e parecia ter desaparecido. A função
+    também recupera automaticamente rotas antigas já salvas no Supabase.
+    """
+    pontos = []
+    for ponto in geometria or []:
+        try:
+            if ponto is None or len(ponto) < 2:
+                continue
+            a, b = float(ponto[0]), float(ponto[1])
+            if math.isfinite(a) and math.isfinite(b):
+                pontos.append([a, b])
+        except (TypeError, ValueError, IndexError):
+            continue
+
+    if len(pontos) < 2:
+        return pontos
+
+    refs = []
+    for ponto in referencias or []:
+        try:
+            if ponto is None or len(ponto) < 2:
+                continue
+            lat, lon = float(ponto[0]), float(ponto[1])
+            if math.isfinite(lat) and math.isfinite(lon):
+                refs.append([lat, lon])
+        except (TypeError, ValueError, IndexError):
+            continue
+
+    if not refs:
+        return pontos
+
+    # Compara a geometria como veio e com os eixos invertidos. A primeira e a
+    # última coordenada são suficientes para reconhecer o erro do GeoJSON/OSRM.
+    def pontuacao(candidatos):
+        try:
+            return (
+                calcular_distancia_km(candidatos[0][0], candidatos[0][1], refs[0][0], refs[0][1])
+                + calcular_distancia_km(candidatos[-1][0], candidatos[-1][1], refs[-1][0], refs[-1][1])
+            )
+        except Exception:
+            return float('inf')
+
+    invertidos = [[p[1], p[0]] for p in pontos]
+    score_normal = pontuacao(pontos)
+    score_invertido = pontuacao(invertidos)
+    if score_invertido + 0.5 < score_normal:
+        pontos = invertidos
+        score_normal = score_invertido
+
+    # Uma geometria sem relação com a rota não deve ser desenhada. O mapa usa
+    # então a ligação direta entre as paradas até conseguir consultar a malha viária.
+    if score_normal > 80.0:
+        return []
+    return pontos
+
 PLACA_DAVI = "TIF-2123"
 HORA_INICIO_ROTA_DAVI = "08:00"
 
@@ -3340,9 +3400,13 @@ if modo_url == "true":
     p_num_mapa = 1
     pos_base_mobile = apply_offset_mobile(*locais_dict[p_saida]) if p_saida in locais_dict else None
 
-    # Sempre desenha algum traçado: sólido quando é viário, tracejado apenas no fallback.
-    geom_mobile = geometria_rota or []
-    geom_mobile_viaria = bool(st.session_state.get('geometria_viaria', False))
+    # Sempre desenha algum traçado. Também corrige automaticamente geometrias
+    # antigas do OSRM que foram salvas no formato [lon, lat].
+    geom_mobile = normalizar_geometria_mapa(geometria_rota or [], pontos_reais_mobile)
+    geom_mobile_viaria = bool(st.session_state.get('geometria_viaria', False)) and len(geom_mobile) > 2
+    if len(geom_mobile) < 2 and len(pontos_reais_mobile) > 1:
+        geom_mobile = [list(p) for p in pontos_reais_mobile]
+        geom_mobile_viaria = False
     if len(geom_mobile) > 1:
         folium.PolyLine(geom_mobile, color="#FFFFFF", weight=8, opacity=0.80).add_to(m_mobile)
         folium.PolyLine(
@@ -4203,85 +4267,201 @@ def calcular_matriz_google_trafego(coords, horario_partida):
     except Exception:
         return None
 
-def calcular_matriz_tomtom_trafego(coords, horario_partida):
-    """Matriz de distâncias e tempos com trânsito ao vivo no plano gratuito TomTom."""
-    chave = carregar_chave_tomtom()
-    quantidade = len(coords)
-    if not chave or quantidade < 2:
-        return None
-
-    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
-    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
-    partida_rfc3339 = partida.isoformat(timespec="seconds")
-
-    pontos = [
-        {"point": {"latitude": float(lat), "longitude": float(lon)}}
-        for lat, lon in coords
-    ]
-    payload = {
-        "origins": pontos,
-        "destinations": pontos,
-        "options": {
-            "departAt": partida_rfc3339,
-            "routeType": "fastest",
-            "traffic": "live",
-            "travelMode": "car",
-        },
-    }
-
+def _registrar_diagnostico_tomtom(ok, mensagem, detalhes=""):
+    """Guarda um diagnóstico curto sem jamais expor a chave da API."""
     try:
-        resposta = requests.post(
-            "https://api.tomtom.com/routing/matrix/2",
-            params={"key": chave},
-            headers={"Content-Type": "application/json", "Accept-Encoding": "gzip"},
-            json=payload,
-            timeout=35,
-        )
-        resposta.raise_for_status()
-        dados = resposta.json().get("data", [])
-        distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
-        duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+        st.session_state['_tomtom_diag'] = {
+            'ok': bool(ok),
+            'mensagem': str(mensagem or '').strip(),
+            'detalhes': str(detalhes or '').strip()[:700],
+            'quando': datetime.now(FUSO_LOCAL).strftime('%H:%M:%S'),
+        }
+    except Exception:
+        pass
 
-        for celula in dados:
-            resumo = celula.get("routeSummary") or {}
-            origem = int(celula.get("originIndex", -1))
-            destino = int(celula.get("destinationIndex", -1))
-            distancia_m = resumo.get("lengthInMeters")
-            duracao_s = resumo.get("travelTimeInSeconds")
-            if 0 <= origem < quantidade and 0 <= destino < quantidade and distancia_m is not None and duracao_s is not None:
-                distancias[origem][destino] = float(distancia_m) / 1000.0
-                duracoes[origem][destino] = float(duracao_s) / 60.0
 
-        for i in range(quantidade):
-            distancias[i][i], duracoes[i][i] = 0.0, 0.0
-        if any(valor is None for linha in distancias for valor in linha):
+def _erro_tomtom_resposta(resposta):
+    """Extrai uma mensagem útil de erro da TomTom sem incluir URL/chave."""
+    codigo = getattr(resposta, 'status_code', '')
+    mensagem = ''
+    try:
+        dados = resposta.json()
+        erro = dados.get('detailedError') or dados.get('error') or {}
+        if isinstance(erro, dict):
+            partes = [erro.get('code'), erro.get('message')]
+            mensagem = ' - '.join(str(p) for p in partes if p)
+        if not mensagem and isinstance(dados, dict):
+            mensagem = str(dados.get('message') or dados.get('errorText') or '')
+    except Exception:
+        try:
+            mensagem = str(resposta.text or '')[:300]
+        except Exception:
+            mensagem = ''
+    base = f"HTTP {codigo}" if codigo else "Falha HTTP"
+    return f"{base}: {mensagem}" if mensagem else base
+
+
+def _calcular_matriz_osrm(coords):
+    """Fallback viário sem trânsito, usado só quando a TomTom não resolve algum trecho."""
+    try:
+        coords_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
+        url = f"https://router.project-osrm.org/table/v1/driving/{coords_str}?annotations=distance,duration"
+        req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
+        with urllib.request.urlopen(req, timeout=12) as response:
+            res = json.loads(response.read())
+        if res.get('code') != 'Ok':
             return None
-        if any(valor is None for linha in duracoes for valor in linha):
+        distancias = [[(float(v) / 1000.0) if v is not None else None for v in row] for row in res.get('distances', [])]
+        duracoes = [[(float(v) / 60.0) if v is not None else None for v in row] for row in res.get('durations', [])]
+        if len(distancias) != len(coords) or len(duracoes) != len(coords):
             return None
         return distancias, duracoes
     except Exception:
         return None
 
+
+def calcular_matriz_tomtom_trafego(coords, horario_partida):
+    """Matriz TomTom com trânsito, em blocos de até 100 células.
+
+    A Matrix Routing v2 síncrona aceita no máximo 100 rotas por requisição. A versão
+    anterior enviava N x N de uma vez; acima de 10 pontos isso podia fazer a TomTom
+    rejeitar a chamada e o app caía silenciosamente para o OSRM. Agora as origens são
+    divididas em blocos e falhas isoladas de map matching não descartam a matriz toda.
+    """
+    chave = carregar_chave_tomtom()
+    quantidade = len(coords)
+    if not chave:
+        _registrar_diagnostico_tomtom(False, 'Chave TomTom não encontrada nos Secrets.')
+        return None
+    if quantidade < 2:
+        return None
+    if quantidade > 100:
+        _registrar_diagnostico_tomtom(False, f'Matriz com {quantidade} pontos excede o limite síncrono de 100 destinos.')
+        return None
+
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    partida_rfc3339 = partida.isoformat(timespec='seconds')
+
+    todos_pontos = [
+        {'point': {'latitude': float(lat), 'longitude': float(lon)}}
+        for lat, lon in coords
+    ]
+    distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+    duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+
+    # A documentação da Matrix v2 limita a matriz síncrona a 100 células por chamada.
+    origens_por_bloco = max(1, 100 // quantidade)
+    falhas_api = []
+
+    try:
+        for inicio in range(0, quantidade, origens_por_bloco):
+            indices_origem = list(range(inicio, min(inicio + origens_por_bloco, quantidade)))
+            payload = {
+                'origins': [todos_pontos[i] for i in indices_origem],
+                'destinations': todos_pontos,
+                'options': {
+                    'departAt': partida_rfc3339,
+                    'routeType': 'fastest',
+                    'traffic': 'live',
+                    'travelMode': 'car',
+                },
+            }
+            resposta = requests.post(
+                'https://api.tomtom.com/routing/matrix/2',
+                params={'key': chave},
+                headers={'Content-Type': 'application/json', 'Accept-Encoding': 'gzip'},
+                json=payload,
+                timeout=35,
+            )
+            if not resposta.ok:
+                detalhe = _erro_tomtom_resposta(resposta)
+                _registrar_diagnostico_tomtom(False, 'Matrix Routing v2 recusou a requisição.', detalhe)
+                return None
+
+            corpo = resposta.json()
+            estatisticas = corpo.get('statistics') or {}
+            if estatisticas.get('failures'):
+                for item in estatisticas.get('failureDetails') or []:
+                    falhas_api.append(f"{item.get('code', 'ERRO')} x{item.get('count', 1)}")
+
+            for celula in corpo.get('data', []):
+                origem_local = int(celula.get('originIndex', -1))
+                destino = int(celula.get('destinationIndex', -1))
+                if not (0 <= origem_local < len(indices_origem) and 0 <= destino < quantidade):
+                    continue
+                origem = indices_origem[origem_local]
+                resumo = celula.get('routeSummary') or {}
+                distancia_m = resumo.get('lengthInMeters')
+                duracao_s = resumo.get('travelTimeInSeconds')
+                if distancia_m is not None and duracao_s is not None:
+                    distancias[origem][destino] = float(distancia_m) / 1000.0
+                    duracoes[origem][destino] = float(duracao_s) / 60.0
+
+        for i in range(quantidade):
+            distancias[i][i], duracoes[i][i] = 0.0, 0.0
+
+        faltantes = [
+            (i, j) for i in range(quantidade) for j in range(quantidade)
+            if distancias[i][j] is None or duracoes[i][j] is None
+        ]
+
+        # Uma única célula com MAP_MATCHING_FAILURE não deve jogar fora todo o trânsito
+        # da TomTom. Completa somente os trechos problemáticos usando a malha OSRM.
+        if faltantes:
+            matriz_osrm = _calcular_matriz_osrm(coords)
+            if matriz_osrm:
+                dist_osrm, dur_osrm = matriz_osrm
+                for i, j in faltantes:
+                    if distancias[i][j] is None:
+                        distancias[i][j] = dist_osrm[i][j]
+                    if duracoes[i][j] is None:
+                        duracoes[i][j] = dur_osrm[i][j]
+
+        ainda_faltantes = sum(
+            1 for i in range(quantidade) for j in range(quantidade)
+            if distancias[i][j] is None or duracoes[i][j] is None
+        )
+        if ainda_faltantes:
+            detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else f'{ainda_faltantes} trecho(s) sem resposta'
+            _registrar_diagnostico_tomtom(False, 'TomTom respondeu, mas a matriz ficou incompleta.', detalhe)
+            return None
+
+        qtd_fallback = len(faltantes)
+        try:
+            st.session_state['_tomtom_matriz_hibrida'] = qtd_fallback
+        except Exception:
+            pass
+        if qtd_fallback:
+            detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else ''
+            _registrar_diagnostico_tomtom(True, f'TomTom ativa; {qtd_fallback} trecho(s) isolado(s) completado(s) por contingência OSRM.', detalhe)
+        else:
+            _registrar_diagnostico_tomtom(True, 'TomTom Matrix Routing v2 ativa e respondendo normalmente.')
+        return distancias, duracoes
+    except requests.RequestException as erro:
+        _registrar_diagnostico_tomtom(False, 'Falha de conexão com a TomTom.', f'{type(erro).__name__}: {erro}')
+        return None
+    except Exception as erro:
+        _registrar_diagnostico_tomtom(False, 'Erro ao processar a resposta da TomTom.', f'{type(erro).__name__}: {erro}')
+        return None
+
 def calcular_matriz_rotas(coords, horario_partida=None):
     matriz_tomtom = calcular_matriz_tomtom_trafego(coords, horario_partida)
     if matriz_tomtom:
-        return matriz_tomtom[0], matriz_tomtom[1], "TomTom Routing — trânsito ao vivo e histórico (gratuito)"
+        qtd_hibrida = int(st.session_state.get('_tomtom_matriz_hibrida', 0) or 0)
+        fonte = 'TomTom Routing — trânsito ao vivo e histórico'
+        if qtd_hibrida:
+            fonte += f' • {qtd_hibrida} trecho(s) em contingência OSRM'
+        return matriz_tomtom[0], matriz_tomtom[1], fonte
 
     matriz_google = calcular_matriz_google_trafego(coords, horario_partida)
     if matriz_google:
-        return matriz_google[0], matriz_google[1], "Google Routes — trânsito ao vivo e preditivo"
+        return matriz_google[0], matriz_google[1], 'Google Routes — trânsito ao vivo e preditivo'
 
-    try:
-        coords_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
-        url = f"https://router.project-osrm.org/table/v1/driving/{coords_str}?annotations=distance,duration"
-        req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            res = json.loads(response.read())
-            if res.get('code') == 'Ok':
-                distancias = [[dist / 1000.0 for dist in row] for row in res['distances']]
-                duracoes = [[dur / 60.0 for dur in row] for row in res['durations']]
-                return distancias, duracoes, "OSRM — malha viária sem trânsito ao vivo"
-    except: pass
+    matriz_osrm = _calcular_matriz_osrm(coords)
+    if matriz_osrm:
+        return matriz_osrm[0], matriz_osrm[1], 'OSRM — malha viária sem trânsito ao vivo'
+
     distancias, duracoes = [], []
     for i in range(len(coords)):
         row_d, row_t = [], []
@@ -4294,7 +4474,7 @@ def calcular_matriz_rotas(coords, horario_partida=None):
             row_t.append((km / VELOCIDADE_MEDIA_KMH) * 60)
         distancias.append(row_d)
         duracoes.append(row_t)
-    return distancias, duracoes, "Estimativa geográfica de contingência"
+    return distancias, duracoes, 'Estimativa geográfica de contingência'
 
 
 
@@ -4725,39 +4905,58 @@ def buscar_geometria_google_trafego(coords_limpas, horario_partida=None):
         return None
 
 def buscar_geometria_tomtom_trafego(coords_limpas, horario_partida=None):
-    """Desenha o percurso viário na ordem já otimizada, considerando trânsito TomTom."""
+    """Desenha o percurso viário na ordem otimizada e registra a causa se falhar."""
     chave = carregar_chave_tomtom()
     if not chave or len(coords_limpas) < 2 or len(coords_limpas) > 152:
         return None
 
     agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
     partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
-    locais = ":".join(f"{float(lat)},{float(lon)}" for lat, lon in coords_limpas)
-    url = f"https://api.tomtom.com/routing/1/calculateRoute/{locais}/json"
+    locais = ':'.join(f'{float(lat)},{float(lon)}' for lat, lon in coords_limpas)
+    url = f'https://api.tomtom.com/routing/1/calculateRoute/{locais}/json'
     parametros = {
-        "key": chave,
-        "routeType": "fastest",
-        "traffic": "true",
-        "travelMode": "car",
-        "departAt": partida.isoformat(timespec="seconds"),
-        "routeRepresentation": "polyline",
-        "computeTravelTimeFor": "all",
-        "language": "pt-BR",
+        'key': chave,
+        'routeType': 'fastest',
+        'traffic': 'true',
+        'travelMode': 'car',
+        'departAt': partida.isoformat(timespec='seconds'),
+        'routeRepresentation': 'polyline',
+        'computeTravelTimeFor': 'all',
+        'language': 'pt-BR',
     }
     try:
         resposta = requests.get(url, params=parametros, timeout=35)
-        resposta.raise_for_status()
-        rotas = resposta.json().get("routes", [])
+        if not resposta.ok:
+            try:
+                st.session_state['_tomtom_geom_diag'] = _erro_tomtom_resposta(resposta)
+            except Exception:
+                pass
+            return None
+        rotas = resposta.json().get('routes', [])
         if not rotas:
+            try:
+                st.session_state['_tomtom_geom_diag'] = 'Routing API respondeu sem rota.'
+            except Exception:
+                pass
             return None
         pontos = []
-        for perna in rotas[0].get("legs", []):
-            for ponto in perna.get("points", []):
-                coordenada = [float(ponto["latitude"]), float(ponto["longitude"])]
+        for perna in rotas[0].get('legs', []):
+            for ponto in perna.get('points', []):
+                coordenada = [float(ponto['latitude']), float(ponto['longitude'])]
                 if not pontos or coordenada != pontos[-1]:
                     pontos.append(coordenada)
-        return pontos if len(pontos) > 1 else None
-    except Exception:
+        if len(pontos) > 1:
+            try:
+                st.session_state['_tomtom_geom_diag'] = 'Routing API ativa.'
+            except Exception:
+                pass
+            return pontos
+        return None
+    except Exception as erro:
+        try:
+            st.session_state['_tomtom_geom_diag'] = f'{type(erro).__name__}: {erro}'[:500]
+        except Exception:
+            pass
         return None
 
 def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
@@ -4780,7 +4979,10 @@ def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=15) as response:
             res = json.loads(response.read())
-        if res.get("code") == "Ok" and res.get("routes"): return [[lat, lon] for lat, lon in res["routes"][0]["geometry"]["coordinates"]], True
+        if res.get("code") == "Ok" and res.get("routes"):
+            # GeoJSON/OSRM usa [longitude, latitude]; Folium usa [latitude, longitude].
+            geometria_osrm = [[float(lat), float(lon)] for lon, lat in res["routes"][0]["geometry"]["coordinates"]]
+            return geometria_osrm, True
     except: pass
     return [[lat, lon] for lat, lon in coords_limpas], False
 
@@ -6150,6 +6352,10 @@ with tab_roteiro:
             for step in route_steps:
                 if step.get("destino") in locais_dict: coords_ordenadas_rota.append(locais_dict[step.get("destino")])
             geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordenadas_rota, horario_partida_matriz)
+            geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordenadas_rota)
+            if len(geometria_rota) < 2 and len(coords_ordenadas_rota) > 1:
+                geometria_rota = [list(map(float, p)) for p in coords_ordenadas_rota]
+                geometria_viaria = False
             
             st.session_state['rota_gerada'] = True
             st.session_state['route_steps'] = route_steps
@@ -6228,10 +6434,20 @@ with tab_roteiro:
 
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
-            if "Google Routes" in fonte_matriz_exibicao or "TomTom Routing" in fonte_matriz_exibicao:
+            if "Google Routes" in fonte_matriz_exibicao or "TomTom" in fonte_matriz_exibicao:
                 st.caption(f"🚦 Otimização viária: **{fonte_matriz_exibicao}** • referência {horario_matriz_exibicao} • ETAs com validação operacional de trecho")
             else:
-                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional de trecho • para trânsito real gratuito, configure `tomtom.api_key` nos Secrets.")
+                if carregar_chave_tomtom():
+                    diag_tomtom = st.session_state.get('_tomtom_diag') or {}
+                    msg_diag = str(diag_tomtom.get('mensagem', '') or '').strip()
+                    det_diag = str(diag_tomtom.get('detalhes', '') or '').strip()
+                    if msg_diag:
+                        complemento = f" • {det_diag}" if det_diag else ""
+                        st.warning(f"⚠️ TomTom configurada, mas a rota caiu para OSRM. {msg_diag}{complemento}")
+                    else:
+                        st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • chave TomTom detectada; recalcule a rota para executar o diagnóstico.")
+                else:
+                    st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional • configure `[tomtom] api_key = \"SUA_CHAVE\"` nos Secrets e recalcule a rota.")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
@@ -6500,8 +6716,19 @@ with tab_roteiro:
                 locais_dict[s['destino']] for s in route_steps
                 if s.get('destino') in locais_dict and s.get('type') != 'lunch'
             ])
+            # Repara geometrias antigas gravadas com eixos invertidos pelo OSRM.
+            geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
             if len(geometria_rota) < 2:
                 geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
+                geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
+            if len(geometria_rota) < 2 and len(coords_ordem_real) > 1:
+                geometria_rota = [list(map(float, p)) for p in coords_ordem_real]
+                geometria_viaria = False
+
+            # Mantém a versão reparada em memória; ao recalcular a rota ela também
+            # será gravada corretamente no banco.
+            st.session_state['geometria_rota'] = geometria_rota
+            st.session_state['geometria_viaria'] = geometria_viaria
 
             if len(geometria_rota) > 1:
                 # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
@@ -6551,7 +6778,8 @@ with tab_roteiro:
                 ).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = trajeto da rota. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
+            legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
+            st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
