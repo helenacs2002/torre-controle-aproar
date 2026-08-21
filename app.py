@@ -512,7 +512,9 @@ def _organizar_secoes_relatorio(titulo, tabelas):
     indice_principal = None
     preferencias = []
     if "roteiro" in titulo_norm:
-        preferencias = ["paradas e demandas", "paradas"]
+        # No relatório da rota, a leitura principal é a sequência operacional.
+        # O detalhamento por demanda vem depois, em uma seção separada.
+        preferencias = ["resumo da rota", "ordem da rota", "paradas e demandas", "paradas"]
     elif "fechamento" in titulo_norm:
         preferencias = ["resumo", "gastos"]
     elif "registros e historico" in titulo_norm:
@@ -1170,7 +1172,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak
     except (ImportError, ModuleNotFoundError):
         return _criar_pdf_textual(titulo, tabelas)
 
@@ -1269,7 +1271,12 @@ def _criar_pdf_relatorio(titulo, tabelas):
         ]))
         elementos.extend([painel_kpi, Spacer(1, 6)])
 
-    for nome, df_original in secoes_dados:
+    for indice_secao, (nome, df_original) in enumerate(secoes_dados):
+        nome_secao_norm = remover_acentos(str(nome)).lower()
+        if "roteiro" in remover_acentos(titulo_limpo).lower() and indice_secao > 0 and any(
+            chave in nome_secao_norm for chave in ("paradas e demandas", "detalhamento da rota", "detalhamento")
+        ):
+            elementos.append(PageBreak())
         elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome).upper())} &nbsp; - &nbsp; {len(df_original)} registro(s)", estilo_secao))
         if df_original.empty or not len(df_original.columns):
             elementos.append(Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio))
@@ -1345,7 +1352,10 @@ def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
     formato = col_formato.selectbox("Formato", ["PDF", "CSV", "Excel"], key=f"formato_relatorio_{chave}")
     tabelas_dados = _normalizar_tabelas_relatorio(dados)
     resumo_analitico = _criar_resumo_analitico_relatorio(titulo, tabelas_dados)
-    tabelas = [("Resumo Analítico", resumo_analitico)] + tabelas_dados
+    if str(chave).lower() == "roteiro":
+        tabelas = tabelas_dados
+    else:
+        tabelas = [("Resumo Analítico", resumo_analitico)] + tabelas_dados
     if formato == "CSV":
         arquivo, extensao, mime = _criar_csv_relatorio(tabelas), "csv", "text/csv"
     elif formato == "Excel":
@@ -1444,7 +1454,7 @@ def _materiais_resumo_rota(tarefas, limite_itens=5, limite_chars=210):
 
 
 def _descricao_rapida_parada(step):
-    """Resume a parada em linguagem operacional, priorizando para onde vai cada coleta."""
+    """Resume uma parada em uma frase simples para o motorista."""
     acoes = step.get("actions", []) or []
     coletas = [t for acao, t in acoes if acao == "COLETAR"]
     entregas = [t for acao, t in acoes if acao == "ENTREGAR"]
@@ -1452,11 +1462,78 @@ def _descricao_rapida_parada(step):
 
     if coletas:
         destinos = _lista_natural_rota([t.get("Destino", "") for t in coletas])
-        partes.append(f"COLETAR para {destinos}" if destinos else "COLETAR materiais")
+        partes.append(f"COLETAR materiais para {destinos}" if destinos else "COLETAR materiais")
     if entregas:
         obras = _lista_natural_rota([t.get("Obra", "") for t in entregas])
-        partes.append(f"ENTREGAR - {obras}" if obras else "ENTREGAR materiais")
-    return " + ".join(partes) or "PARADA OPERACIONAL"
+        partes.append(f"ENTREGAR materiais - {obras}" if obras else "ENTREGAR materiais")
+    return " e ".join(partes) or "PARADA OPERACIONAL"
+
+
+def _passos_resumo_rota(route_steps, ponto_saida="ESCRITÓRIO", retornar_base=True):
+    """Converte a rota em passos humanos: primeiro aqui, depois ali, sem repetir cada demanda."""
+    passos = []
+    ponto_saida = str(ponto_saida or "ESCRITÓRIO").strip() or "ESCRITÓRIO"
+    tem_retorno = False
+
+    for step in route_steps or []:
+        tipo = step.get("type")
+        if tipo == "lunch":
+            chegada = step.get("dyn_chegada", step.get("chegada", "12:00"))
+            saida = step.get("dyn_saida", step.get("saida", "13:00"))
+            passos.append({
+                "local": "ALMOÇO",
+                "acao": "PAUSA PARA ALMOÇO",
+                "horario": f"{chegada} - {saida}" if chegada or saida else "",
+                "tipo": "pausa",
+            })
+            continue
+
+        if tipo == "return":
+            local = str(step.get("destino", "") or ponto_saida).strip() or ponto_saida
+            chegada = step.get("dyn_chegada", step.get("chegada", ""))
+            passos.append({
+                "local": local,
+                "acao": f"RETORNAR para {local}",
+                "horario": f"Chegada {chegada}" if chegada else "",
+                "tipo": "retorno",
+            })
+            tem_retorno = True
+            continue
+
+        local = str(step.get("destino", "") or "").strip()
+        if not local:
+            continue
+        chegada = step.get("dyn_chegada", step.get("chegada", ""))
+        saida = step.get("dyn_saida", step.get("saida", ""))
+        horario = f"{chegada} - {saida}" if chegada and saida else chegada or saida or ""
+        passos.append({
+            "local": local,
+            "acao": _descricao_rapida_parada(step),
+            "horario": horario,
+            "tipo": "parada",
+        })
+
+    # Em algumas rotas o retorno é apenas uma configuração e não aparece como step explícito.
+    if retornar_base and not tem_retorno:
+        ultimo_local = str(passos[-1].get("local", "")) if passos else ""
+        if remover_acentos(ultimo_local).upper() != remover_acentos(ponto_saida).upper():
+            passos.append({"local": ponto_saida, "acao": f"RETORNAR para {ponto_saida}", "horario": "", "tipo": "retorno"})
+
+    return passos
+
+
+def montar_resumo_sequencial_rota(route_steps, ponto_saida="ESCRITÓRIO", retornar_base=True):
+    """Tabela curta usada no início do PDF/Excel: uma linha por parada, na ordem real."""
+    passos = _passos_resumo_rota(route_steps, ponto_saida, retornar_base)
+    linhas = []
+    for numero, passo in enumerate(passos, start=1):
+        linhas.append({
+            "Etapa": numero,
+            "Local": passo.get("local", ""),
+            "O que fazer": passo.get("acao", ""),
+            "Horário previsto": passo.get("horario", ""),
+        })
+    return pd.DataFrame(linhas, columns=["Etapa", "Local", "O que fazer", "Horário previsto"])
 
 
 def _criar_pdf_resumo_rota_operacional(route_steps, dados_rota):
@@ -1513,23 +1590,10 @@ def _criar_pdf_resumo_rota_operacional(route_steps, dados_rota):
     def seguro(valor):
         return html_escape(str(valor or "").replace("—", "-").replace("–", "-").replace("•", "-")).replace("\n", "<br/>")
 
-    paradas = []
-    for step in route_steps:
-        if step.get("type") in {"lunch", "return"}:
-            continue
-        if not step.get("destino"):
-            continue
-        paradas.append(step)
-
     origem = str(dados_rota.get("ponto_saida", "ESCRITÓRIO") or "ESCRITÓRIO")
-    partes_seq = [origem]
-    for step in paradas:
-        local = str(step.get("destino", "") or "")
-        resumo = _descricao_rapida_parada(step)
-        partes_seq.append(f"{local} ({resumo.lower()})")
-    if dados_rota.get("retornar_base", True):
-        partes_seq.append(origem)
-    sequencia = " -> ".join(partes_seq)
+    passos = _passos_resumo_rota(route_steps, origem, dados_rota.get("retornar_base", True))
+    locais_seq = [str(p.get("local", "")) for p in passos if p.get("local")]
+    sequencia = "  >  ".join(locais_seq)
 
     saida = io.BytesIO()
     documento = SimpleDocTemplate(
@@ -1577,7 +1641,7 @@ def _criar_pdf_resumo_rota_operacional(route_steps, dados_rota):
         Spacer(1, 5),
         Paragraph(seguro(meta), meta_style),
         Spacer(1, 7),
-        Table([[Paragraph("SEQUÊNCIA RÁPIDA", parada_titulo_style)]], colWidths=[largura_util], style=TableStyle([
+        Table([[Paragraph("ORDEM DA ROTA - LEIA DE CIMA PARA BAIXO", parada_titulo_style)]], colWidths=[largura_util], style=TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), azul_claro),
             ("BOX", (0, 0), (-1, -1), 0.6, azul_borda),
             ("LEFTPADDING", (0, 0), (-1, -1), 7),
@@ -1590,41 +1654,42 @@ def _criar_pdf_resumo_rota_operacional(route_steps, dados_rota):
         Spacer(1, 8),
     ]
 
-    for numero, step in enumerate(paradas, start=1):
-        local = str(step.get("destino", "") or "")
-        acoes = step.get("actions", []) or []
-        tarefas = [t for _, t in acoes]
-        descricao = _descricao_rapida_parada(step)
-        materiais = _materiais_resumo_rota(tarefas)
-        chegada = step.get("dyn_chegada", step.get("chegada", ""))
-        saida_prev = step.get("dyn_saida", step.get("saida", ""))
-        permanencia = step.get("tempo_local", "")
+    for numero, passo in enumerate(passos, start=1):
+        local = str(passo.get("local", "") or "")
+        descricao = str(passo.get("acao", "") or "")
+        horario = str(passo.get("horario", "") or "")
+        tipo = passo.get("tipo", "parada")
 
-        linhas = [
-            [Paragraph(seguro(f"{numero}. {local}"), parada_titulo_style), Paragraph(seguro(f"{chegada} - {saida_prev}"), horario_style)],
-            [Paragraph(seguro(descricao), parada_acao_style), ""],
-        ]
-        if materiais:
-            linhas.append([Paragraph(seguro(f"Materiais: {materiais}"), parada_texto_style), ""])
-        if permanencia not in (None, "", 0, 0.0):
-            linhas.append([Paragraph(seguro(f"Permanência estimada: {int(round(float(permanencia)))} min"), horario_style), ""])
+        if tipo == "retorno":
+            cor_lateral = azul_escuro
+        elif tipo == "pausa":
+            cor_lateral = texto_secundario
+        elif descricao.upper().startswith("COLETAR"):
+            cor_lateral = colors.HexColor("#F59E0B")
+        elif descricao.upper().startswith("ENTREGAR"):
+            cor_lateral = colors.HexColor("#16A34A")
+        else:
+            cor_lateral = azul
+
+        linhas = [[
+            Paragraph(seguro(f"{numero}. {local}"), parada_titulo_style),
+            Paragraph(seguro(horario), horario_style),
+        ], [Paragraph(seguro(descricao), parada_acao_style), ""]]
 
         card = Table(linhas, colWidths=[largura_util * 0.78, largura_util * 0.22])
         card.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), branco),
             ("BACKGROUND", (0, 0), (-1, 0), azul_claro),
             ("SPAN", (0, 1), (1, 1)),
-            ("SPAN", (0, 2), (1, 2)) if len(linhas) > 2 else ("LEFTPADDING", (0, 0), (0, 0), 0),
-            ("SPAN", (0, 3), (1, 3)) if len(linhas) > 3 else ("LEFTPADDING", (0, 0), (0, 0), 0),
             ("BOX", (0, 0), (-1, -1), 0.65, azul_borda),
-            ("LINEBEFORE", (0, 0), (0, -1), 3, azul),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, cor_lateral),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 7),
             ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
-        elementos.extend([KeepTogether([card, Spacer(1, 5)])])
+        elementos.extend([KeepTogether([card, Spacer(1, 4)])])
 
     documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
     return saida.getvalue()
@@ -5841,17 +5906,22 @@ with tab_roteiro:
         col_pdf_resumo, col_pdf_espaco = st.columns([1.25, 3.75])
         with col_pdf_resumo:
             st.download_button(
-                "🧾 PDF resumo da rota",
+                "🧾 Baixar resumo da rota",
                 data=pdf_resumo_rota,
                 file_name=f"resumo_rota_davi_{DATA_REF_ROTA_DATE.strftime('%Y-%m-%d')}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
                 key="baixar_pdf_resumo_rota_davi",
-                help="Resumo curto com a sequência de paradas, o que coletar/entregar e os materiais principais.",
+                help="PDF curto: mostra somente a ordem das paradas e o que fazer em cada local.",
             )
 
+        df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
         renderizar_exportador(
             f"Roteiro do Davi — {DATA_REF_ROTA_STR}",
-            {"Resumo": df_resumo_rota, "Paradas e demandas": df_relatorio_rota},
+            {
+                "Resumo da rota": df_resumo_sequencial,
+                "Dados gerais": df_resumo_rota,
+                "Paradas e demandas": df_relatorio_rota,
+            },
             "roteiro_do_davi", "roteiro",
         )
