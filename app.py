@@ -2704,7 +2704,21 @@ if modo_url == "true":
     if erro_checkin_mobile:
         st.error(erro_checkin_mobile)
 
-    route_steps = atualizar_tempos_por_parada(route_steps, p_saida)
+    # No modo mobile esta função completa é definida mais abaixo no arquivo.
+    # Mantemos os tempos já salvos na rota e apenas protegemos a faixa operacional
+    # das paradas comuns, sem mexer na preparação de 30 min da base.
+    for _idx_mobile, _step_mobile in enumerate(route_steps):
+        if _step_mobile.get("type") != "stop":
+            continue
+        _eh_preparacao_mobile = (_idx_mobile == 0 and _step_mobile.get("destino") == p_saida)
+        if _eh_preparacao_mobile:
+            _step_mobile["tempo_local"] = 30
+            continue
+        try:
+            _tempo_mobile = float(_step_mobile.get("tempo_local", 20) or 20)
+        except (TypeError, ValueError):
+            _tempo_mobile = 20.0
+        _step_mobile["tempo_local"] = int(round(min(max(_tempo_mobile, 15.0), 25.0)))
     route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
     
@@ -3646,16 +3660,88 @@ def obter_webhook_teams(setor, supervisor=None, obra=""):
 def disparar_teams(webhook_url, titulo, mensagem):
     if not webhook_url or not webhook_url.lower().startswith("https://"): return False, "O link precisa ser um webhook HTTPS do Teams Workflows."
     payload = {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.2", "body": [{"type": "TextBlock", "text": titulo, "size": "Medium", "weight": "Bolder", "wrap": True}, {"type": "TextBlock", "text": mensagem, "wrap": True, "spacing": "Medium"}],},}],}
-    ultimo_erro = ""
-    for tentativa in range(3):
-        try:
-            resposta = requests.post(webhook_url, json=payload, timeout=15)
-            if 200 <= resposta.status_code < 300: return True, "Mensagem aceita pelo Teams."
-            ultimo_erro = f"Teams respondeu com o código {resposta.status_code}."
-            if resposta.status_code != 429 and resposta.status_code < 500: break
-        except requests.RequestException: ultimo_erro = "Não foi possível alcançar o Teams."
-        if tentativa < 2: time.sleep(1 + tentativa)
-    return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
+    try:
+        resposta = requests.post(webhook_url, json=payload, timeout=8)
+        if 200 <= resposta.status_code < 300:
+            return True, "Mensagem aceita pelo Teams."
+        return False, f"Teams respondeu com o código {resposta.status_code}."
+    except requests.RequestException:
+        return False, "Não foi possível alcançar o Teams."
+
+def _comentarios_humanos_trello(card_id, acoes):
+    """Retorna somente comentários escritos por pessoas no cartão.
+
+    Atividades automáticas do Trello (mover de lista, adicionar ao quadro,
+    alterar prazo etc.) não entram no alerta do Teams.
+    """
+    comentarios = []
+    vistos = set()
+    ordenadas = sorted(acoes or [], key=lambda a: str(a.get("date", "")))
+    for acao in ordenadas:
+        if acao.get("type") != "commentCard":
+            continue
+        dados = acao.get("data") or {}
+        if str((dados.get("card") or {}).get("id", "")) != str(card_id):
+            continue
+        texto_comentario = re.sub(r"\s+", " ", str(dados.get("text", "") or "")).strip()
+        if not texto_comentario:
+            continue
+        chave = remover_acentos(texto_comentario).lower()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        comentarios.append(texto_comentario)
+    return comentarios[-8:]
+
+
+def _materiais_em_linhas_teams(materiais):
+    partes = []
+    for trecho in re.split(r"\s*\|\s*|[\r\n]+", str(materiais or "")):
+        item = re.sub(r"\s+", " ", trecho).strip(" -•\t")
+        if item:
+            partes.append(item)
+    if not partes:
+        return "- Não informado"
+    return "\n".join(f"- {item}" for item in partes)
+
+
+def _montar_alerta_entrega_teams(card_id, short_name, destino, materiais, momento, acoes):
+    mensagem = (
+        "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
+        f"**Obra:** {short_name}\n\n"
+        f"**Local:** {destino}\n\n"
+        f"**Materiais:**\n{_materiais_em_linhas_teams(materiais)}\n\n"
+        f"**Data e Hora:** {momento.strftime('%d/%m/%Y às %H:%M')}"
+    )
+    comentarios = _comentarios_humanos_trello(card_id, acoes)
+    if comentarios:
+        mensagem += "\n\n**Comentários do Trello:**\n" + "\n".join(f"- {c}" for c in comentarios)
+    return mensagem
+
+
+def _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento):
+    execute_db(
+        "INSERT INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) "
+        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora) "
+        "ON CONFLICT (id) DO UPDATE SET obra=EXCLUDED.obra, origem=EXCLUDED.origem, "
+        "destino=EXCLUDED.destino, materiais=EXCLUDED.materiais, "
+        "data_conclusao=EXCLUDED.data_conclusao, hora_conclusao=EXCLUDED.hora_conclusao",
+        {
+            "id": str(card_id), "obra": short_name, "origem": origem, "destino": destino,
+            "mat": materiais, "data": momento.strftime("%d/%m/%Y"), "hora": momento.strftime("%H:%M"),
+        },
+    )
+
+
+def _enviar_alerta_entrega_teams(card_id, short_name, origem, destino, materiais, momento, acoes):
+    url_webhook, origem_webhook = obter_webhook_teams(
+        destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name
+    )
+    if not url_webhook:
+        return False, f"Webhook do Teams não configurado ({origem_webhook})."
+    titulo = f"✅ Entrega concluída — {destino}"
+    mensagem = _montar_alerta_entrega_teams(card_id, short_name, destino, materiais, momento, acoes)
+    return disparar_teams(url_webhook, titulo, mensagem)
 
 def is_in_ceara(lat, lon): return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
@@ -4263,31 +4349,29 @@ def calcular_matriz_tomtom_trafego(coords, horario_partida):
         return None
 
 def calcular_matriz_rotas(coords, horario_partida=None):
-    matriz_tomtom = calcular_matriz_tomtom_trafego(coords, horario_partida)
-    if matriz_tomtom:
-        return matriz_tomtom[0], matriz_tomtom[1], "TomTom Routing — trânsito ao vivo e histórico (gratuito)"
-
-    matriz_google = calcular_matriz_google_trafego(coords, horario_partida)
-    if matriz_google:
-        return matriz_google[0], matriz_google[1], "Google Routes — trânsito ao vivo e preditivo"
-
+    """Matriz viária estável via OSRM; não depende de API paga."""
     try:
         coords_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
         url = f"https://router.project-osrm.org/table/v1/driving/{coords_str}?annotations=distance,duration"
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=12) as response:
             res = json.loads(response.read())
             if res.get('code') == 'Ok':
                 distancias = [[dist / 1000.0 for dist in row] for row in res['distances']]
                 duracoes = [[dur / 60.0 for dur in row] for row in res['durations']]
-                return distancias, duracoes, "OSRM — malha viária sem trânsito ao vivo"
-    except: pass
+                return distancias, duracoes, "OSRM — rota viária"
+    except Exception:
+        pass
+
+    # Contingência geográfica: mantém o app operacional mesmo se o servidor
+    # público do OSRM estiver temporariamente indisponível.
     distancias, duracoes = [], []
     for i in range(len(coords)):
         row_d, row_t = [], []
         for j in range(len(coords)):
-            dLat, dLon = math.radians(coords[j][0] - coords[i][0]), math.radians(coords[j][1] - coords[i][1])
-            a = math.sin(dLat/2)**2 + math.cos(math.radians(coords[i][0]))*math.cos(math.radians(coords[j][0]))*math.sin(dLon/2)**2
+            dLat = math.radians(coords[j][0] - coords[i][0])
+            dLon = math.radians(coords[j][1] - coords[i][1])
+            a = math.sin(dLat/2)**2 + math.cos(math.radians(coords[i][0])) * math.cos(math.radians(coords[j][0])) * math.sin(dLon/2)**2
             c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
             km = (6371 * c) * 1.3
             row_d.append(km)
@@ -4299,48 +4383,8 @@ def calcular_matriz_rotas(coords, horario_partida=None):
 
 
 def calcular_trecho_tomtom_por_horario(coord_origem, coord_destino, horario_partida_min):
-    """Reconsulta um trecho na hora em que ele realmente será percorrido.
-
-    A matriz serve muito bem para escolher a ordem, porém ela é calculada com uma
-    única referência de horário. Depois que a sequência está definida, cada perna
-    passa a ser recalculada pela TomTom no seu horário planejado (08h, 09h, 10h...).
-    """
-    chave = carregar_chave_tomtom()
-    if not chave or not coord_origem or not coord_destino:
-        return None
-    try:
-        lat1, lon1 = float(coord_origem[0]), float(coord_origem[1])
-        lat2, lon2 = float(coord_destino[0]), float(coord_destino[1])
-        partida = datetime.combine(DATA_REF_ROTA_DATE, datetime.min.time()).replace(tzinfo=FUSO_LOCAL)
-        partida += timedelta(minutes=float(horario_partida_min or 0))
-        agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
-        if DATA_REF_ROTA_DATE == AGORA_REAL.date() and partida < agora_seguro:
-            partida = agora_seguro
-
-        url = f"https://api.tomtom.com/routing/1/calculateRoute/{lat1},{lon1}:{lat2},{lon2}/json"
-        parametros = {
-            "key": chave,
-            "routeType": "fastest",
-            "traffic": "true",
-            "travelMode": "car",
-            "departAt": partida.isoformat(timespec="seconds"),
-            "computeTravelTimeFor": "all",
-            "routeRepresentation": "summaryOnly",
-            "language": "pt-BR",
-        }
-        resposta = requests.get(url, params=parametros, timeout=20)
-        resposta.raise_for_status()
-        rotas = resposta.json().get("routes", [])
-        if not rotas:
-            return None
-        resumo = rotas[0].get("summary", {}) or {}
-        dist_m = resumo.get("lengthInMeters")
-        dur_s = resumo.get("travelTimeInSeconds")
-        if dist_m is None or dur_s is None:
-            return None
-        return float(dist_m) / 1000.0, float(dur_s) / 60.0
-    except Exception:
-        return None
+    """Compatibilidade: roteirização estável não consulta API paga por trecho."""
+    return None
 
 def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
     """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
@@ -4418,7 +4462,7 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
 
     return score, distancia, duracao
 
-def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None):
+def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, precarregadas_ids=None):
     """Busca em feixe para o problema de coleta e entrega com precedência.
 
     Avalia sequências completas, agrupa ações no mesmo endereço e pondera
@@ -4435,11 +4479,16 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             return padrao
 
     total_tarefas = len(tarefas)
+    precarregadas_ids = {str(v) for v in (precarregadas_ids or set())}
+
+    def _esta_precarregada(tarefa):
+        return str(tarefa.get("id", "")) in precarregadas_ids
+
     if total_tarefas > 24:
         # Contingência para dias excepcionalmente grandes: mantém as mesmas
         # regras logísticas sem deixar o aplicativo preso em busca combinatória.
-        pendentes = list(tarefas)
-        no_carro = []
+        pendentes = [t for t in tarefas if not _esta_precarregada(t)]
+        no_carro = [t for t in tarefas if _esta_precarregada(t)]
         atual = ponto_inicial
         ordem = []
         for _ in range(total_tarefas * 2 + 5):
@@ -4461,6 +4510,10 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     tempos_coleta = [numero_seguro(t.get('Tempo_Coleta', 10), 10.0) for t in tarefas]
     tempos_entrega = [numero_seguro(t.get('Tempo_Entrega', 10), 10.0) for t in tarefas]
     mascara_total = (1 << total_tarefas) - 1
+    mascara_precarregadas = 0
+    for _i_pre, _t_pre in enumerate(tarefas):
+        if _esta_precarregada(_t_pre):
+            mascara_precarregadas |= 1 << _i_pre
 
     tarefas_por_origem = {}
     tarefas_por_destino = {}
@@ -4511,7 +4564,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     estado_inicial = {
         "atual": ponto_inicial,
         "hora": float(horario_inicio),
-        "coletadas": 0,
+        "coletadas": mascara_precarregadas,
         "entregues": 0,
         "ordem": tuple(),
         "custo": 0.0,
@@ -4644,8 +4697,8 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
 
     # Se a busca atingir o limite de tempo, conclui de forma determinística
     # com o motor guloso seguro, sem travar a geração da rota.
-    pendentes = list(tarefas)
-    no_carro = []
+    pendentes = [t for t in tarefas if not _esta_precarregada(t)]
+    no_carro = [t for t in tarefas if _esta_precarregada(t)]
     atual = ponto_inicial
     ordem = []
     for _ in range(total_tarefas * 2 + 5):
@@ -4763,16 +4816,11 @@ def buscar_geometria_tomtom_trafego(coords_limpas, horario_partida=None):
 def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
     coords_limpas = []
     for coord in coords_ordenadas:
-        if not coords_limpas or coord != coords_limpas[-1]: coords_limpas.append(coord)
-    if len(coords_limpas) < 2: return [[lat, lon] for lat, lon in coords_limpas], False
-
-    geometria_tomtom = buscar_geometria_tomtom_trafego(coords_limpas, horario_partida)
-    if geometria_tomtom:
-        return geometria_tomtom, True
-
-    geometria_google = buscar_geometria_google_trafego(coords_limpas, horario_partida)
-    if geometria_google:
-        return geometria_google, True
+        par = [float(coord[0]), float(coord[1])]
+        if not coords_limpas or par != coords_limpas[-1]:
+            coords_limpas.append(par)
+    if len(coords_limpas) < 2:
+        return coords_limpas, False
 
     try:
         coords_str = ";".join(f"{lon},{lat}" for lat, lon in coords_limpas)
@@ -4780,9 +4828,19 @@ def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=15) as response:
             res = json.loads(response.read())
-        if res.get("code") == "Ok" and res.get("routes"): return [[lat, lon] for lat, lon in res["routes"][0]["geometry"]["coordinates"]], True
-    except: pass
-    return [[lat, lon] for lat, lon in coords_limpas], False
+        if res.get("code") == "Ok" and res.get("routes"):
+            coords_osrm = res["routes"][0]["geometry"]["coordinates"]
+            # GeoJSON/OSRM = [longitude, latitude]; Folium = [latitude, longitude].
+            geometria = [[float(lat), float(lon)] for lon, lat in coords_osrm]
+            if len(geometria) > 1:
+                return geometria, True
+    except Exception:
+        pass
+
+    # Nunca deixa o mapa sem linha: na contingência liga as posições reais
+    # das paradas. O mapa diferencia esse fallback com traço pontilhado.
+    return coords_limpas, False
+
 
 def extrair_dados_completos(texto, card_name):
     num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
@@ -4912,7 +4970,7 @@ def encontrar_conclusao_de_hoje(card_id, acoes):
         except: continue
     return max(conclusoes) if conclusoes else None
 
-def sincronizar_demandas(manual=False, forcar=False):
+def sincronizar_demandas(manual=False, forcar=False, geocodificar=True):
     data = obter_dados_trello(forcar=forcar)
     if not data:
         if manual: st.error("⚠️ Erro ao acessar o Trello.")
@@ -4925,22 +4983,23 @@ def sincronizar_demandas(manual=False, forcar=False):
         if c.get('closed') or lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()): continue
         short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
         peso, status_prazo = classificar_prioridade(c.get('due'))
-        endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
-        alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
-        if endereco_card and alvo_endereco:
-            lat, lon = buscar_coordenadas(endereco_card)
-            if lat is not None and lon is not None:
-                local_alvo = origem if alvo_endereco == "origem" else destino
-                if local_alvo and normalizar_local(local_alvo) not in UNIDADES_PROPRIAS:
-                    # Nunca sobrescreve coordenadas já validadas no banco por causa
-                    # de um cartão do Trello. A aba Endereços permanece soberana.
-                    existente = fetch_one("SELECT lat, lon FROM locais WHERE apelido = :apelido", {"apelido": local_alvo})
-                    if not existente or existente[0] is None or existente[1] is None:
-                        execute_db(
-                            "INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) "
-                            "ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon",
-                            {"apelido": local_alvo, "end": endereco_card, "lat": lat, "lon": lon},
-                        )
+        if geocodificar:
+            endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
+            alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
+            if endereco_card and alvo_endereco:
+                lat, lon = buscar_coordenadas(endereco_card)
+                if lat is not None and lon is not None:
+                    local_alvo = origem if alvo_endereco == "origem" else destino
+                    if local_alvo and normalizar_local(local_alvo) not in UNIDADES_PROPRIAS:
+                        # Nunca sobrescreve coordenadas já validadas no banco por causa
+                        # de um cartão do Trello. A aba Endereços permanece soberana.
+                        existente = fetch_one("SELECT lat, lon FROM locais WHERE apelido = :apelido", {"apelido": local_alvo})
+                        if not existente or existente[0] is None or existente[1] is None:
+                            execute_db(
+                                "INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) "
+                                "ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon",
+                                {"apelido": local_alvo, "end": endereco_card, "lat": lat, "lon": lon},
+                            )
         
         tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
         te_val = 10
@@ -5047,24 +5106,42 @@ def loop_automacoes_background():
             cards = data.get('cards', [])
             acoes = data.get('actions', [])
             
-            ids_ja_notificados = {str(r[0]) for r in fetch_all("SELECT id FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_HOJE_REAL_STR})}
-            
+            ids_ja_registrados = {str(r[0]) for r in fetch_all("SELECT id FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_HOJE_REAL_STR})}
+            enviados_sessao = st.session_state.setdefault("_teams_entregas_enviadas", set())
+
             novas_entregas = 0
             for c in cards:
-                if c.get('closed'): continue
-                if lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()):
-                    momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
-                    if momento_conclusao and str(c['id']) not in ids_ja_notificados and momento_conclusao.strftime("%d/%m/%Y") == DATA_HOJE_REAL_STR:
-                        short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
-                        url_webhook, _ = obter_webhook_teams(destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name)
-                        hora_str = momento_conclusao.strftime("%H:%M")
+                if c.get('closed'):
+                    continue
+                if not lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()):
+                    continue
 
-                        if (agora_loop - momento_conclusao).total_seconds() / 60 <= 5 and url_webhook:
-                            disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", f"✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n**Obra:** {short_name}\n\n**Local:** {destino}\n\n**Materiais:** {materiais}\n\n**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}")
+                momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
+                if not momento_conclusao or momento_conclusao.strftime("%d/%m/%Y") != DATA_HOJE_REAL_STR:
+                    continue
 
-                        execute_db("INSERT INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora) ON CONFLICT (id) DO UPDATE SET hora_conclusao=EXCLUDED.hora_conclusao", {"id": c['id'], "obra": short_name, "origem": origem, "destino": destino, "mat": materiais, "data": DATA_HOJE_REAL_STR, "hora": hora_str})
-                        novas_entregas += 1
-            if novas_entregas > 0: st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
+                short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
+                card_id = str(c['id'])
+
+                # A baixa física é registrada independentemente do Teams.
+                if card_id not in ids_ja_registrados:
+                    _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento_conclusao)
+                    ids_ja_registrados.add(card_id)
+                    novas_entregas += 1
+
+                # O automático continua prioritário e roda no mesmo ciclo de 2 min.
+                # Se o Teams falhar, tenta de novo nos próximos ciclos enquanto a
+                # conclusão ainda estiver dentro da janela operacional já usada antes.
+                idade_min = (agora_loop - momento_conclusao).total_seconds() / 60.0
+                if -1 <= idade_min <= 5 and card_id not in enviados_sessao:
+                    enviado, _detalhe = _enviar_alerta_entrega_teams(
+                        card_id, short_name, origem, destino, materiais, momento_conclusao, acoes
+                    )
+                    if enviado:
+                        enviados_sessao.add(card_id)
+
+            if novas_entregas > 0:
+                st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
     except: pass
 
     try:
@@ -5222,27 +5299,48 @@ with st.sidebar:
     if st.session_state.get("_ultima_rotina_auto"):
         st.caption(f"🔄 Trello + rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
     
-    # Atualiza o Trello ao vivo a cada 2 minutos enquanto o app estiver aberto.
-    # A leitura é forçada para não depender de um cache antigo do Supabase.
-    # Depois da sincronização, um rerun completo dispara o recálculo automático da rota.
+    # Trello continua no ciclo de 2 minutos, mas a abertura da página precisa ser imediata.
+    # Na primeira execução lemos apenas o cache do Supabase (rápido) e NÃO forçamos
+    # Trello, rastreador ou recálculo antes de a interface aparecer.
     if "ultima_sincronizacao" not in st.session_state:
-        st.session_state.ultima_sincronizacao = 0
-        if sincronizar_demandas(forcar=True):
-            st.session_state["_recalcular_rota_automatico"] = True
-    
+        st.session_state.ultima_sincronizacao = time.time()
+        sincronizar_demandas(forcar=False, geocodificar=False)
+        st.session_state["_assinatura_demandas_auto"] = tuple(
+            sorted((str(r.get("id", "")), str(r.get("Origem", "")), str(r.get("Destino", "")), str(r.get("Materiais", "")))
+                   for r in st.session_state.demandas.to_dict("records"))
+        )
+        st.session_state["_background_liberado_em"] = time.time() + 5
+
     if hasattr(st, "fragment"):
         @st.fragment(run_every="30s")
         def _loop_operacoes():
-            tempo_desde_sync = time.time() - st.session_state.get("ultima_sincronizacao", 0)
+            agora_ts = time.time()
+            # O primeiro ciclo pesado fica fora do carregamento inicial da página.
+            if agora_ts < st.session_state.get("_background_liberado_em", 0):
+                return
+
+            tempo_desde_sync = agora_ts - st.session_state.get("ultima_sincronizacao", agora_ts)
             if tempo_desde_sync >= INTERVALO_TRELLO_SEGUNDOS:
+                assinatura_antes = st.session_state.get("_assinatura_demandas_auto", tuple())
                 if sincronizar_demandas(forcar=True):
-                    # Agora o cache já contém a leitura nova; registra baixas antes de recalcular.
+                    assinatura_depois = tuple(
+                        sorted((str(r.get("id", "")), str(r.get("Origem", "")), str(r.get("Destino", "")), str(r.get("Materiais", "")))
+                               for r in st.session_state.demandas.to_dict("records"))
+                    )
+                    st.session_state["_assinatura_demandas_auto"] = assinatura_depois
+                    # Baixas/Teams continuam automáticos no mesmo ciclo.
                     loop_automacoes_background()
-                    st.session_state["_recalcular_rota_automatico"] = True
                     st.session_state["_ultima_rotina_auto"] = datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
-                    st.rerun()
+                    # Só recalcula quando as demandas realmente mudaram.
+                    if assinatura_depois != assinatura_antes:
+                        st.session_state["_recalcular_rota_automatico"] = True
+                        st.rerun()
             else:
-                loop_automacoes_background()
+                # Rastreador/Teams no máximo uma vez por minuto; evita prender a renderização.
+                ultimo_bg = st.session_state.get("_ultimo_background_operacoes", 0.0)
+                if agora_ts - ultimo_bg >= 60:
+                    st.session_state["_ultimo_background_operacoes"] = agora_ts
+                    loop_automacoes_background()
         _loop_operacoes()
 
     st.markdown("---")
@@ -5404,10 +5502,42 @@ with tab_demandas:
     if not demandas_na_rota: st.info("Gere uma rota na aba 'Roteiro do Davi' para monitorar o status das entregas aqui.")
     else:
         for card_id, row in demandas_na_rota.items():
-            c1, c_status = st.columns([3.2, 2.5])
+            c1, c_status, c_manual = st.columns([3.2, 1.8, 1.45])
             c1.markdown(f"📦 **{row.get('Obra', '')} — {row.get('Destino', '')}** (Resp: {row.get('Supervisor', 'Sede')}) <br><span style='font-size:12px; color:gray;'>{row.get('Materiais', '')}</span>", unsafe_allow_html=True)
-            if card_id in dict_concluidos_monitor: c_status.success(f"✅ **Entregue às {dict_concluidos_monitor[card_id]}**")
-            else: c_status.warning("⏳ Pendente / No Carro")
+            if card_id in dict_concluidos_monitor:
+                c_status.success(f"✅ **Entregue às {dict_concluidos_monitor[card_id]}**")
+            else:
+                c_status.warning("⏳ Pendente / No Carro")
+
+            ja_enviado_sessao = card_id in st.session_state.setdefault("_teams_entregas_enviadas", set())
+            texto_manual = "✅ Teams avisado" if ja_enviado_sessao else "📣 Informar entrega"
+            if c_manual.button(texto_manual, key=f"informar_entrega_{card_id}", disabled=ja_enviado_sessao, use_container_width=True):
+                momento_manual = datetime.now(FUSO_LOCAL)
+                try:
+                    dados_trello_manual = obter_dados_trello(forcar=True) or {}
+                    cards_manual = dados_trello_manual.get('cards', []) or []
+                    acoes_manual = dados_trello_manual.get('actions', []) or []
+                    card_manual = next((c for c in cards_manual if str(c.get('id', '')) == str(card_id)), None)
+                    if card_manual:
+                        short_name, origem, destino, materiais = extrair_dados_completos(card_manual.get('desc', ''), card_manual.get('name', ''))
+                    else:
+                        short_name = str(row.get('Obra', ''))
+                        origem = str(row.get('Origem', ''))
+                        destino = str(row.get('Destino', ''))
+                        materiais = str(row.get('Materiais', ''))
+
+                    _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento_manual)
+                    enviado, detalhe = _enviar_alerta_entrega_teams(
+                        card_id, short_name, origem, destino, materiais, momento_manual, acoes_manual
+                    )
+                    if enviado:
+                        st.session_state["_teams_entregas_enviadas"].add(card_id)
+                        st.success("✅ Entrega informada e Teams avisado.")
+                    else:
+                        st.warning(f"⚠️ Entrega registrada, mas o Teams não confirmou o envio: {detalhe}")
+                    st.rerun()
+                except Exception as erro_manual:
+                    st.error(f"Não foi possível informar a entrega agora: {erro_manual}")
             st.write("---")
 
     df_relatorio_demandas = st.session_state.demandas.copy()
@@ -5924,12 +6054,7 @@ with tab_roteiro:
             df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
-
-    if rota_ativa_hoje:
-        st.warning("⚠️ **Atenção:** Já existe uma rota em andamento para hoje. Se você recalcular agora, o sistema apagará do mapa o histórico do que o motorista já entregou. Use este botão apenas no início do dia ou em caso de emergência total na rota.")
-        txt_botao = "⚠️ Recalcular Rota do Zero (Apaga o Histórico)"
-    else:
-        txt_botao = "🚀 Calcular Rota Otimizada / Atualizar Rota"
+    txt_botao = "🔄 Recalcular / Atualizar Rota" if rota_ativa_hoje else "🚀 Calcular Rota Otimizada / Atualizar Rota"
 
     recalculo_automatico = bool(st.session_state.pop("_recalcular_rota_automatico", False))
     recalculo_manual = st.button(txt_botao, type="primary", disabled=df_ativos.empty)
@@ -5945,31 +6070,77 @@ with tab_roteiro:
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
-            
+            tarefas_preparacao_por_id = {}
+
             current_time_tsp = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
             current_point = ponto_saida
 
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-            if rota_salva and len(dict_concluidos_torre) > 0:
-                old_steps = json.loads(rota_salva[0])
-                for step in old_steps:
-                    if step['type'] == 'stop':
-                        c_acts = [(a, t) for a, t in step.get('actions',[]) if str(t.get('id','')) in dict_concluidos_torre]
-                        if c_acts:
-                            new_s = step.copy()
-                            new_s['actions'] = c_acts
-                            past_route_steps.append(new_s)
-                
-                if past_route_steps:
-                    current_point = past_route_steps[-1]['destino']
-                    try:
-                        h, m = map(int, past_route_steps[-1]['saida'].split(':'))
-                        current_time_tsp = h * 60 + m
-                    except: pass
-            
-            unpicked = [t for t in df_ativos.to_dict('records') if str(t['id']) not in dict_concluidos_torre]
-            
-            pontos_brutos = ([ponto_saida] + [s['destino'] for s in past_route_steps] + [t['Origem'] for t in unpicked] + [t['Destino'] for t in unpicked])
+            old_steps = []
+            if rota_salva:
+                try:
+                    old_steps = json.loads(rota_salva[0]) or []
+                except Exception:
+                    old_steps = []
+
+            # Recupera a preparação já existente e também migra qualquer parada
+            # indevida no ESCRITÓRIO composta somente por coletas para a preparação.
+            for step in old_steps:
+                if step.get('type') != 'stop':
+                    continue
+                destino_step = canonicalizar_ponto_rota(step.get('destino', ''))
+                acoes_step = step.get('actions', []) or []
+                if destino_step == ponto_saida:
+                    for acao, tarefa in acoes_step:
+                        if acao == 'COLETAR' and tarefa.get('id'):
+                            tarefas_preparacao_por_id[str(tarefa.get('id'))] = tarefa
+                    # Uma parada da base formada apenas por coleta não deve voltar
+                    # para o roteiro operacional após a saída das 08h.
+                    if acoes_step and all(acao == 'COLETAR' for acao, _ in acoes_step):
+                        continue
+
+                # Mantém no histórico visual somente ações já concluídas.
+                c_acts = [(a, t) for a, t in acoes_step if str(t.get('id','')) in dict_concluidos_torre]
+                if c_acts:
+                    new_s = step.copy()
+                    new_s['actions'] = c_acts
+                    past_route_steps.append(new_s)
+
+            if past_route_steps:
+                current_point = past_route_steps[-1]['destino']
+                try:
+                    h, m = map(int, past_route_steps[-1]['saida'].split(':'))
+                    current_time_tsp = h * 60 + m
+                except Exception:
+                    pass
+
+            registros_ativos = df_ativos.to_dict('records')
+            for tarefa in registros_ativos:
+                if canonicalizar_ponto_rota(tarefa.get('Origem', '')) == ponto_saida and tarefa.get('id'):
+                    tarefas_preparacao_por_id[str(tarefa.get('id'))] = tarefa
+
+            pendentes = [t for t in registros_ativos if str(t.get('id', '')) not in dict_concluidos_torre]
+            carrying_inicial = [t for t in pendentes if canonicalizar_ponto_rota(t.get('Origem', '')) == ponto_saida]
+            unpicked = [t for t in pendentes if canonicalizar_ponto_rota(t.get('Origem', '')) != ponto_saida]
+            ids_precarregados = {str(t.get('id', '')) for t in carrying_inicial}
+
+            # A preparação é sempre uma única etapa 07:30–08:00 contendo tudo o
+            # que sai do escritório, inclusive itens que já foram entregues depois.
+            preparation_step = None
+            if tarefas_preparacao_por_id:
+                hora_saida_base = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
+                preparation_step = {
+                    "type": "stop", "destino": ponto_saida, "dist": 0.0, "travel_mins": 0.0,
+                    "tempo_local": 30, "tempo_local_fonte": "preparação fixa da base",
+                    "chegada": format_time(hora_saida_base - 30), "saida": format_time(hora_saida_base),
+                    "actions": [("COLETAR", t) for t in tarefas_preparacao_por_id.values()],
+                }
+
+            pontos_brutos = (
+                [ponto_saida] + [s['destino'] for s in past_route_steps]
+                + [t['Origem'] for t in unpicked] + [t['Destino'] for t in unpicked]
+                + [t['Destino'] for t in carrying_inicial]
+            )
             pontos_necessarios = {canonicalizar_ponto_rota(p) for p in pontos_brutos if canonicalizar_ponto_rota(p) not in {"", "DESCONHECIDO", "NAN", "NONE"}}
             
             locais_dict, enderecos_dict = {}, {}
@@ -6024,21 +6195,23 @@ with tab_roteiro:
                 dist, dur = get_dist_dur_bruto(p1, p2)
                 return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
+            tarefas_otimizacao = unpicked + carrying_inicial
             ordem_otimizada = otimizar_sequencia_rota(
-                unpicked,
+                tarefas_otimizacao,
                 current_point,
                 estrategia,
                 get_dist_dur,
                 current_time_tsp,
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
+                precarregadas_ids=ids_precarregados,
             )
             if "TomTom Routing" in fonte_matriz:
                 fonte_matriz = fonte_matriz + " + trechos recalculados no horário de cada etapa"
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
-            carrying = []
+            carrying = list(carrying_inicial)
             current = current_point
             route_steps_new = []
             total_km = sum(p_step.get('dist', 0.0) for p_step in past_route_steps)
@@ -6144,7 +6317,7 @@ with tab_roteiro:
                 route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "travel_mins_api": dur_api, "chegada": format_time(current_time + dur), "saida": format_time(current_time + dur), "actions": []})
                 current_time += dur
 
-            route_steps = past_route_steps + route_steps_new
+            route_steps = ([preparation_step] if preparation_step else []) + past_route_steps + route_steps_new
 
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
@@ -6226,12 +6399,8 @@ with tab_roteiro:
                 </style>
             """, unsafe_allow_html=True)
 
-            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
-            horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
-            if "Google Routes" in fonte_matriz_exibicao or "TomTom Routing" in fonte_matriz_exibicao:
-                st.caption(f"🚦 Otimização viária: **{fonte_matriz_exibicao}** • referência {horario_matriz_exibicao} • ETAs com validação operacional de trecho")
-            else:
-                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional de trecho • para trânsito real gratuito, configure `tomtom.api_key` nos Secrets.")
+            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
+            st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional de trecho")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
