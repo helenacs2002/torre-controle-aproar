@@ -2556,12 +2556,38 @@ if modo_url == "true":
     path_points_mobile = []
     offsets_dict_mobile = {}
     
+    marcadores_posicionados_mobile = []
+
     def apply_offset_mobile(lat, lon):
-        key = (round(lat, 4), round(lon, 4))
-        offsets_dict_mobile[key] = offsets_dict_mobile.get(key, 0) + 1
-        cnt = offsets_dict_mobile[key]
-        if cnt > 1: return lat - 0.00035 * (cnt - 1), lon + 0.00035 * (cnt - 1)
-        return lat, lon
+        """Afasta visualmente marcadores próximos para que os números não fiquem sobrepostos."""
+        lat, lon = float(lat), float(lon)
+        if not marcadores_posicionados_mobile:
+            marcadores_posicionados_mobile.append((lat, lon))
+            return lat, lon
+
+        # Em zoom de rota, marcadores de 30 px podem se sobrepor mesmo a algumas centenas de metros.
+        distancia_min_km = 0.28
+        conflito = any(calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_min_km for p_lat, p_lon in marcadores_posicionados_mobile)
+        if not conflito:
+            marcadores_posicionados_mobile.append((lat, lon))
+            return lat, lon
+
+        import math
+        # Procura uma posição visual próxima, em anéis, preservando o ponto real por uma linha-guia.
+        for tentativa in range(1, 25):
+            anel = 1 + (tentativa - 1) // 8
+            angulo = math.radians(((tentativa - 1) % 8) * 45 + anel * 17)
+            raio_km = 0.14 * anel
+            dlat = (raio_km / 111.0) * math.sin(angulo)
+            dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
+            candidato = (lat + dlat, lon + dlon)
+            if all(calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= 0.20 for p_lat, p_lon in marcadores_posicionados_mobile):
+                marcadores_posicionados_mobile.append(candidato)
+                return candidato
+
+        candidato = (lat - 0.0015, lon + 0.0015)
+        marcadores_posicionados_mobile.append(candidato)
+        return candidato
 
     p_num_mapa = 1
     if p_saida in locais_dict:
@@ -2576,6 +2602,12 @@ if modo_url == "true":
             lat_orig, lon_orig = locais_dict[step['destino']]
             lat, lon = apply_offset_mobile(lat_orig, lon_orig)
             path_points_mobile.append([lat, lon])
+            if calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01:
+                folium.PolyLine(
+                    [[lat_orig, lon_orig], [lat, lon]],
+                    color="#64748b", weight=1.5, opacity=0.75, dash_array="4,5",
+                    tooltip="Marcador deslocado apenas para não ficar escondido",
+                ).add_to(m_mobile)
 
             acoes = [a[0] for a in step.get('actions', [])]
             tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
@@ -4768,6 +4800,13 @@ with tab_roteiro:
             dict_checkins_torre = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
         except Exception:
             dict_checkins_torre = {}
+
+        # Comprovantes da rota: usados pela Torre para mostrar status e permitir reabertura.
+        try:
+            garantir_tabela_comprovantes_davi()
+            comprovantes_torre = carregar_comprovantes_davi(DATA_REF_ROTA_STR)
+        except Exception:
+            comprovantes_torre = {}
         
         hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
         
@@ -4892,6 +4931,31 @@ with tab_roteiro:
                             if concluida:
                                 st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
 
+                            # Para entregas, exibe o comprovante e permite reabri-lo sem apagar as fotos.
+                            if not eh_coleta_torre and card_id_torre:
+                                chave_comp_torre = _nome_seguro_comprovante(card_id_torre, 40)
+                                estado_comp_torre = comprovantes_torre.get(chave_comp_torre, {})
+                                fotos_comp_torre = estado_comp_torre.get("fotos", []) or []
+                                if estado_comp_torre.get("finalizado"):
+                                    recebedor_comp_torre = str(estado_comp_torre.get("recebedor", "") or "").strip()
+                                    info_comp = f"📸 Comprovante finalizado • {len(fotos_comp_torre)} foto(s)"
+                                    if recebedor_comp_torre:
+                                        info_comp += f" • Recebedor: {recebedor_comp_torre}"
+                                    st.caption(info_comp)
+                                    if st.button(
+                                        "↩️ Reabrir comprovante",
+                                        key=f"reabrir_comprovante_torre_{DATA_REF_ROTA_STR}_{card_id_torre}_{i}_{indice_demanda}",
+                                        help="Reabre a entrega no App do Davi sem apagar as fotos já enviadas.",
+                                    ):
+                                        try:
+                                            definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, card_id_torre, False)
+                                            st.success("✅ Comprovante reaberto. As fotos existentes foram preservadas.")
+                                            st.rerun()
+                                        except Exception as erro_reabrir:
+                                            st.error(f"Não foi possível reabrir o comprovante: {erro_reabrir}")
+                                elif fotos_comp_torre:
+                                    st.caption(f"📸 Comprovante em aberto • {len(fotos_comp_torre)} foto(s) já enviada(s)")
+
                         texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                     
                     texto_whatsapp += "\n"
@@ -4955,21 +5019,52 @@ with tab_roteiro:
             st.subheader("🗺️ Mapa da Rota")
             # MAPA CLARO (OPENSTREETMAP) RESTAURADO AQUI
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
-            path_points, offsets_dict = [], {}
+            path_points = []
+            marcadores_posicionados = []
             
             def apply_offset(lat, lon):
-                key = (round(lat, 4), round(lon, 4))
-                offsets_dict[key] = offsets_dict.get(key, 0) + 1
-                if offsets_dict[key] > 1: return lat - 0.00035 * (offsets_dict[key] - 1), lon + 0.00035 * (offsets_dict[key] - 1)
-                return lat, lon
+                """Espalha apenas os marcadores que ficariam visualmente sobrepostos no mapa."""
+                lat, lon = float(lat), float(lon)
+                if not marcadores_posicionados:
+                    marcadores_posicionados.append((lat, lon))
+                    return lat, lon
+
+                distancia_min_km = 0.28
+                conflito = any(calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_min_km for p_lat, p_lon in marcadores_posicionados)
+                if not conflito:
+                    marcadores_posicionados.append((lat, lon))
+                    return lat, lon
+
+                import math
+                for tentativa in range(1, 25):
+                    anel = 1 + (tentativa - 1) // 8
+                    angulo = math.radians(((tentativa - 1) % 8) * 45 + anel * 17)
+                    raio_km = 0.14 * anel
+                    dlat = (raio_km / 111.0) * math.sin(angulo)
+                    dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
+                    candidato = (lat + dlat, lon + dlon)
+                    if all(calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= 0.20 for p_lat, p_lon in marcadores_posicionados):
+                        marcadores_posicionados.append(candidato)
+                        return candidato
+
+                candidato = (lat - 0.0015, lon + 0.0015)
+                marcadores_posicionados.append(candidato)
+                return candidato
 
             p_num = 1
             if p_saida in locais_dict: path_points.append(list(apply_offset(*locais_dict[p_saida])))
 
             for i, step in enumerate(route_steps):
                 if step.get('destino') in locais_dict and step['type'] not in ['lunch', 'return'] and not (i == 0 and step['destino'] == p_saida):
-                    lat, lon = apply_offset(*locais_dict[step['destino']])
+                    lat_orig, lon_orig = locais_dict[step['destino']]
+                    lat, lon = apply_offset(lat_orig, lon_orig)
                     path_points.append([lat, lon])
+                    if calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01:
+                        folium.PolyLine(
+                            [[lat_orig, lon_orig], [lat, lon]],
+                            color="#64748b", weight=1.5, opacity=0.75, dash_array="4,5",
+                            tooltip="Marcador deslocado apenas para não ficar escondido",
+                        ).add_to(m)
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
@@ -4987,7 +5082,7 @@ with tab_roteiro:
             if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Linhas pontilhadas aparecem apenas quando um marcador foi deslocado visualmente para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
