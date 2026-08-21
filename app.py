@@ -2172,23 +2172,27 @@ if modo_url == "true":
 
                     modo_foto_comprovante = st.radio(
                         "3️⃣ Foto",
-                        ["📷 Tirar foto agora", "🖼️ Escolher da galeria"],
+                        ["📸 Melhor qualidade", "⚡ Câmera rápida"],
                         horizontal=True,
                         key=f"davi_comprovante_modo_foto_{chave_comprovante}",
+                        help="Melhor qualidade usa a câmera/galeria nativa do celular e preserva melhor a resolução. Câmera rápida usa a captura do navegador.",
                     )
 
                     versao_input = int(estado.get("input_version", 0))
-                    if modo_foto_comprovante == "📷 Tirar foto agora":
-                        foto_comprovante = st.camera_input(
-                            "Foto do material entregue",
-                            key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
-                        )
-                    else:
+                    if modo_foto_comprovante == "📸 Melhor qualidade":
+                        st.caption("📱 Recomendado: toque abaixo e escolha **Câmera** no celular. A imagem é enviada sem redimensionamento pelo app.")
                         foto_comprovante = st.file_uploader(
-                            "Selecione a foto do material",
+                            "Tirar ou selecionar foto",
                             type=["jpg", "jpeg", "png", "webp"],
                             accept_multiple_files=False,
                             key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                            help="No celular, o seletor normalmente oferece Câmera, Fotos/Galeria ou Arquivos.",
+                        )
+                    else:
+                        st.caption("⚡ Mais rápido, mas a qualidade pode ser menor porque a captura é feita pelo navegador.")
+                        foto_comprovante = st.camera_input(
+                            "Foto do material entregue",
+                            key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
                         )
 
                     numero_proxima_foto = len(estado["fotos"]) + 1
