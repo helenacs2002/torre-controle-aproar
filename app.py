@@ -91,6 +91,49 @@ def carregar_abastecimentos_df():
 def carregar_registro_km_df():
     return get_df("SELECT * FROM registro_km")
 
+# ---------------------------------------------------------------------
+# LEITURAS DE ALTA FREQUÊNCIA — cache curto para proteger o Supabase Nano
+# ---------------------------------------------------------------------
+@st.cache_data(ttl=25, show_spinner=False)
+def carregar_historico_concluidos_dia(data_rota):
+    return get_df(
+        "SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data",
+        {"data": data_rota},
+    )
+
+@st.cache_data(ttl=30, show_spinner=False)
+def carregar_inicios_movimento_dia(data_rota):
+    rows = fetch_all(
+        "SELECT placa, hora_inicio FROM inicio_movimento WHERE data=:data",
+        {"data": data_rota},
+    )
+    return [tuple(row) for row in rows]
+
+@st.cache_data(ttl=30, show_spinner=False)
+def carregar_paradas_abertas_dia(data_rota):
+    # Uma consulta para todos os veículos, em vez de uma consulta por placa a cada 30 s.
+    rows = fetch_all(
+        """
+        SELECT DISTINCT ON (placa) id, placa, local, hora_chegada
+        FROM rastreio_paradas
+        WHERE data=:data AND hora_saida IS NULL
+        ORDER BY placa, id DESC
+        """,
+        {"data": data_rota},
+    )
+    return [tuple(row) for row in rows]
+
+@st.cache_data(ttl=120, show_spinner=False)
+def carregar_locais_snapshot():
+    return get_df("SELECT apelido, endereco, lat, lon FROM locais")
+
+def _limpar_cache_seguro(*funcoes):
+    for funcao in funcoes:
+        try:
+            funcao.clear()
+        except Exception:
+            pass
+
 # =====================================================================
 # DICIONÁRIO INTELIGENTE DE SINÔNIMOS E ERROS DE DIGITAÇÃO
 # =====================================================================
@@ -2106,6 +2149,7 @@ def atualizar_tempos_deslocamento_operacionais(route_steps, start_time_str="08:0
 
     return route_steps
 
+@st.cache_data(ttl=30, show_spinner=False)
 def obter_hora_inicio_rota(data_rota):
     """A rota do Davi é planejada para iniciar às 08:00.
 
@@ -2240,6 +2284,7 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     return route_steps, current_min
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def carregar_paradas_rastreadas_rota(data_rota, placa=PLACA_DAVI):
     """Carrega as visitas reais do rastreador, mais recentes primeiro."""
     try:
@@ -2372,6 +2417,7 @@ def garantir_tabela_checkins_davi():
     execute_db(SQL_TABELA_CHECKINS_DAVI)
     return True
 
+@st.cache_data(ttl=20, show_spinner=False)
 def carregar_checkins_davi(data_rota):
     rows = fetch_all(
         """
@@ -2418,6 +2464,7 @@ def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
             """,
             {"data": data_rota, "indice": etapa_indice, "destino": destino},
         )
+    _limpar_cache_seguro(carregar_checkins_davi)
 
 
 # =====================================================================
@@ -2531,6 +2578,7 @@ def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto, material_fot
 # ESTADO PERSISTENTE DOS COMPROVANTES DO DAVI
 # Mantém fotos/recebedor/finalização mesmo quando o swipe troca a demanda.
 # =====================================================================
+@st.cache_resource(show_spinner=False)
 def garantir_tabela_comprovantes_davi():
     execute_db(
         """
@@ -2550,6 +2598,7 @@ def garantir_tabela_comprovantes_davi():
     )
 
 
+@st.cache_data(ttl=20, show_spinner=False)
 def carregar_comprovantes_davi(data_rota):
     estados = {}
     linhas = fetch_all(
@@ -2607,6 +2656,7 @@ def registrar_foto_comprovante_davi(data_rota, tarefa, recebedor, arquivo, tipo_
             "tipo_foto": str(tipo_foto or "Foto"),
         },
     )
+    _limpar_cache_seguro(carregar_comprovantes_davi)
 
 
 def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
@@ -2622,6 +2672,7 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
             "demanda_id": str(demanda_id or ""),
         },
     )
+    _limpar_cache_seguro(carregar_comprovantes_davi)
 
 
 # =====================================================================
@@ -2647,7 +2698,7 @@ if modo_url == "true":
     try:
         garantir_tabela_checkins_davi()
         res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-        df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+        df_mobile = carregar_historico_concluidos_dia(DATA_REF_ROTA_STR)
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
     except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, HORA_INICIO_ROTA_DAVI
@@ -3549,100 +3600,34 @@ def inicializar_bd():
 
     return True
 
-# =====================================================================
-# INICIALIZAÇÃO RESILIENTE DO SUPABASE
-# =====================================================================
-# O código antigo colocava conexão, DDL de manutenção e leitura da rota salva
-# dentro do mesmo try/except. Assim, qualquer erro em um CREATE/ALTER ou até em
-# um JSON antigo aparecia como "credenciais do Supabase", embora a conexão
-# estivesse funcionando. Aqui cada etapa é isolada.
-
-def _erro_bd_seguro(exc):
-    """Mensagem curta para diagnóstico sem expor usuário/senha/URL do banco."""
-    mensagem = str(exc or "")
-    mensagem = re.sub(r"postgres(?:ql)?://[^@\s]+@", "postgresql://***@", mensagem, flags=re.IGNORECASE)
-    mensagem = re.sub(r"password=[^\s,;]+", "password=***", mensagem, flags=re.IGNORECASE)
-    mensagem = re.sub(r"user=[^\s,;]+", "user=***", mensagem, flags=re.IGNORECASE)
-    mensagem = re.sub(r"\s+", " ", mensagem).strip()
-    return f"{type(exc).__name__}: {mensagem[:420]}" if mensagem else type(exc).__name__
-
-# 1) Primeiro comprova que a conexão realmente responde. Somente este erro
-# interrompe o aplicativo como falha de conexão.
+# Garante a inicialização segura do banco Supabase
 try:
-    _teste_bd = fetch_one("SELECT 1")
-except Exception as _exc_conexao_bd:
-    st.error("⚠️ Não consegui abrir a conexão PostgreSQL/Supabase. Os dados do app não foram alterados.")
-    st.caption(_erro_bd_seguro(_exc_conexao_bd))
-    st.stop()
-
-# 2) Em um banco já existente não há motivo para executar CREATE/ALTER em todo
-# boot. Só chamamos a rotina antiga se faltar alguma tabela estrutural. Isso
-# também evita travas/permissões de DDL derrubarem um banco que está saudável.
-if not st.session_state.get("_estrutura_bd_verificada", False):
-    _tabelas_essenciais = (
-        "locais", "historico_concluidos", "rota_ativa", "trello_cache",
-        "config_frota", "abastecimentos", "registro_km", "rastreio_paradas"
-    )
-    _faltantes_bd = []
-    try:
-        for _tabela_bd in _tabelas_essenciais:
-            _registro_tabela = fetch_one(f"SELECT to_regclass('public.{_tabela_bd}')")
-            if not _registro_tabela or _registro_tabela[0] is None:
-                _faltantes_bd.append(_tabela_bd)
-    except Exception:
-        # SELECT 1 já confirmou a conexão; uma falha nesta inspeção não deve
-        # bloquear o app. As operações normais continuarão usando as tabelas.
-        _faltantes_bd = []
-
-    if _faltantes_bd:
-        try:
-            inicializar_bd()
-        except Exception as _exc_estrutura_bd:
-            st.warning(
-                "⚠️ O Supabase conectou normalmente, mas a rotina automática de "
-                "manutenção da estrutura não pôde ser concluída. O app continuará "
-                "tentando usar o banco existente."
-            )
-            st.caption(_erro_bd_seguro(_exc_estrutura_bd))
-    st.session_state["_estrutura_bd_verificada"] = True
-
-# 3) A rota salva é carregada separadamente. JSON/horário antigo inválido não
-# pode mais ser confundido com falha de conexão do Supabase.
-if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
-    try:
-        res_rota = fetch_one(
-            "SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz "
-            "FROM rota_ativa WHERE id = 1 AND data_rota = :data",
-            {"data": DATA_REF_ROTA_STR},
-        )
+    inicializar_bd()
+    if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
+        res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
         if res_rota:
-            st.session_state['route_steps'] = json.loads(res_rota[0]) if isinstance(res_rota[0], str) else res_rota[0]
-            st.session_state['locais_dict'] = json.loads(res_rota[1]) if isinstance(res_rota[1], str) else res_rota[1]
-            st.session_state['geometria_rota'] = json.loads(res_rota[2]) if isinstance(res_rota[2], str) else res_rota[2]
-            st.session_state['enderecos_dict'] = json.loads(res_rota[3]) if isinstance(res_rota[3], str) else res_rota[3]
+            st.session_state['route_steps'] = json.loads(res_rota[0])
+            st.session_state['locais_dict'] = json.loads(res_rota[1])
+            st.session_state['geometria_rota'] = json.loads(res_rota[2])
+            st.session_state['enderecos_dict'] = json.loads(res_rota[3])
             st.session_state['total_km'] = res_rota[4]
             st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — malha viária sem trânsito ao vivo"
             st.session_state['horario_matriz_rota'] = res_rota[6] or ""
             if st.session_state['route_steps']:
-                st.session_state['p_saida'] = st.session_state['route_steps'][0].get('destino', 'ESCRITÓRIO')
-                _ultimo_horario = st.session_state['route_steps'][-1].get('saida') or st.session_state['route_steps'][-1].get('chegada') or "00:00"
-                _ultimo_min = parse_time_to_mins(_ultimo_horario)
-                st.session_state['horario_conclusao_min'] = _ultimo_min
+                st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
+                h, m = map(int, st.session_state['route_steps'][-1]['saida'].split(':'))
+                st.session_state['horario_conclusao_min'] = h * 60 + m
+            # Rotas viárias normalmente têm dezenas/centenas de pontos. Se o
+            # fallback salvo contiver apenas os pontos das paradas, não o tratamos
+            # como traçado viário real ao reabrir o aplicativo.
             _geom_carregada = st.session_state.get('geometria_rota') or []
             _passos_carregados = st.session_state.get('route_steps') or []
             st.session_state['geometria_viaria'] = len(_geom_carregada) > max(6, len(_passos_carregados) + 3)
             st.session_state['rota_gerada'] = True
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
-    except Exception as _exc_rota_salva:
-        # Não bloqueia o painel. A rota pode ser recalculada normalmente.
-        for _chave_rota in (
-            'route_steps', 'locais_dict', 'geometria_rota', 'enderecos_dict',
-            'total_km', 'p_saida', 'horario_conclusao_min', 'geometria_viaria',
-            'rota_gerada', 'data_rota'
-        ):
-            st.session_state.pop(_chave_rota, None)
-        st.warning("⚠️ Banco conectado, mas não consegui reaproveitar a rota salva de hoje. Você pode recalcular a rota normalmente.")
-        st.caption(_erro_bd_seguro(_exc_rota_salva))
+except:
+    st.error("⚠️ Atenção: Não foi possível conectar ao Banco de Dados Supabase. Verifique se as credenciais estão corretas nos Secrets do Streamlit.")
+    st.stop()
 
 # =====================================================================
 # LÓGICA DE EXTRAÇÃO E AUTOMAÇÃO DO TRELLO
@@ -3677,22 +3662,33 @@ def salvar_cache_trello_supabase(dados):
     )
 
 def obter_dados_trello(forcar=False):
+    agora = time.time()
+
+    # Dentro do processo, reaproveita a última leitura por até 2 minutos. Isso evita
+    # reler o JSONB grande do Supabase em cada fragment/rerun do Streamlit.
     if not forcar:
+        dados_memoria = st.session_state.get("_trello_dados_ultimo")
+        idade_memoria = agora - float(st.session_state.get("_trello_dados_ultimo_em", 0) or 0)
+        if dados_memoria is not None and idade_memoria < INTERVALO_TRELLO_SEGUNDOS:
+            return dados_memoria
+
         dados_cache = ler_cache_trello_supabase()
         if dados_cache is not None:
+            st.session_state["_trello_dados_ultimo"] = dados_cache
+            st.session_state["_trello_dados_ultimo_em"] = agora
             return dados_cache
 
-    # Reserva para a primeira instalação e para o botão manual.
+    # Leitura ao vivo usada no ciclo de 2 min e no botão manual. Não escrevemos
+    # novamente o board inteiro no Supabase: o Cron já mantém trello_cache e essa
+    # escrita repetitiva gerava WAL/IO sem trazer benefício para o app aberto.
     try:
         resposta = requests.get(TRELLO_JSON_URL, timeout=20)
         resposta.raise_for_status()
         dados = resposta.json()
         if not isinstance(dados, dict) or not isinstance(dados.get("cards"), list) or not isinstance(dados.get("lists"), list):
             return None
-        try:
-            salvar_cache_trello_supabase(dados)
-        except Exception:
-            pass
+        st.session_state["_trello_dados_ultimo"] = dados
+        st.session_state["_trello_dados_ultimo_em"] = agora
         return dados
     except Exception:
         return None
@@ -3726,13 +3722,17 @@ def obter_webhook_teams(setor, supervisor=None, obra=""):
 def disparar_teams(webhook_url, titulo, mensagem):
     if not webhook_url or not webhook_url.lower().startswith("https://"): return False, "O link precisa ser um webhook HTTPS do Teams Workflows."
     payload = {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.2", "body": [{"type": "TextBlock", "text": titulo, "size": "Medium", "weight": "Bolder", "wrap": True}, {"type": "TextBlock", "text": mensagem, "wrap": True, "spacing": "Medium"}],},}],}
-    try:
-        resposta = requests.post(webhook_url, json=payload, timeout=8)
-        if 200 <= resposta.status_code < 300:
-            return True, "Mensagem aceita pelo Teams."
-        return False, f"Teams respondeu com o código {resposta.status_code}."
-    except requests.RequestException:
-        return False, "Não foi possível alcançar o Teams."
+    ultimo_erro = ""
+    for tentativa in range(3):
+        try:
+            resposta = requests.post(webhook_url, json=payload, timeout=15)
+            if 200 <= resposta.status_code < 300: return True, "Mensagem aceita pelo Teams."
+            ultimo_erro = f"Teams respondeu com o código {resposta.status_code}."
+            if resposta.status_code != 429 and resposta.status_code < 500: break
+        except requests.RequestException: ultimo_erro = "Não foi possível alcançar o Teams."
+        if tentativa < 2: time.sleep(1 + tentativa)
+    return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
+
 
 def _comentarios_humanos_trello(card_id, acoes):
     """Retorna somente comentários escritos por pessoas no cartão.
@@ -3797,6 +3797,7 @@ def _registrar_entrega_historico(card_id, short_name, origem, destino, materiais
             "mat": materiais, "data": momento.strftime("%d/%m/%Y"), "hora": momento.strftime("%H:%M"),
         },
     )
+    _limpar_cache_seguro(carregar_historico_concluidos_dia)
 
 
 def _enviar_alerta_entrega_teams(card_id, short_name, origem, destino, materiais, momento, acoes):
@@ -5036,47 +5037,91 @@ def encontrar_conclusao_de_hoje(card_id, acoes):
         except: continue
     return max(conclusoes) if conclusoes else None
 
-def sincronizar_demandas(manual=False, forcar=False, geocodificar=True):
+def _assinatura_demandas_operacional(df):
+    if df is None or df.empty:
+        return "[]"
+    colunas = [c for c in ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso"] if c in df.columns]
+    registros = df[colunas].fillna("").astype(str).sort_values("id" if "id" in colunas else colunas[0]).to_dict("records")
+    return json.dumps(registros, ensure_ascii=False, sort_keys=True)
+
+def sincronizar_demandas(manual=False, forcar=False):
     data = obter_dados_trello(forcar=forcar)
     if not data:
-        if manual: st.error("⚠️ Erro ao acessar o Trello.")
+        if manual:
+            st.error("⚠️ Erro ao acessar o Trello.")
         return False
-        
+
+    assinatura_anterior = _assinatura_demandas_operacional(st.session_state.get("demandas", pd.DataFrame()))
     trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
     demandas_extraidas = []
-    
+
+    # Snapshot único do cadastro de locais. Antes havia um SELECT por cartão com endereço.
+    try:
+        df_locais_cache = carregar_locais_snapshot()
+        locais_cache = {
+            str(r.get('apelido', '')): (r.get('endereco'), r.get('lat'), r.get('lon'))
+            for _, r in df_locais_cache.iterrows()
+        } if df_locais_cache is not None and not df_locais_cache.empty else {}
+    except Exception:
+        locais_cache = {}
+    locais_para_gravar = {}
+
     for c in data.get('cards', []):
-        if c.get('closed') or lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()): continue
+        if c.get('closed') or lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()):
+            continue
         short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
         peso, status_prazo = classificar_prioridade(c.get('due'))
-        if geocodificar:
-            endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
-            alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
-            if endereco_card and alvo_endereco:
+        endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
+        alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
+        if endereco_card and alvo_endereco:
+            local_alvo = origem if alvo_endereco == "origem" else destino
+            existente = locais_cache.get(str(local_alvo))
+            sem_coord = not existente or existente[1] is None or existente[2] is None
+            if local_alvo and normalizar_local(local_alvo) not in UNIDADES_PROPRIAS and sem_coord:
                 lat, lon = buscar_coordenadas(endereco_card)
                 if lat is not None and lon is not None:
-                    local_alvo = origem if alvo_endereco == "origem" else destino
-                    if local_alvo and normalizar_local(local_alvo) not in UNIDADES_PROPRIAS:
-                        # Nunca sobrescreve coordenadas já validadas no banco por causa
-                        # de um cartão do Trello. A aba Endereços permanece soberana.
-                        existente = fetch_one("SELECT lat, lon FROM locais WHERE apelido = :apelido", {"apelido": local_alvo})
-                        if not existente or existente[0] is None or existente[1] is None:
-                            execute_db(
-                                "INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) "
-                                "ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon",
-                                {"apelido": local_alvo, "end": endereco_card, "lat": lat, "lon": lon},
-                            )
-        
+                    locais_para_gravar[str(local_alvo)] = {
+                        "apelido": str(local_alvo), "end": endereco_card, "lat": lat, "lon": lon
+                    }
+                    locais_cache[str(local_alvo)] = (endereco_card, lat, lon)
+
         tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
         te_val = 10
         if not st.session_state.demandas.empty and c['id'] in st.session_state.demandas['id'].values:
             linha_antiga = st.session_state.demandas[st.session_state.demandas['id'] == c['id']].iloc[0]
             tc_val, te_val = linha_antiga['Tempo_Coleta'], linha_antiga['Tempo_Entrega']
-        
-        demandas_extraidas.append({"id": c['id'], "Obra": short_name, "Origem": origem, "Destino": destino, "Materiais": materiais, "Urgência": status_prazo, "Peso": peso, "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val, "Supervisor": SUPERVISORES_MAP.get(destino, "Sede / Logística")})
 
-    st.session_state.demandas = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
+        demandas_extraidas.append({
+            "id": c['id'], "Obra": short_name, "Origem": origem, "Destino": destino,
+            "Materiais": materiais, "Urgência": status_prazo, "Peso": peso,
+            "Tempo_Coleta": tc_val, "Tempo_Entrega": te_val,
+            "Supervisor": SUPERVISORES_MAP.get(destino, "Sede / Logística")
+        })
+
+    # Todos os novos locais em um único commit.
+    if locais_para_gravar:
+        try:
+            conn_db = get_conn()
+            with conn_db.session as sessao_db:
+                for item in locais_para_gravar.values():
+                    sessao_db.execute(
+                        text(
+                            "INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) "
+                            "ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon"
+                        ),
+                        item,
+                    )
+                sessao_db.commit()
+            _limpar_cache_seguro(carregar_locais_snapshot)
+        except Exception:
+            pass
+
+    novo_df = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
+    st.session_state.demandas = novo_df
     st.session_state.ultima_sincronizacao = time.time()
+    st.session_state["_demandas_mudaram_ultima_sync"] = (
+        assinatura_anterior != _assinatura_demandas_operacional(novo_df)
+    )
     return True
 
 class FormularioLoginParser(HTMLParser):
@@ -5165,58 +5210,67 @@ def carregar_config_protege():
 
 def loop_automacoes_background():
     agora_loop = datetime.now(FUSO_LOCAL)
+    agora_epoch = time.time()
+
+    # --------------------------------------------------------------
+    # TRELLO / TEAMS — somente no ciclo real de 2 minutos
+    # --------------------------------------------------------------
+    ultima_baixa = float(st.session_state.get("_ultima_verificacao_baixas_trello", 0) or 0)
+    if agora_epoch - ultima_baixa >= INTERVALO_TRELLO_SEGUNDOS - 5:
+        st.session_state["_ultima_verificacao_baixas_trello"] = agora_epoch
+        try:
+            data = st.session_state.get("_trello_dados_ultimo") or obter_dados_trello()
+            if data:
+                trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
+                cards = data.get('cards', [])
+                acoes = data.get('actions', [])
+
+                df_hist = carregar_historico_concluidos_dia(DATA_HOJE_REAL_STR)
+                ids_ja_registrados = set(df_hist['id'].astype(str)) if df_hist is not None and not df_hist.empty else set()
+                enviados_sessao = st.session_state.setdefault("_teams_entregas_enviadas", set())
+
+                novas_entregas = 0
+                for c in cards:
+                    if c.get('closed') or not lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()):
+                        continue
+                    momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
+                    if not momento_conclusao or momento_conclusao.strftime("%d/%m/%Y") != DATA_HOJE_REAL_STR:
+                        continue
+
+                    short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
+                    card_id = str(c['id'])
+                    if card_id not in ids_ja_registrados:
+                        _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento_conclusao)
+                        ids_ja_registrados.add(card_id)
+                        novas_entregas += 1
+
+                    idade_min = (agora_loop - momento_conclusao).total_seconds() / 60.0
+                    if -1 <= idade_min <= 5 and card_id not in enviados_sessao:
+                        enviado, _detalhe = _enviar_alerta_entrega_teams(
+                            card_id, short_name, origem, destino, materiais, momento_conclusao, acoes
+                        )
+                        if enviado:
+                            enviados_sessao.add(card_id)
+
+                if novas_entregas > 0:
+                    st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
+        except Exception:
+            pass
+
+    # --------------------------------------------------------------
+    # RASTREADOR / GEOFENCE — no máximo uma execução a cada ~30 s
+    # --------------------------------------------------------------
+    ultimo_tracker = float(st.session_state.get("_ultimo_tracker_background", 0) or 0)
+    if agora_epoch - ultimo_tracker < 27:
+        return
+    st.session_state["_ultimo_tracker_background"] = agora_epoch
+
     try:
-        data = obter_dados_trello()
-        if data:
-            trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
-            cards = data.get('cards', [])
-            acoes = data.get('actions', [])
-            
-            ids_ja_registrados = {str(r[0]) for r in fetch_all("SELECT id FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_HOJE_REAL_STR})}
-            enviados_sessao = st.session_state.setdefault("_teams_entregas_enviadas", set())
-
-            novas_entregas = 0
-            for c in cards:
-                if c.get('closed'):
-                    continue
-                if not lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()):
-                    continue
-
-                momento_conclusao = encontrar_conclusao_de_hoje(c['id'], acoes)
-                if not momento_conclusao or momento_conclusao.strftime("%d/%m/%Y") != DATA_HOJE_REAL_STR:
-                    continue
-
-                short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
-                card_id = str(c['id'])
-
-                # A baixa física é registrada independentemente do Teams.
-                if card_id not in ids_ja_registrados:
-                    _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento_conclusao)
-                    ids_ja_registrados.add(card_id)
-                    novas_entregas += 1
-
-                # O automático continua prioritário e roda no mesmo ciclo de 2 min.
-                # Se o Teams falhar, tenta de novo nos próximos ciclos enquanto a
-                # conclusão ainda estiver dentro da janela operacional já usada antes.
-                idade_min = (agora_loop - momento_conclusao).total_seconds() / 60.0
-                if -1 <= idade_min <= 5 and card_id not in enviados_sessao:
-                    enviado, _detalhe = _enviar_alerta_entrega_teams(
-                        card_id, short_name, origem, destino, materiais, momento_conclusao, acoes
-                    )
-                    if enviado:
-                        enviados_sessao.add(card_id)
-
-            if novas_entregas > 0:
-                st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
-    except: pass
-
-    try:
-        sessao, pagina = st.session_state.get("protege_sessao"), st.session_state.get("protege_pagina")
+        sessao = st.session_state.get("protege_sessao")
+        pagina = st.session_state.get("protege_pagina")
         usuario_protege, senha_protege, ids_veiculos = carregar_config_protege()
         posicoes = []
 
-        # O medidor não depende mais de alguém abrir primeiro a aba do rastreador:
-        # se houver credenciais, tenta autenticar automaticamente no ciclo de fundo.
         if ids_veiculos and usuario_protege and senha_protege:
             try:
                 if sessao and pagina:
@@ -5228,125 +5282,148 @@ def loop_automacoes_background():
                 st.session_state["protege_sessao"] = sessao
                 st.session_state["protege_pagina"] = pagina
 
-        if posicoes:
-            # 1. Inteligência de Início de Rota (>500m do escritório)
-            lat_base, lon_base = LOCAL_BASE_COORDS
-            for p in posicoes:
-                if p["Velocidade (km/h)"] > 0:
-                    dist_base_km = calcular_distancia_km(lat_base, lon_base, p["Latitude"], p["Longitude"])
-                    if dist_base_km > 0.5:
-                        if not fetch_one("SELECT hora_inicio FROM inicio_movimento WHERE placa=:placa AND data=:data", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR}):
-                            match_time = re.search(r'(\d{1,2}:\d{2})', str(p.get('Última atualização', '')))
-                            hora_leitura = match_time.group(1).zfill(5) if match_time else agora_loop.strftime("%H:%M")
-                            execute_db("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (:placa, :data, :hora) ON CONFLICT (placa, data) DO NOTHING", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR, "hora": hora_leitura})
+        if not posicoes:
+            return
 
-            # 2. GEOFENCE ROBUSTA — chegada/saída com histerese e confirmação.
-            # Entrada: <=250m + baixa velocidade por 2 leituras (~1 min).
-            # Permanência: não encerra só porque o carro anda dentro da obra.
-            # Saída: >350m por 2 leituras; >600m confirma imediatamente.
-            RAIO_ENTRADA_KM = 0.25
-            RAIO_SAIDA_KM = 0.35
-            RAIO_SAIDA_IMEDIATA_KM = 0.60
-            VELOCIDADE_MAX_ENTRADA = 8.0
-            LEITURAS_CONFIRMAR = 2
+        # A aba do rastreador reaproveita esta mesma leitura, evitando uma segunda
+        # consulta ao portal Protege e novas queries de banco no mesmo intervalo.
+        st.session_state["_posicoes_protege_cache"] = posicoes
+        st.session_state["_posicoes_protege_cache_em"] = agora_epoch
 
-            estados_geo = st.session_state.setdefault("_geofence_confirmacao", {})
-            res_rota = fetch_one("SELECT json_locais FROM rota_ativa WHERE id=1 AND data_rota=:data", {"data": DATA_HOJE_REAL_STR})
-            if res_rota:
-                locais_rota = json.loads(res_rota[0])
-
-                for p in posicoes:
-                    lat_v, lon_v = p['Latitude'], p['Longitude']
-                    placa_v = str(p['Placa'])
-                    vel_v = float(p.get('Velocidade (km/h)', 0) or 0)
+        # Uma consulta para todos os horários de início.
+        start_times = {str(r[0]): str(r[1]) for r in carregar_inicios_movimento_dia(DATA_HOJE_REAL_STR)}
+        lat_base, lon_base = LOCAL_BASE_COORDS
+        inicio_alterado = False
+        for p in posicoes:
+            placa = str(p.get("Placa", ""))
+            if p.get("Velocidade (km/h)", 0) > 0 and placa not in start_times:
+                dist_base_km = calcular_distancia_km(lat_base, lon_base, p["Latitude"], p["Longitude"])
+                if dist_base_km > 0.5:
                     match_time = re.search(r'(\d{1,2}:\d{2})', str(p.get('Última atualização', '')))
                     hora_leitura = match_time.group(1).zfill(5) if match_time else agora_loop.strftime("%H:%M")
-
-                    estado_geo = estados_geo.setdefault(placa_v, {
-                        'entrada_local': None,
-                        'entrada_contagem': 0,
-                        'entrada_hora': '',
-                        'saida_contagem': 0,
-                        'saida_hora': '',
-                    })
-
-                    # Distâncias a todos os locais da rota (menos base).
-                    distancias = {}
-                    for nome_loc, coords in locais_rota.items():
-                        if nome_loc == "ESCRITÓRIO" or not isinstance(coords, (list, tuple)) or len(coords) < 2:
-                            continue
-                        try:
-                            distancias[nome_loc] = calcular_distancia_km(coords[0], coords[1], lat_v, lon_v)
-                        except Exception:
-                            continue
-
-                    parada_ativa = fetch_one(
-                        "SELECT id, local, hora_chegada FROM rastreio_paradas "
-                        "WHERE data=:data AND placa=:placa AND hora_saida IS NULL ORDER BY id DESC LIMIT 1",
-                        {"data": DATA_HOJE_REAL_STR, "placa": placa_v},
+                    execute_db(
+                        "INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (:placa, :data, :hora) "
+                        "ON CONFLICT (placa, data) DO NOTHING",
+                        {"placa": placa, "data": DATA_HOJE_REAL_STR, "hora": hora_leitura},
                     )
+                    start_times[placa] = hora_leitura
+                    inicio_alterado = True
+        if inicio_alterado:
+            _limpar_cache_seguro(carregar_inicios_movimento_dia, obter_hora_inicio_rota)
 
-                    if parada_ativa:
-                        id_ativa, local_ativo = parada_ativa[0], str(parada_ativa[1])
-                        dist_ativa = distancias.get(local_ativo)
-                        if dist_ativa is None:
-                            # Tenta casar por nome normalizado caso a rota tenha sido recalculada.
-                            chave_ativa = _normalizar_local_rastreio(local_ativo)
-                            for nome_loc, dist_loc in distancias.items():
-                                if _normalizar_local_rastreio(nome_loc) == chave_ativa:
-                                    dist_ativa = dist_loc
-                                    break
+        RAIO_ENTRADA_KM = 0.25
+        RAIO_SAIDA_KM = 0.35
+        RAIO_SAIDA_IMEDIATA_KM = 0.60
+        VELOCIDADE_MAX_ENTRADA = 8.0
+        LEITURAS_CONFIRMAR = 2
 
-                        esta_fora = dist_ativa is None or dist_ativa > RAIO_SAIDA_KM
-                        if not esta_fora:
-                            # Continua no mesmo local mesmo que mova o carro internamente.
-                            estado_geo['saida_contagem'] = 0
-                            estado_geo['saida_hora'] = ''
-                        else:
-                            if estado_geo.get('saida_contagem', 0) == 0:
-                                estado_geo['saida_hora'] = hora_leitura
-                            estado_geo['saida_contagem'] = int(estado_geo.get('saida_contagem', 0)) + 1
-                            saida_imediata = dist_ativa is not None and dist_ativa >= RAIO_SAIDA_IMEDIATA_KM
-                            if saida_imediata or estado_geo['saida_contagem'] >= LEITURAS_CONFIRMAR:
-                                hora_saida = estado_geo.get('saida_hora') or hora_leitura
-                                execute_db("UPDATE rastreio_paradas SET hora_saida=:hora WHERE id=:id", {"hora": hora_saida, "id": id_ativa})
-                                estado_geo.update({
-                                    'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
-                                    'saida_contagem': 0, 'saida_hora': '',
-                                })
+        estados_geo = st.session_state.setdefault("_geofence_confirmacao", {})
+
+        # Usa a rota já carregada em memória sempre que possível.
+        locais_rota = {}
+        if st.session_state.get("data_rota") == DATA_HOJE_REAL_STR:
+            locais_rota = st.session_state.get("locais_dict") or {}
+        if not locais_rota:
+            res_rota = fetch_one(
+                "SELECT json_locais FROM rota_ativa WHERE id=1 AND data_rota=:data",
+                {"data": DATA_HOJE_REAL_STR},
+            )
+            if res_rota:
+                locais_rota = json.loads(res_rota[0])
+        if not locais_rota:
+            return
+
+        # Uma única consulta traz todas as paradas abertas, sem SELECT por veículo.
+        abertas_rows = carregar_paradas_abertas_dia(DATA_HOJE_REAL_STR)
+        abertas_por_placa = {
+            str(r[1]): {"id": r[0], "local": str(r[2]), "hora_chegada": r[3]}
+            for r in abertas_rows
+        }
+        houve_escrita_parada = False
+
+        for p in posicoes:
+            lat_v, lon_v = p['Latitude'], p['Longitude']
+            placa_v = str(p['Placa'])
+            vel_v = float(p.get('Velocidade (km/h)', 0) or 0)
+            match_time = re.search(r'(\d{1,2}:\d{2})', str(p.get('Última atualização', '')))
+            hora_leitura = match_time.group(1).zfill(5) if match_time else agora_loop.strftime("%H:%M")
+
+            estado_geo = estados_geo.setdefault(placa_v, {
+                'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
+                'saida_contagem': 0, 'saida_hora': '',
+            })
+
+            distancias = {}
+            for nome_loc, coords in locais_rota.items():
+                if nome_loc == "ESCRITÓRIO" or not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                    continue
+                try:
+                    distancias[nome_loc] = calcular_distancia_km(coords[0], coords[1], lat_v, lon_v)
+                except Exception:
+                    continue
+
+            parada_ativa = abertas_por_placa.get(placa_v)
+            if parada_ativa:
+                id_ativa, local_ativo = parada_ativa["id"], parada_ativa["local"]
+                dist_ativa = distancias.get(local_ativo)
+                if dist_ativa is None:
+                    chave_ativa = _normalizar_local_rastreio(local_ativo)
+                    for nome_loc, dist_loc in distancias.items():
+                        if _normalizar_local_rastreio(nome_loc) == chave_ativa:
+                            dist_ativa = dist_loc
+                            break
+
+                esta_fora = dist_ativa is None or dist_ativa > RAIO_SAIDA_KM
+                if not esta_fora:
+                    estado_geo['saida_contagem'] = 0
+                    estado_geo['saida_hora'] = ''
+                else:
+                    if estado_geo.get('saida_contagem', 0) == 0:
+                        estado_geo['saida_hora'] = hora_leitura
+                    estado_geo['saida_contagem'] = int(estado_geo.get('saida_contagem', 0)) + 1
+                    saida_imediata = dist_ativa is not None and dist_ativa >= RAIO_SAIDA_IMEDIATA_KM
+                    if saida_imediata or estado_geo['saida_contagem'] >= LEITURAS_CONFIRMAR:
+                        hora_saida = estado_geo.get('saida_hora') or hora_leitura
+                        execute_db("UPDATE rastreio_paradas SET hora_saida=:hora WHERE id=:id", {"hora": hora_saida, "id": id_ativa})
+                        abertas_por_placa.pop(placa_v, None)
+                        houve_escrita_parada = True
+                        estado_geo.update({
+                            'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
+                            'saida_contagem': 0, 'saida_hora': '',
+                        })
+            else:
+                candidatos = [(dist, nome) for nome, dist in distancias.items() if dist <= RAIO_ENTRADA_KM]
+                candidato = min(candidatos)[1] if candidatos and vel_v <= VELOCIDADE_MAX_ENTRADA else None
+                if candidato:
+                    if estado_geo.get('entrada_local') == candidato:
+                        estado_geo['entrada_contagem'] = int(estado_geo.get('entrada_contagem', 0)) + 1
                     else:
-                        # Só abre uma parada após duas leituras coerentes. Isso reduz falsos
-                        # positivos causados por semáforo/congestionamento perto da obra.
-                        candidatos = [
-                            (dist, nome) for nome, dist in distancias.items()
-                            if dist <= RAIO_ENTRADA_KM
-                        ]
-                        candidato = min(candidatos)[1] if candidatos and vel_v <= VELOCIDADE_MAX_ENTRADA else None
+                        estado_geo['entrada_local'] = candidato
+                        estado_geo['entrada_contagem'] = 1
+                        estado_geo['entrada_hora'] = hora_leitura
 
-                        if candidato:
-                            if estado_geo.get('entrada_local') == candidato:
-                                estado_geo['entrada_contagem'] = int(estado_geo.get('entrada_contagem', 0)) + 1
-                            else:
-                                estado_geo['entrada_local'] = candidato
-                                estado_geo['entrada_contagem'] = 1
-                                estado_geo['entrada_hora'] = hora_leitura
+                    if estado_geo['entrada_contagem'] >= LEITURAS_CONFIRMAR:
+                        hora_chegada = estado_geo.get('entrada_hora') or hora_leitura
+                        execute_db(
+                            "INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (:data, :placa, :local, :hora)",
+                            {"data": DATA_HOJE_REAL_STR, "placa": placa_v, "local": candidato, "hora": hora_chegada},
+                        )
+                        houve_escrita_parada = True
+                        estado_geo.update({
+                            'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
+                            'saida_contagem': 0, 'saida_hora': '',
+                        })
+                else:
+                    estado_geo['entrada_local'] = None
+                    estado_geo['entrada_contagem'] = 0
+                    estado_geo['entrada_hora'] = ''
 
-                            if estado_geo['entrada_contagem'] >= LEITURAS_CONFIRMAR:
-                                hora_chegada = estado_geo.get('entrada_hora') or hora_leitura
-                                execute_db(
-                                    "INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (:data, :placa, :local, :hora)",
-                                    {"data": DATA_HOJE_REAL_STR, "placa": placa_v, "local": candidato, "hora": hora_chegada},
-                                )
-                                estado_geo.update({
-                                    'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
-                                    'saida_contagem': 0, 'saida_hora': '',
-                                })
-                        else:
-                            estado_geo['entrada_local'] = None
-                            estado_geo['entrada_contagem'] = 0
-                            estado_geo['entrada_hora'] = ''
+        if houve_escrita_parada:
+            _limpar_cache_seguro(
+                carregar_paradas_abertas_dia, carregar_paradas_rastreadas_rota, carregar_medias_historicas_paradas
+            )
     except Exception:
-        # Rastreador não pode derrubar o restante do sistema; tenta novamente no próximo ciclo.
+        # Rastreador não derruba o app. O próximo ciclo tenta novamente.
         pass
 
 # =====================================================================
@@ -5364,49 +5441,33 @@ with st.sidebar:
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     if st.session_state.get("_ultima_rotina_auto"):
         st.caption(f"🔄 Trello + rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
+    st.caption("🟢 Modo de banco econômico: leituras repetidas reaproveitadas e gravação somente quando há mudança.")
     
-    # Trello continua no ciclo de 2 minutos, mas a abertura da página precisa ser imediata.
-    # Na primeira execução lemos apenas o cache do Supabase (rápido) e NÃO forçamos
-    # Trello, rastreador ou recálculo antes de a interface aparecer.
+    # Atualiza o Trello ao vivo a cada 2 minutos enquanto o app estiver aberto.
+    # A leitura é forçada para não depender de um cache antigo do Supabase.
+    # Depois da sincronização, um rerun completo dispara o recálculo automático da rota.
     if "ultima_sincronizacao" not in st.session_state:
+        # Na abertura usa primeiro o cache já mantido pelo Cron. A leitura ao vivo
+        # acontece no próximo ciclo de 2 min, evitando uma rajada de IO no boot.
         st.session_state.ultima_sincronizacao = time.time()
-        sincronizar_demandas(forcar=False, geocodificar=False)
-        st.session_state["_assinatura_demandas_auto"] = tuple(
-            sorted((str(r.get("id", "")), str(r.get("Origem", "")), str(r.get("Destino", "")), str(r.get("Materiais", "")))
-                   for r in st.session_state.demandas.to_dict("records"))
-        )
-        st.session_state["_background_liberado_em"] = time.time() + 5
-
+        sincronizar_demandas(forcar=False)
+    
     if hasattr(st, "fragment"):
         @st.fragment(run_every="30s")
         def _loop_operacoes():
-            agora_ts = time.time()
-            # O primeiro ciclo pesado fica fora do carregamento inicial da página.
-            if agora_ts < st.session_state.get("_background_liberado_em", 0):
-                return
-
-            tempo_desde_sync = agora_ts - st.session_state.get("ultima_sincronizacao", agora_ts)
+            tempo_desde_sync = time.time() - st.session_state.get("ultima_sincronizacao", 0)
             if tempo_desde_sync >= INTERVALO_TRELLO_SEGUNDOS:
-                assinatura_antes = st.session_state.get("_assinatura_demandas_auto", tuple())
                 if sincronizar_demandas(forcar=True):
-                    assinatura_depois = tuple(
-                        sorted((str(r.get("id", "")), str(r.get("Origem", "")), str(r.get("Destino", "")), str(r.get("Materiais", "")))
-                               for r in st.session_state.demandas.to_dict("records"))
-                    )
-                    st.session_state["_assinatura_demandas_auto"] = assinatura_depois
-                    # Baixas/Teams continuam automáticos no mesmo ciclo.
+                    # Baixas continuam sendo registradas no mesmo ciclo de 2 min.
                     loop_automacoes_background()
-                    st.session_state["_ultima_rotina_auto"] = datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
-                    # Só recalcula quando as demandas realmente mudaram.
-                    if assinatura_depois != assinatura_antes:
+                    # Recalcula a rota somente se o conjunto operacional mudou.
+                    # Antes toda sincronização regravava rota/geometria mesmo sem alteração.
+                    if st.session_state.get("_demandas_mudaram_ultima_sync", False):
                         st.session_state["_recalcular_rota_automatico"] = True
-                        st.rerun()
+                    st.session_state["_ultima_rotina_auto"] = datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
+                    st.rerun()
             else:
-                # Rastreador/Teams no máximo uma vez por minuto; evita prender a renderização.
-                ultimo_bg = st.session_state.get("_ultimo_background_operacoes", 0.0)
-                if agora_ts - ultimo_bg >= 60:
-                    st.session_state["_ultimo_background_operacoes"] = agora_ts
-                    loop_automacoes_background()
+                loop_automacoes_background()
         _loop_operacoes()
 
     st.markdown("---")
@@ -5456,16 +5517,25 @@ with tab_rastreador:
 
             try:
                 sessao, pagina = st.session_state.get("protege_sessao"), st.session_state.get("protege_pagina")
-                if not sessao or not pagina:
-                    sessao, pagina, posicoes = autenticar_protege(usuario_protege, senha_protege, ids_veiculos)
-                    st.session_state["protege_sessao"], st.session_state["protege_pagina"] = sessao, pagina
-                else:
-                    try: posicoes = consultar_posicoes_protege(sessao, pagina, ids_veiculos)
-                    except:
+                posicoes = st.session_state.get("_posicoes_protege_cache") or []
+                idade_posicoes = time.time() - float(st.session_state.get("_posicoes_protege_cache_em", 0) or 0)
+
+                # O background já consulta a Protege a cada ~30 s. Só fazemos uma
+                # chamada própria se ainda não houver leitura ou ela estiver realmente velha.
+                if not posicoes or idade_posicoes > 75:
+                    if not sessao or not pagina:
                         sessao, pagina, posicoes = autenticar_protege(usuario_protege, senha_protege, ids_veiculos)
                         st.session_state["protege_sessao"], st.session_state["protege_pagina"] = sessao, pagina
+                    else:
+                        try:
+                            posicoes = consultar_posicoes_protege(sessao, pagina, ids_veiculos)
+                        except Exception:
+                            sessao, pagina, posicoes = autenticar_protege(usuario_protege, senha_protege, ids_veiculos)
+                            st.session_state["protege_sessao"], st.session_state["protege_pagina"] = sessao, pagina
+                    st.session_state["_posicoes_protege_cache"] = posicoes
+                    st.session_state["_posicoes_protege_cache_em"] = time.time()
 
-                start_times = {row[0]: row[1] for row in fetch_all("SELECT placa, hora_inicio FROM inicio_movimento WHERE data=:data", {"data": DATA_HOJE_REAL_STR})}
+                start_times = {row[0]: row[1] for row in carregar_inicios_movimento_dia(DATA_HOJE_REAL_STR)}
 
                 st.markdown("#### ✏️ Corrigir início da rota")
                 st.caption(
@@ -5507,6 +5577,7 @@ with tab_rastreador:
                         """,
                         {"placa": placa_manual, "data": DATA_HOJE_REAL_STR, "hora": hora_manual_str},
                     )
+                    _limpar_cache_seguro(carregar_inicios_movimento_dia, obter_hora_inicio_rota)
                     st.session_state["confirmacao_inicio_manual"] = (
                         f"✅ Início da rota de {placa_manual} corrigido para {hora_manual_str}."
                     )
@@ -5561,7 +5632,7 @@ with tab_demandas:
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
     st.caption("Acompanhe em tempo real as entregas da rota gerada.")
 
-    df_entregues_hoje = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+    df_entregues_hoje = carregar_historico_concluidos_dia(DATA_REF_ROTA_STR)
     dict_concluidos_monitor = dict(zip(df_entregues_hoje['id'].astype(str), df_entregues_hoje['hora_conclusao']))
     demandas_na_rota = {str(t.get('id', '')): t for step in st.session_state.get('route_steps', []) for acao, t in step.get('actions', [])}
 
@@ -6132,7 +6203,7 @@ with tab_roteiro:
             st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
             
-            df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+            df_torre = carregar_historico_concluidos_dia(DATA_REF_ROTA_STR)
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
@@ -6408,7 +6479,7 @@ with tab_roteiro:
 
         if st.session_state.get('demandas_adiadas'): st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã.")
         
-        df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+        df_torre = carregar_historico_concluidos_dia(DATA_REF_ROTA_STR)
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         try:
             dict_checkins_torre = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
@@ -6465,7 +6536,8 @@ with tab_roteiro:
                 </style>
             """, unsafe_allow_html=True)
 
-            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
+            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
+            horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
             st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional de trecho")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
