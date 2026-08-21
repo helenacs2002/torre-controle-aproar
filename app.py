@@ -4310,44 +4310,40 @@ with tab_frota:
             eh_mais_economico = mais_economico == veiculo and len(veiculos_validos_custo) > 1
 
             with st.container(border=True):
-                topo_nome, topo_custo = st.columns([1.7, 1])
-                with topo_nome:
-                    st.markdown(f"### {icone} {veiculo}")
-                    if custo_km is None:
-                        st.caption("⚪ Sem KM suficiente para calcular o custo por quilômetro")
-                    elif dentro_referencia:
-                        st.caption("🟢 Custo por KM dentro da referência de R$ 1,50/km")
-                    else:
-                        st.caption("🔴 Custo por KM acima da referência de R$ 1,50/km")
-                    if eh_mais_economico:
-                        st.success("🏆 Menor custo por KM da frota neste mês")
+                # Cabeçalho simples e largo para evitar truncamento.
+                st.markdown(f"### {icone} {veiculo}")
+                if custo_km is None:
+                    st.caption("⚪ Sem KM suficiente para calcular o custo por quilômetro")
+                elif dentro_referencia:
+                    st.caption("🟢 Custo por KM dentro da referência de R$ 1,50/km")
+                else:
+                    st.caption("🔴 Custo por KM acima da referência de R$ 1,50/km")
+                if eh_mais_economico:
+                    st.success("🏆 Menor custo por KM da frota neste mês")
 
-                with topo_custo:
-                    st.metric("💳 Custo do veículo", formatar_moeda_br(resumo['custo_total']))
+                # Somente os três números mais importantes usam cards grandes.
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Custo total", formatar_moeda_br(resumo['custo_total']))
+                m2.metric("KM", f"{formatar_numero_br(resumo['km'])} km")
+                m3.metric("Custo/KM", formatar_moeda_br(custo_km) if custo_km is not None else "—")
 
-                st.markdown("**Indicadores principais**")
-                p1, p2 = st.columns(2)
-                p1.metric("🛣️ KM no mês", f"{formatar_numero_br(resumo['km'])} km")
-                p2.metric("📉 Custo por KM", formatar_moeda_br(custo_km) if custo_km is not None else "—")
+                # Demais informações ficam compactas para caber tudo na tela.
+                st.markdown("**Resumo do veículo**")
+                r1, r2 = st.columns(2)
+                with r1:
+                    st.markdown(f"⛽ **Combustível:** {formatar_moeda_br(resumo['combustivel'])}")
+                    st.markdown(f"🧪 **Litros:** {formatar_numero_br(resumo['litros'])} L")
+                with r2:
+                    st.markdown(f"🔧 **Manutenção:** {formatar_moeda_br(resumo['manutencao'])}")
+                    media_litro = formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else "—"
+                    st.markdown(f"🏷️ **Preço médio/L:** {media_litro}")
 
-                p3, p4 = st.columns(2)
-                p3.metric("⛽ Combustível", formatar_moeda_br(resumo['combustivel']))
-                p4.metric("🔧 Manutenção", formatar_moeda_br(resumo['manutencao']))
-
-                st.markdown("**Abastecimento e movimentações**")
-                d1, d2 = st.columns(2)
-                d1.metric("🧪 Litros abastecidos", f"{formatar_numero_br(resumo['litros'])} L")
-                d2.metric(
-                    "🏷️ Média do litro",
-                    formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else "—",
-                )
-
-                d3, d4 = st.columns(2)
-                d3.metric("🧾 Abastecimentos", str(resumo['abastecimentos']))
-                d4.metric("🛠️ Manutenções", str(resumo['manutencoes']))
+                abastec_txt = f"{resumo['abastecimentos']} abastecimento" + ("s" if resumo['abastecimentos'] != 1 else "")
+                manut_txt = f"{resumo['manutencoes']} manutenção" + ("ões" if resumo['manutencoes'] != 1 else "")
+                st.caption(f"🧾 {abastec_txt}  •  🛠️ {manut_txt}")
 
                 if custo_total_frota > 0:
-                    st.markdown(f"**Participação no custo da frota: {participacao * 100:.1f}%**")
+                    st.caption(f"Participação no custo total da frota: {participacao * 100:.1f}%")
                     st.progress(min(max(participacao, 0.0), 1.0))
 
                 gastos = resumo['gastos_df'].copy()
