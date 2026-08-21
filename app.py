@@ -704,17 +704,17 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
             engine_kwargs={"options": {"strings_to_formulas": False, "strings_to_urls": False}},
         ) as escritor:
             workbook = escritor.book
-            titulo_fmt = workbook.add_format({"bold": True, "font_size": 15, "font_color": "#FFFFFF", "bg_color": "#08B7B7", "align": "center", "valign": "vcenter"})
+            titulo_fmt = workbook.add_format({"bold": True, "font_size": 15, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "center", "valign": "vcenter"})
             meta_fmt = workbook.add_format({"font_size": 9, "font_color": "#64748B", "italic": True})
-            texto_fmt = workbook.add_format({"valign": "top", "text_wrap": True, "border": 1, "border_color": "#20C4C4"})
-            moeda_fmt = workbook.add_format({"num_format": 'R$ #,##0.00', "valign": "top", "border": 1, "border_color": "#20C4C4"})
-            numero_fmt = workbook.add_format({"num_format": '#,##0.00', "valign": "top", "border": 1, "border_color": "#20C4C4"})
-            data_fmt = workbook.add_format({"num_format": 'dd/mm/yyyy', "valign": "top", "border": 1, "border_color": "#20C4C4"})
-            identificador_fmt = workbook.add_format({"num_format": "@", "valign": "top", "text_wrap": True, "border": 1, "border_color": "#20C4C4"})
-            cartao_rotulo_fmt = workbook.add_format({"bold": True, "font_size": 8.5, "font_color": "#FFFFFF", "bg_color": "#4B4B4B", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
-            cartao_valor_fmt = workbook.add_format({"bold": True, "font_size": 13, "font_color": "#334155", "bg_color": "#F3FAF3", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#B7D9D9"})
-            subtitulo_fmt = workbook.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": "#08B7B7", "align": "left", "valign": "vcenter"})
-            cabecalho_tabela_fmt = workbook.add_format({"bold": True, "font_size": 9, "font_color": "#FFFFFF", "bg_color": "#08B7B7", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
+            texto_fmt = workbook.add_format({"valign": "top", "text_wrap": True, "border": 1, "border_color": "#93C5FD"})
+            moeda_fmt = workbook.add_format({"num_format": 'R$ #,##0.00', "valign": "top", "border": 1, "border_color": "#93C5FD"})
+            numero_fmt = workbook.add_format({"num_format": '#,##0.00', "valign": "top", "border": 1, "border_color": "#93C5FD"})
+            data_fmt = workbook.add_format({"num_format": 'dd/mm/yyyy', "valign": "top", "border": 1, "border_color": "#93C5FD"})
+            identificador_fmt = workbook.add_format({"num_format": "@", "valign": "top", "text_wrap": True, "border": 1, "border_color": "#93C5FD"})
+            cartao_rotulo_fmt = workbook.add_format({"bold": True, "font_size": 8.5, "font_color": "#FFFFFF", "bg_color": "#0F172A", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
+            cartao_valor_fmt = workbook.add_format({"bold": True, "font_size": 13, "font_color": "#0F172A", "bg_color": "#EFF6FF", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#BFDBFE"})
+            subtitulo_fmt = workbook.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "left", "valign": "vcenter"})
+            cabecalho_tabela_fmt = workbook.add_format({"bold": True, "font_size": 9, "font_color": "#FFFFFF", "bg_color": "#2563EB", "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
             usados = set()
 
             for ordem_item, (nome, df_original) in enumerate(tabelas_excel):
@@ -767,8 +767,8 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
                                 worksheet.write_number(linha_destino, 16, valor)
                         worksheet.set_column(15, 16, None, None, {"hidden": True})
                         grafico = workbook.add_chart({"type": "doughnut"})
-                        pontos = [{"fill": {"color": "#16A34A"}}, {"fill": {"color": "#F59E0B"}}]
-                        if "custos" in remover_acentos(titulo_grafico).lower(): pontos = [{"fill": {"color": "#08B7B7"}}, {"fill": {"color": "#F59E0B"}}]
+                        pontos = [{"fill": {"color": "#2563EB"}}, {"fill": {"color": "#60A5FA"}}]
+                        if "custos" in remover_acentos(titulo_grafico).lower(): pontos = [{"fill": {"color": "#2563EB"}}, {"fill": {"color": "#0F172A"}}]
                         grafico.add_series({
                             "name": titulo_grafico,
                             "categories": [nome_aba, linha_auxiliar + 1, 15, linha_auxiliar + len(dados_grafico), 15],
@@ -955,13 +955,15 @@ def _criar_pdf_textual(titulo, tabelas):
     margem_x, limite_inferior = 34.0, 42.0
     largura_util = largura_pagina - 2 * margem_x
     cores = {
-        "teal": (0.031, 0.718, 0.718),
-        "teal_borda": (0.125, 0.769, 0.769),
-        "cinza": (0.294, 0.294, 0.294),
-        "texto": (0.204, 0.255, 0.333),
-        "borda": (0.796, 0.835, 0.882),
+        # Paleta APROAR: azul institucional, azul-marinho e branco.
+        "teal": (0.145, 0.388, 0.922),       # #2563EB
+        "teal_borda": (0.576, 0.773, 0.992), # #93C5FD
+        "cinza": (0.059, 0.090, 0.165),      # #0F172A
+        "texto": (0.118, 0.161, 0.231),      # #1E293B
+        "borda": (0.749, 0.847, 0.949),      # #BFDBFE
         "branco": (1.0, 1.0, 1.0),
         "fundo": (0.973, 0.980, 0.988),
+        "azul_claro": (0.937, 0.965, 1.0),   # #EFF6FF
         "verde": (0.867, 0.957, 0.835),
         "amarelo": (0.996, 0.953, 0.780),
         "vermelho": (0.996, 0.792, 0.792),
@@ -1107,7 +1109,7 @@ def _criar_pdf_textual(titulo, tabelas):
         for kpi in kpis:
             retangulo(comandos, x, y - altura_rotulo, largura_kpi, altura_rotulo, cores["cinza"], cores["branco"], 0.5)
             escrever_caixa(comandos, kpi.get("Indicador", ""), x, y - altura_rotulo, largura_kpi, altura_rotulo, 7.0, True, cores["branco"], "centro", 90)
-            retangulo(comandos, x, y - altura_rotulo - altura_valor, largura_kpi, altura_valor, cores["verde"], cores["borda"], 0.5)
+            retangulo(comandos, x, y - altura_rotulo - altura_valor, largura_kpi, altura_valor, cores["azul_claro"], cores["borda"], 0.5)
             escrever_caixa(comandos, kpi.get("Resultado", ""), x, y - altura_rotulo - altura_valor, largura_kpi, altura_valor, 10.5, True, cores["texto"], "centro", 70)
             x += largura_kpi
         y -= altura_rotulo + altura_valor + 9
@@ -1182,12 +1184,14 @@ def _criar_pdf_relatorio(titulo, tabelas):
         texto = html_escape(texto).replace("\n", "<br/>")
         return Paragraph(texto or "-", estilo)
 
-    teal = colors.HexColor("#08B7B7")
-    teal_borda = colors.HexColor("#20C4C4")
-    cinza_escuro = colors.HexColor("#4B4B4B")
+    # Paleta visual dos relatórios APROAR.
+    teal = colors.HexColor("#2563EB")
+    teal_borda = colors.HexColor("#93C5FD")
+    cinza_escuro = colors.HexColor("#0F172A")
     cinza_fundo = colors.HexColor("#F8FAFC")
-    cinza_borda = colors.HexColor("#CBD5E1")
+    cinza_borda = colors.HexColor("#BFDBFE")
     cinza_texto = colors.HexColor("#475569")
+    azul_claro = colors.HexColor("#EFF6FF")
     verde_claro = colors.HexColor("#DDF4D5")
     amarelo_claro = colors.HexColor("#FEF3C7")
     vermelho_claro = colors.HexColor("#FECACA")
@@ -1256,7 +1260,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
         painel_kpi = Table(dados_kpi, colWidths=[largura_util / 6] * 6, rowHeights=[28, 32])
         painel_kpi.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), cinza_escuro),
-            ("BACKGROUND", (0, 1), (-1, 1), verde_claro),
+            ("BACKGROUND", (0, 1), (-1, 1), azul_claro),
             ("GRID", (0, 0), (-1, -1), 0.55, colors.white),
             ("BOX", (0, 0), (-1, -1), 0.55, cinza_borda),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -1395,6 +1399,235 @@ def montar_relatorio_rota(route_steps, concluidos):
                 "Status": f"Concluída às {concluidos[card_id]}" if card_id in concluidos else "Pendente",
             })
     return pd.DataFrame(linhas)
+
+
+def _lista_natural_rota(itens):
+    itens = [str(item).strip() for item in itens if str(item).strip()]
+    unicos = []
+    vistos = set()
+    for item in itens:
+        chave = remover_acentos(item).upper()
+        if chave not in vistos:
+            vistos.add(chave)
+            unicos.append(item)
+    if not unicos:
+        return ""
+    if len(unicos) == 1:
+        return unicos[0]
+    if len(unicos) == 2:
+        return f"{unicos[0]} e {unicos[1]}"
+    return ", ".join(unicos[:-1]) + f" e {unicos[-1]}"
+
+
+def _materiais_resumo_rota(tarefas, limite_itens=5, limite_chars=210):
+    itens = []
+    vistos = set()
+    for tarefa in tarefas:
+        texto = str(tarefa.get("Materiais", "") or "")
+        for parte in re.split(r"\s*\|\s*|[\r\n]+", texto):
+            item = re.sub(r"\s+", " ", parte).strip(" -•\t")
+            if not item:
+                continue
+            chave = remover_acentos(item).upper()
+            if chave not in vistos:
+                vistos.add(chave)
+                itens.append(item)
+    if not itens:
+        return ""
+    exibidos = itens[:limite_itens]
+    texto = "; ".join(exibidos)
+    if len(itens) > limite_itens:
+        texto += f"; +{len(itens) - limite_itens} item(ns)"
+    if len(texto) > limite_chars:
+        texto = texto[:limite_chars - 3].rstrip() + "..."
+    return texto
+
+
+def _descricao_rapida_parada(step):
+    """Resume a parada em linguagem operacional, priorizando para onde vai cada coleta."""
+    acoes = step.get("actions", []) or []
+    coletas = [t for acao, t in acoes if acao == "COLETAR"]
+    entregas = [t for acao, t in acoes if acao == "ENTREGAR"]
+    partes = []
+
+    if coletas:
+        destinos = _lista_natural_rota([t.get("Destino", "") for t in coletas])
+        partes.append(f"COLETAR para {destinos}" if destinos else "COLETAR materiais")
+    if entregas:
+        obras = _lista_natural_rota([t.get("Obra", "") for t in entregas])
+        partes.append(f"ENTREGAR - {obras}" if obras else "ENTREGAR materiais")
+    return " + ".join(partes) or "PARADA OPERACIONAL"
+
+
+def _criar_pdf_resumo_rota_operacional(route_steps, dados_rota):
+    """PDF compacto para o motorista: sequência da rota, ações e materiais essenciais."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, KeepTogether
+    except (ImportError, ModuleNotFoundError):
+        df = montar_relatorio_rota(route_steps, {})
+        return _criar_pdf_relatorio("Resumo Operacional da Rota", [("Rota", df)])
+
+    azul = colors.HexColor("#2563EB")
+    azul_escuro = colors.HexColor("#0F172A")
+    azul_claro = colors.HexColor("#EFF6FF")
+    azul_borda = colors.HexColor("#BFDBFE")
+    texto = colors.HexColor("#1E293B")
+    texto_secundario = colors.HexColor("#64748B")
+    branco = colors.white
+
+    estilos = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "RotaTitulo", parent=estilos["Title"], fontName="Helvetica-Bold",
+        fontSize=15, leading=18, textColor=branco, alignment=TA_CENTER,
+    )
+    meta_style = ParagraphStyle(
+        "RotaMeta", parent=estilos["Normal"], fontName="Helvetica",
+        fontSize=8, leading=10, textColor=texto_secundario, alignment=TA_LEFT,
+    )
+    sequencia_style = ParagraphStyle(
+        "RotaSequencia", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=9, leading=12, textColor=azul_escuro, alignment=TA_LEFT,
+    )
+    parada_titulo_style = ParagraphStyle(
+        "ParadaTitulo", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=9.2, leading=11, textColor=azul_escuro,
+    )
+    parada_acao_style = ParagraphStyle(
+        "ParadaAcao", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=8.3, leading=10.5, textColor=azul,
+    )
+    parada_texto_style = ParagraphStyle(
+        "ParadaTexto", parent=estilos["Normal"], fontName="Helvetica",
+        fontSize=7.7, leading=9.5, textColor=texto,
+    )
+    horario_style = ParagraphStyle(
+        "ParadaHorario", parent=estilos["Normal"], fontName="Helvetica",
+        fontSize=7.4, leading=9, textColor=texto_secundario,
+    )
+
+    def seguro(valor):
+        return html_escape(str(valor or "").replace("—", "-").replace("–", "-").replace("•", "-")).replace("\n", "<br/>")
+
+    paradas = []
+    for step in route_steps:
+        if step.get("type") in {"lunch", "return"}:
+            continue
+        if not step.get("destino"):
+            continue
+        paradas.append(step)
+
+    origem = str(dados_rota.get("ponto_saida", "ESCRITÓRIO") or "ESCRITÓRIO")
+    partes_seq = [origem]
+    for step in paradas:
+        local = str(step.get("destino", "") or "")
+        resumo = _descricao_rapida_parada(step)
+        partes_seq.append(f"{local} ({resumo.lower()})")
+    if dados_rota.get("retornar_base", True):
+        partes_seq.append(origem)
+    sequencia = " -> ".join(partes_seq)
+
+    saida = io.BytesIO()
+    documento = SimpleDocTemplate(
+        saida, pagesize=A4, rightMargin=12 * mm, leftMargin=12 * mm,
+        topMargin=18 * mm, bottomMargin=13 * mm,
+        title="Resumo Operacional da Rota", author="APROAR Engenharia",
+    )
+    largura_util = A4[0] - 24 * mm
+
+    def cabecalho_rodape(canvas, doc):
+        largura, altura = A4
+        canvas.saveState()
+        canvas.setFillColor(azul_escuro)
+        canvas.rect(0, altura - 9 * mm, largura, 9 * mm, stroke=0, fill=1)
+        canvas.setFillColor(branco)
+        canvas.setFont("Helvetica-Bold", 8.5)
+        canvas.drawString(12 * mm, altura - 5.8 * mm, "APROAR ENGENHARIA")
+        canvas.setFont("Helvetica", 7)
+        canvas.drawRightString(largura - 12 * mm, altura - 5.8 * mm, "Torre de Controle Logístico")
+        canvas.setStrokeColor(azul_borda)
+        canvas.line(12 * mm, 8 * mm, largura - 12 * mm, 8 * mm)
+        canvas.setFillColor(texto_secundario)
+        canvas.setFont("Helvetica", 6.8)
+        canvas.drawString(12 * mm, 4.5 * mm, "Resumo rápido da rota do motorista")
+        canvas.drawRightString(largura - 12 * mm, 4.5 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    faixa = Table([[Paragraph("RESUMO OPERACIONAL DA ROTA", titulo_style)]], colWidths=[largura_util], rowHeights=[27])
+    faixa.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), azul),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+
+    data = dados_rota.get("data", "")
+    inicio = dados_rota.get("inicio", "")
+    termino = dados_rota.get("termino", "")
+    km = dados_rota.get("km", 0)
+    veiculo = dados_rota.get("veiculo", "")
+    meta = f"Data: {data}  |  Veículo: {veiculo}  |  Saída: {inicio}  |  Término previsto: {termino}  |  {float(km or 0):.1f} km"
+
+    elementos = [
+        faixa,
+        Spacer(1, 5),
+        Paragraph(seguro(meta), meta_style),
+        Spacer(1, 7),
+        Table([[Paragraph("SEQUÊNCIA RÁPIDA", parada_titulo_style)]], colWidths=[largura_util], style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), azul_claro),
+            ("BOX", (0, 0), (-1, -1), 0.6, azul_borda),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ])),
+        Spacer(1, 3),
+        Paragraph(seguro(sequencia), sequencia_style),
+        Spacer(1, 8),
+    ]
+
+    for numero, step in enumerate(paradas, start=1):
+        local = str(step.get("destino", "") or "")
+        acoes = step.get("actions", []) or []
+        tarefas = [t for _, t in acoes]
+        descricao = _descricao_rapida_parada(step)
+        materiais = _materiais_resumo_rota(tarefas)
+        chegada = step.get("dyn_chegada", step.get("chegada", ""))
+        saida_prev = step.get("dyn_saida", step.get("saida", ""))
+        permanencia = step.get("tempo_local", "")
+
+        linhas = [
+            [Paragraph(seguro(f"{numero}. {local}"), parada_titulo_style), Paragraph(seguro(f"{chegada} - {saida_prev}"), horario_style)],
+            [Paragraph(seguro(descricao), parada_acao_style), ""],
+        ]
+        if materiais:
+            linhas.append([Paragraph(seguro(f"Materiais: {materiais}"), parada_texto_style), ""])
+        if permanencia not in (None, "", 0, 0.0):
+            linhas.append([Paragraph(seguro(f"Permanência estimada: {int(round(float(permanencia)))} min"), horario_style), ""])
+
+        card = Table(linhas, colWidths=[largura_util * 0.78, largura_util * 0.22])
+        card.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), branco),
+            ("BACKGROUND", (0, 0), (-1, 0), azul_claro),
+            ("SPAN", (0, 1), (1, 1)),
+            ("SPAN", (0, 2), (1, 2)) if len(linhas) > 2 else ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ("SPAN", (0, 3), (1, 3)) if len(linhas) > 3 else ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ("BOX", (0, 0), (-1, -1), 0.65, azul_borda),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, azul),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        elementos.extend([KeepTogether([card, Spacer(1, 5)])])
+
+    documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
+    return saida.getvalue()
 
 def calcular_distancia_km(lat1, lon1, lat2, lon2):
     dLat = math.radians(lat2 - lat1)
@@ -5595,6 +5828,28 @@ with tab_roteiro:
             "Término previsto": format_mins_to_time(final_dyn_min),
             "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo'),
         }])
+        dados_pdf_rapido = {
+            "data": DATA_REF_ROTA_STR,
+            "ponto_saida": p_saida,
+            "veiculo": veiculo_selecionado.split('(')[0].strip(),
+            "inicio": hora_inicio_real,
+            "termino": format_mins_to_time(final_dyn_min),
+            "km": float(total_km),
+            "retornar_base": True,
+        }
+        pdf_resumo_rota = _criar_pdf_resumo_rota_operacional(route_steps, dados_pdf_rapido)
+        col_pdf_resumo, col_pdf_espaco = st.columns([1.25, 3.75])
+        with col_pdf_resumo:
+            st.download_button(
+                "🧾 PDF resumo da rota",
+                data=pdf_resumo_rota,
+                file_name=f"resumo_rota_davi_{DATA_REF_ROTA_DATE.strftime('%Y-%m-%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="baixar_pdf_resumo_rota_davi",
+                help="Resumo curto com a sequência de paradas, o que coletar/entregar e os materiais principais.",
+            )
+
         renderizar_exportador(
             f"Roteiro do Davi — {DATA_REF_ROTA_STR}",
             {"Resumo": df_resumo_rota, "Paradas e demandas": df_relatorio_rota},
