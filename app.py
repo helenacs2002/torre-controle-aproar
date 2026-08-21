@@ -4302,159 +4302,69 @@ with tab_frota:
         def formatar_numero_br(valor, casas=1):
             return f"{float(valor):,.{casas}f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-        st.markdown("""
-        <style>
-        .frota-veiculo-card {
-            border: 1px solid rgba(148,163,184,.20);
-            background: linear-gradient(145deg, rgba(16,20,38,.96), rgba(10,13,27,.96));
-            border-radius: 18px;
-            padding: 18px;
-            margin: 4px 0 12px 0;
-            box-shadow: 0 10px 30px rgba(0,0,0,.16);
-        }
-        .frota-veiculo-topo {
-            display:flex; justify-content:space-between; align-items:flex-start;
-            gap:12px; padding-bottom:14px; border-bottom:1px solid rgba(148,163,184,.14);
-        }
-        .frota-veiculo-nome { font-size:20px; font-weight:850; color:#f8fafc; line-height:1.15; }
-        .frota-veiculo-status {
-            display:inline-block; margin-top:7px; padding:5px 9px; border-radius:999px;
-            font-size:11px; font-weight:800; border:1px solid rgba(148,163,184,.20);
-            background:rgba(148,163,184,.08); color:#cbd5e1;
-        }
-        .frota-veiculo-status.ok { color:#bbf7d0; background:rgba(34,197,94,.10); border-color:rgba(34,197,94,.24); }
-        .frota-veiculo-status.alerta { color:#fecaca; background:rgba(239,68,68,.10); border-color:rgba(239,68,68,.24); }
-        .frota-veiculo-status.neutro { color:#cbd5e1; }
-        .frota-trofeu { font-size:11px; font-weight:850; color:#fde68a; margin-top:7px; }
-        .frota-metricas {
-            display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:14px;
-        }
-        .frota-metrica {
-            border:1px solid rgba(148,163,184,.12); border-radius:12px;
-            background:rgba(255,255,255,.025); padding:11px 12px;
-        }
-        .frota-metrica-label { color:#94a3b8; font-size:11px; font-weight:700; margin-bottom:4px; }
-        .frota-metrica-valor { color:#f8fafc; font-size:18px; font-weight:850; line-height:1.1; }
-        .frota-detalhes {
-            display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px;
-        }
-        .frota-detalhe {
-            background:rgba(148,163,184,.055); border-radius:10px; padding:9px 10px;
-            min-width:0;
-        }
-        .frota-detalhe-label { color:#94a3b8; font-size:10px; font-weight:750; margin-bottom:3px; }
-        .frota-detalhe-valor { color:#e2e8f0; font-size:13px; font-weight:800; overflow-wrap:anywhere; }
-        .frota-participacao { margin-top:14px; }
-        .frota-participacao-topo { display:flex; justify-content:space-between; gap:8px; color:#94a3b8; font-size:11px; margin-bottom:6px; }
-        .frota-barra { width:100%; height:7px; border-radius:999px; background:rgba(148,163,184,.16); overflow:hidden; }
-        .frota-barra > span { display:block; height:100%; border-radius:999px; background:#3b82f6; }
-        @media (max-width: 700px) {
-            .frota-metricas, .frota-detalhes { grid-template-columns:1fr 1fr; }
-            .frota-veiculo-topo { flex-direction:column; }
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
         def renderizar_cartao_veiculo(resumo, icone, chave):
             veiculo = resumo['veiculo']
             custo_km = resumo['custo_km']
+            dentro_referencia = custo_km is not None and custo_km <= 1.50
             participacao = (resumo['custo_total'] / custo_total_frota) if custo_total_frota > 0 else 0.0
-            participacao_pct = min(max(participacao * 100.0, 0.0), 100.0)
+            eh_mais_economico = mais_economico == veiculo and len(veiculos_validos_custo) > 1
 
-            if custo_km is None:
-                status_texto, status_classe = "Sem KM para calcular", "neutro"
-            elif custo_km <= 1.50:
-                status_texto, status_classe = "Dentro da referência", "ok"
-            else:
-                status_texto, status_classe = "Acima da referência", "alerta"
+            with st.container(border=True):
+                topo_nome, topo_custo = st.columns([1.7, 1])
+                with topo_nome:
+                    st.markdown(f"### {icone} {veiculo}")
+                    if custo_km is None:
+                        st.caption("⚪ Sem KM suficiente para calcular o custo por quilômetro")
+                    elif dentro_referencia:
+                        st.caption("🟢 Custo por KM dentro da referência de R$ 1,50/km")
+                    else:
+                        st.caption("🔴 Custo por KM acima da referência de R$ 1,50/km")
+                    if eh_mais_economico:
+                        st.success("🏆 Menor custo por KM da frota neste mês")
 
-            destaque_html = ""
-            if mais_economico == veiculo and len(veiculos_validos_custo) > 1:
-                destaque_html = "<div class='frota-trofeu'>🏆 Menor custo por KM do mês</div>"
+                with topo_custo:
+                    st.metric("💳 Custo do veículo", formatar_moeda_br(resumo['custo_total']))
 
-            preco_medio_txt = formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else "—"
-            custo_km_txt = formatar_moeda_br(custo_km) if custo_km is not None else "—"
+                st.markdown("**Indicadores principais**")
+                p1, p2 = st.columns(2)
+                p1.metric("🛣️ KM no mês", f"{formatar_numero_br(resumo['km'])} km")
+                p2.metric("📉 Custo por KM", formatar_moeda_br(custo_km) if custo_km is not None else "—")
 
-            st.markdown(
-                f"""
-                <div class="frota-veiculo-card">
-                    <div class="frota-veiculo-topo">
-                        <div>
-                            <div class="frota-veiculo-nome">{icone} {html_escape(veiculo)}</div>
-                            <span class="frota-veiculo-status {status_classe}">{html_escape(status_texto)}</span>
-                            {destaque_html}
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:10px;color:#94a3b8;font-weight:750;">CUSTO TOTAL</div>
-                            <div style="font-size:21px;color:#f8fafc;font-weight:900;">{formatar_moeda_br(resumo['custo_total'])}</div>
-                        </div>
-                    </div>
+                p3, p4 = st.columns(2)
+                p3.metric("⛽ Combustível", formatar_moeda_br(resumo['combustivel']))
+                p4.metric("🔧 Manutenção", formatar_moeda_br(resumo['manutencao']))
 
-                    <div class="frota-metricas">
-                        <div class="frota-metrica">
-                            <div class="frota-metrica-label">🛣️ KM no mês</div>
-                            <div class="frota-metrica-valor">{formatar_numero_br(resumo['km'])} km</div>
-                        </div>
-                        <div class="frota-metrica">
-                            <div class="frota-metrica-label">📉 Custo por KM</div>
-                            <div class="frota-metrica-valor">{custo_km_txt}</div>
-                        </div>
-                        <div class="frota-metrica">
-                            <div class="frota-metrica-label">⛽ Combustível</div>
-                            <div class="frota-metrica-valor">{formatar_moeda_br(resumo['combustivel'])}</div>
-                        </div>
-                        <div class="frota-metrica">
-                            <div class="frota-metrica-label">🔧 Manutenção</div>
-                            <div class="frota-metrica-valor">{formatar_moeda_br(resumo['manutencao'])}</div>
-                        </div>
-                    </div>
+                st.markdown("**Abastecimento e movimentações**")
+                d1, d2 = st.columns(2)
+                d1.metric("🧪 Litros abastecidos", f"{formatar_numero_br(resumo['litros'])} L")
+                d2.metric(
+                    "🏷️ Média do litro",
+                    formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else "—",
+                )
 
-                    <div class="frota-detalhes">
-                        <div class="frota-detalhe">
-                            <div class="frota-detalhe-label">🧪 LITROS</div>
-                            <div class="frota-detalhe-valor">{formatar_numero_br(resumo['litros'])} L</div>
-                        </div>
-                        <div class="frota-detalhe">
-                            <div class="frota-detalhe-label">🏷️ MÉDIA DO LITRO</div>
-                            <div class="frota-detalhe-valor">{preco_medio_txt}</div>
-                        </div>
-                        <div class="frota-detalhe">
-                            <div class="frota-detalhe-label">⛽ ABASTECIMENTOS</div>
-                            <div class="frota-detalhe-valor">{int(resumo['abastecimentos'])}</div>
-                        </div>
-                        <div class="frota-detalhe">
-                            <div class="frota-detalhe-label">🔧 MANUTENÇÕES</div>
-                            <div class="frota-detalhe-valor">{int(resumo['manutencoes'])}</div>
-                        </div>
-                    </div>
+                d3, d4 = st.columns(2)
+                d3.metric("🧾 Abastecimentos", str(resumo['abastecimentos']))
+                d4.metric("🛠️ Manutenções", str(resumo['manutencoes']))
 
-                    <div class="frota-participacao">
-                        <div class="frota-participacao-topo">
-                            <span>Participação no custo total da frota</span>
-                            <strong style="color:#e2e8f0;">{participacao_pct:.1f}%</strong>
-                        </div>
-                        <div class="frota-barra"><span style="width:{participacao_pct:.1f}%"></span></div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                if custo_total_frota > 0:
+                    st.markdown(f"**Participação no custo da frota: {participacao * 100:.1f}%**")
+                    st.progress(min(max(participacao, 0.0), 1.0))
 
-            gastos = resumo['gastos_df'].copy()
-            quilometragem = resumo['km_df'].copy()
-            if not gastos.empty:
-                gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
-                    "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
-                    "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
-                    "custo_total": "Total (R$)", "obs": "Observação",
-                })
-                for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
-                    gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
-            if not quilometragem.empty:
-                quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
+                gastos = resumo['gastos_df'].copy()
+                quilometragem = resumo['km_df'].copy()
+                if not gastos.empty:
+                    gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
+                        "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
+                        "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
+                        "custo_total": "Total (R$)", "obs": "Observação",
+                    })
+                    for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
+                        gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
+                if not quilometragem.empty:
+                    quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
 
-            renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave)
-            return gastos, quilometragem
+                renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave)
+                return gastos, quilometragem
 
         col_strada, col_l200 = st.columns(2)
         with col_strada:
