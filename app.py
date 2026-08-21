@@ -2323,6 +2323,18 @@ if modo_url == "true":
                 status_rastreio_html = html_status_rastreio_local(
                     obter_status_rastreio_local(df_paradas_mobile, destino_step, DATA_REF_ROTA_STR)
                 )
+            # Linha do tempo interna da parada: cada demanda consome o seu próprio
+            # Tempo_Coleta/Tempo_Entrega. Demandas no mesmo endereço não geram
+            # deslocamento entre si; o deslocamento só existe entre paradas físicas.
+            cursor_acao_min = None
+            if not is_start:
+                hora_base_acao = str(step.get('dyn_chegada', '') or '')
+                match_hora_acao = re.match(r"^(\d{2}):(\d{2})", hora_base_acao)
+                if not match_hora_acao:
+                    match_hora_acao = re.match(r"^(\d{2}):(\d{2})", str(step.get('chegada', '') or ''))
+                if match_hora_acao:
+                    cursor_acao_min = int(match_hora_acao.group(1)) * 60 + int(match_hora_acao.group(2))
+
             blocos_acao = []
             for indice_acao, (acao, tarefa) in enumerate(step.get('actions', []), start=1):
                 eh_coleta = acao == "COLETAR"
@@ -2341,9 +2353,28 @@ if modo_url == "true":
 
                 obra_acao = html_escape(str(tarefa.get('Obra', '') or 'Obra não informada'))
                 rotulo_acao = "COLETA" if eh_coleta else "ENTREGA"
+
+                campo_tempo_acao = 'Tempo_Coleta' if eh_coleta else 'Tempo_Entrega'
+                try:
+                    tempo_acao_min = max(0.0, float(tarefa.get(campo_tempo_acao, 10) or 10))
+                    if math.isnan(tempo_acao_min):
+                        tempo_acao_min = 10.0
+                except (TypeError, ValueError):
+                    tempo_acao_min = 10.0
+
+                if cursor_acao_min is not None:
+                    inicio_acao_min = cursor_acao_min
+                    fim_acao_min = cursor_acao_min + tempo_acao_min
+                    janela_acao = f" • {format_mins_to_time(inicio_acao_min)} às {format_mins_to_time(fim_acao_min)}"
+                    cursor_acao_min = fim_acao_min
+                else:
+                    janela_acao = ""
+                texto_tempo_acao = f"⏱️ {tempo_acao_min:g} min previstos neste atendimento{janela_acao}"
+
                 blocos_acao.append(
                     f"<div class='acao {classe_acao}'>"
                     f"<div class='acao-cabecalho'><div class='acao-tipo'>{icone} {rotulo_acao} {indice_acao}</div><div class='acao-obra'>🏗️ {obra_acao}</div></div>"
+                    f"<div class='acao-tempo'>{html_escape(texto_tempo_acao)}</div>"
                     f"<div class='materiais-lista'>{materiais_html_acao}</div>"
                     f"{concluido}</div>"
                 )
@@ -2408,14 +2439,21 @@ if modo_url == "true":
             .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
             .rastreio-real { margin:-4px 0 12px; padding:9px 11px; border-radius:10px; color:#bae6fd; background:rgba(14,165,233,.10); border:1px solid rgba(56,189,248,.22); font-size:12.5px; line-height:1.45; }
             .acao { margin-bottom:10px; padding:0; border-radius:13px; border:1px solid #2b3654; overflow:hidden; background:rgba(255,255,255,.025); }
-            .acao.coleta { border-left:4px solid #f59e0b; }
-            .acao.entrega { border-left:4px solid #16a34a; }
-            .acao-cabecalho { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:10px 11px 9px; background:rgba(255,255,255,.035); border-bottom:1px solid rgba(141,160,184,.13); }
-            .acao-tipo { flex:0 0 auto; font-size:11.5px; font-weight:900; letter-spacing:.04em; color:#f8fafc; white-space:nowrap; }
-            .acao-obra { min-width:0; color:#cbd5e1; font-size:11.5px; line-height:1.35; text-align:right; font-weight:700; }
-            .materiais-lista { padding:9px 11px 10px; display:grid; gap:6px; }
+            .acao.coleta { border-color:rgba(245,158,11,.50); border-left:5px solid #f59e0b; background:rgba(245,158,11,.035); }
+            .acao.entrega { border-color:rgba(34,197,94,.52); border-left:5px solid #22c55e; background:rgba(34,197,94,.045); }
+            .acao-cabecalho { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:10px 11px 9px; border-bottom:1px solid rgba(141,160,184,.13); }
+            .acao.coleta .acao-cabecalho { background:linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.035)); }
+            .acao.entrega .acao-cabecalho { background:linear-gradient(90deg,rgba(34,197,94,.18),rgba(34,197,94,.035)); }
+            .acao-tipo { flex:0 0 auto; font-size:11.5px; font-weight:900; letter-spacing:.04em; white-space:nowrap; padding:4px 7px; border-radius:7px; }
+            .acao.coleta .acao-tipo { color:#fde68a; background:rgba(245,158,11,.16); }
+            .acao.entrega .acao-tipo { color:#bbf7d0; background:rgba(34,197,94,.16); }
+            .acao-obra { min-width:0; color:#cbd5e1; font-size:11.5px; line-height:1.35; text-align:right; font-weight:700; padding-top:3px; }
+            .acao-tempo { padding:7px 11px 0; color:#94a3b8; font-size:11.5px; font-weight:700; }
+            .materiais-lista { padding:8px 11px 10px; display:grid; gap:6px; }
             .material-item { display:grid; grid-template-columns:10px minmax(0,1fr); gap:6px; color:#e4e8f4; font-size:12.7px; line-height:1.38; }
             .material-bullet { color:#60a5fa; font-weight:900; }
+            .acao.entrega .material-bullet { color:#4ade80; }
+            .acao.coleta .material-bullet { color:#fbbf24; }
             .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
             .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
@@ -4909,6 +4947,18 @@ with tab_roteiro:
                             unsafe_allow_html=True,
                         )
                     
+                    # Horário de cada demanda dentro da parada. O trecho rodoviário é
+                    # contabilizado uma vez entre locais; dentro do mesmo local, as
+                    # demandas são executadas em sequência e seus tempos são somados.
+                    cursor_demanda_torre = None
+                    if not is_start:
+                        hora_base_torre = str(step.get('dyn_chegada', '') or '')
+                        match_hora_torre = re.match(r"^(\d{2}):(\d{2})", hora_base_torre)
+                        if not match_hora_torre:
+                            match_hora_torre = re.match(r"^(\d{2}):(\d{2})", str(step.get('chegada', '') or ''))
+                        if match_hora_torre:
+                            cursor_demanda_torre = int(match_hora_torre.group(1)) * 60 + int(match_hora_torre.group(2))
+
                     for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
                         eh_coleta_torre = acao == "COLETAR"
                         icone_torre = "📦" if eh_coleta_torre else "📬"
@@ -4917,10 +4967,42 @@ with tab_roteiro:
                         concluida = card_id_torre in dict_concluidos_torre
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
 
+                        campo_tempo_torre = 'Tempo_Coleta' if eh_coleta_torre else 'Tempo_Entrega'
+                        try:
+                            tempo_demanda_torre = max(0.0, float(t.get(campo_tempo_torre, 10) or 10))
+                            if math.isnan(tempo_demanda_torre):
+                                tempo_demanda_torre = 10.0
+                        except (TypeError, ValueError):
+                            tempo_demanda_torre = 10.0
+
+                        if cursor_demanda_torre is not None:
+                            inicio_demanda_torre = cursor_demanda_torre
+                            fim_demanda_torre = cursor_demanda_torre + tempo_demanda_torre
+                            janela_demanda_torre = f" • {format_mins_to_time(inicio_demanda_torre)} às {format_mins_to_time(fim_demanda_torre)}"
+                            cursor_demanda_torre = fim_demanda_torre
+                        else:
+                            janela_demanda_torre = ""
+
+                        cor_torre = "#22c55e" if not eh_coleta_torre else "#f59e0b"
+                        fundo_torre = "rgba(34,197,94,.10)" if not eh_coleta_torre else "rgba(245,158,11,.10)"
+                        texto_cor_torre = "#bbf7d0" if not eh_coleta_torre else "#fde68a"
+                        obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
+
                         with st.container(border=True):
-                            cab_esq, cab_dir = st.columns([1.1, 3.4])
-                            cab_esq.markdown(f"**{icone_torre} {rotulo_torre} {indice_demanda}**")
-                            cab_dir.markdown(f"🏗️ **{t.get('Obra', 'Obra não informada')}**")
+                            st.markdown(
+                                f"""
+                                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;
+                                            padding:9px 11px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
+                                            border-radius:9px;background:{fundo_torre};">
+                                    <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
+                                    <div style="font-weight:800;color:#e4e8f4;text-align:right;">🏗️ {obra_torre_html}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(
+                                f"⏱️ **{tempo_demanda_torre:g} min** previstos neste atendimento{janela_demanda_torre}"
+                            )
 
                             if materiais_torre:
                                 for material_torre in materiais_torre:
