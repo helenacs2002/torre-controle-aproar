@@ -3549,34 +3549,100 @@ def inicializar_bd():
 
     return True
 
-# Garante a inicialização segura do banco Supabase
+# =====================================================================
+# INICIALIZAÇÃO RESILIENTE DO SUPABASE
+# =====================================================================
+# O código antigo colocava conexão, DDL de manutenção e leitura da rota salva
+# dentro do mesmo try/except. Assim, qualquer erro em um CREATE/ALTER ou até em
+# um JSON antigo aparecia como "credenciais do Supabase", embora a conexão
+# estivesse funcionando. Aqui cada etapa é isolada.
+
+def _erro_bd_seguro(exc):
+    """Mensagem curta para diagnóstico sem expor usuário/senha/URL do banco."""
+    mensagem = str(exc or "")
+    mensagem = re.sub(r"postgres(?:ql)?://[^@\s]+@", "postgresql://***@", mensagem, flags=re.IGNORECASE)
+    mensagem = re.sub(r"password=[^\s,;]+", "password=***", mensagem, flags=re.IGNORECASE)
+    mensagem = re.sub(r"user=[^\s,;]+", "user=***", mensagem, flags=re.IGNORECASE)
+    mensagem = re.sub(r"\s+", " ", mensagem).strip()
+    return f"{type(exc).__name__}: {mensagem[:420]}" if mensagem else type(exc).__name__
+
+# 1) Primeiro comprova que a conexão realmente responde. Somente este erro
+# interrompe o aplicativo como falha de conexão.
 try:
-    inicializar_bd()
-    if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
-        res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
+    _teste_bd = fetch_one("SELECT 1")
+except Exception as _exc_conexao_bd:
+    st.error("⚠️ Não consegui abrir a conexão PostgreSQL/Supabase. Os dados do app não foram alterados.")
+    st.caption(_erro_bd_seguro(_exc_conexao_bd))
+    st.stop()
+
+# 2) Em um banco já existente não há motivo para executar CREATE/ALTER em todo
+# boot. Só chamamos a rotina antiga se faltar alguma tabela estrutural. Isso
+# também evita travas/permissões de DDL derrubarem um banco que está saudável.
+if not st.session_state.get("_estrutura_bd_verificada", False):
+    _tabelas_essenciais = (
+        "locais", "historico_concluidos", "rota_ativa", "trello_cache",
+        "config_frota", "abastecimentos", "registro_km", "rastreio_paradas"
+    )
+    _faltantes_bd = []
+    try:
+        for _tabela_bd in _tabelas_essenciais:
+            _registro_tabela = fetch_one(f"SELECT to_regclass('public.{_tabela_bd}')")
+            if not _registro_tabela or _registro_tabela[0] is None:
+                _faltantes_bd.append(_tabela_bd)
+    except Exception:
+        # SELECT 1 já confirmou a conexão; uma falha nesta inspeção não deve
+        # bloquear o app. As operações normais continuarão usando as tabelas.
+        _faltantes_bd = []
+
+    if _faltantes_bd:
+        try:
+            inicializar_bd()
+        except Exception as _exc_estrutura_bd:
+            st.warning(
+                "⚠️ O Supabase conectou normalmente, mas a rotina automática de "
+                "manutenção da estrutura não pôde ser concluída. O app continuará "
+                "tentando usar o banco existente."
+            )
+            st.caption(_erro_bd_seguro(_exc_estrutura_bd))
+    st.session_state["_estrutura_bd_verificada"] = True
+
+# 3) A rota salva é carregada separadamente. JSON/horário antigo inválido não
+# pode mais ser confundido com falha de conexão do Supabase.
+if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
+    try:
+        res_rota = fetch_one(
+            "SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz "
+            "FROM rota_ativa WHERE id = 1 AND data_rota = :data",
+            {"data": DATA_REF_ROTA_STR},
+        )
         if res_rota:
-            st.session_state['route_steps'] = json.loads(res_rota[0])
-            st.session_state['locais_dict'] = json.loads(res_rota[1])
-            st.session_state['geometria_rota'] = json.loads(res_rota[2])
-            st.session_state['enderecos_dict'] = json.loads(res_rota[3])
+            st.session_state['route_steps'] = json.loads(res_rota[0]) if isinstance(res_rota[0], str) else res_rota[0]
+            st.session_state['locais_dict'] = json.loads(res_rota[1]) if isinstance(res_rota[1], str) else res_rota[1]
+            st.session_state['geometria_rota'] = json.loads(res_rota[2]) if isinstance(res_rota[2], str) else res_rota[2]
+            st.session_state['enderecos_dict'] = json.loads(res_rota[3]) if isinstance(res_rota[3], str) else res_rota[3]
             st.session_state['total_km'] = res_rota[4]
             st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — malha viária sem trânsito ao vivo"
             st.session_state['horario_matriz_rota'] = res_rota[6] or ""
             if st.session_state['route_steps']:
-                st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
-                h, m = map(int, st.session_state['route_steps'][-1]['saida'].split(':'))
-                st.session_state['horario_conclusao_min'] = h * 60 + m
-            # Rotas viárias normalmente têm dezenas/centenas de pontos. Se o
-            # fallback salvo contiver apenas os pontos das paradas, não o tratamos
-            # como traçado viário real ao reabrir o aplicativo.
+                st.session_state['p_saida'] = st.session_state['route_steps'][0].get('destino', 'ESCRITÓRIO')
+                _ultimo_horario = st.session_state['route_steps'][-1].get('saida') or st.session_state['route_steps'][-1].get('chegada') or "00:00"
+                _ultimo_min = parse_time_to_mins(_ultimo_horario)
+                st.session_state['horario_conclusao_min'] = _ultimo_min
             _geom_carregada = st.session_state.get('geometria_rota') or []
             _passos_carregados = st.session_state.get('route_steps') or []
             st.session_state['geometria_viaria'] = len(_geom_carregada) > max(6, len(_passos_carregados) + 3)
             st.session_state['rota_gerada'] = True
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
-except:
-    st.error("⚠️ Atenção: Não foi possível conectar ao Banco de Dados Supabase. Verifique se as credenciais estão corretas nos Secrets do Streamlit.")
-    st.stop()
+    except Exception as _exc_rota_salva:
+        # Não bloqueia o painel. A rota pode ser recalculada normalmente.
+        for _chave_rota in (
+            'route_steps', 'locais_dict', 'geometria_rota', 'enderecos_dict',
+            'total_km', 'p_saida', 'horario_conclusao_min', 'geometria_viaria',
+            'rota_gerada', 'data_rota'
+        ):
+            st.session_state.pop(_chave_rota, None)
+        st.warning("⚠️ Banco conectado, mas não consegui reaproveitar a rota salva de hoje. Você pode recalcular a rota normalmente.")
+        st.caption(_erro_bd_seguro(_exc_rota_salva))
 
 # =====================================================================
 # LÓGICA DE EXTRAÇÃO E AUTOMAÇÃO DO TRELLO
