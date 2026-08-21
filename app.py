@@ -3633,65 +3633,34 @@ def inicializar_bd():
 
     return True
 
-# Garante a inicialização segura do banco Supabase.
-# Importante: erro de JSON/rota salva não pode ser exibido como se fosse erro de credencial.
+# Garante a inicialização segura do banco Supabase
 try:
     inicializar_bd()
-except Exception as _erro_inicializacao_bd:
-    # Uma falha em CREATE/ALTER/índice não significa necessariamente que as
-    # credenciais ou a conexão caíram. O banco deste app já existe; portanto,
-    # confirmamos a conexão com uma consulta mínima antes de bloquear a tela.
-    try:
-        fetch_one("SELECT 1")
-        print(f"[BD] Inicialização de schema não concluída; usando estrutura existente: {_erro_inicializacao_bd}")
-    except Exception:
-        st.error("⚠️ Atenção: Não foi possível conectar ao Banco de Dados Supabase. Verifique se as credenciais estão corretas nos Secrets do Streamlit.")
-        st.stop()
-
-if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
-    try:
+    if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
         res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-    except Exception:
-        st.error("⚠️ Atenção: O banco Supabase respondeu com erro ao carregar a rota de hoje. Tente atualizar a página; se persistir, confira a conexão do banco.")
-        st.stop()
-
-    if res_rota:
-        try:
-            _route_steps_carregados = json.loads(res_rota[0]) if res_rota[0] else []
-            _locais_carregados = json.loads(res_rota[1]) if res_rota[1] else {}
-            _geometria_carregada = json.loads(res_rota[2]) if res_rota[2] else []
-            _enderecos_carregados = json.loads(res_rota[3]) if res_rota[3] else {}
-
-            st.session_state['route_steps'] = _route_steps_carregados
-            st.session_state['locais_dict'] = _locais_carregados
-            st.session_state['geometria_rota'] = _geometria_carregada
-            st.session_state['enderecos_dict'] = _enderecos_carregados
-            st.session_state['total_km'] = float(res_rota[4] or 0)
+        if res_rota:
+            st.session_state['route_steps'] = json.loads(res_rota[0])
+            st.session_state['locais_dict'] = json.loads(res_rota[1])
+            st.session_state['geometria_rota'] = json.loads(res_rota[2])
+            st.session_state['enderecos_dict'] = json.loads(res_rota[3])
+            st.session_state['total_km'] = res_rota[4]
             st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — rota viária"
             st.session_state['horario_matriz_rota'] = res_rota[6] or ""
-
-            if _route_steps_carregados:
-                # A primeira etapa normalmente é a preparação na base. Se uma rota
-                # antiga não tiver destino na primeira linha, usa a configuração atual.
-                st.session_state['p_saida'] = _route_steps_carregados[0].get('destino') or 'ESCRITÓRIO'
-                _ultima_saida = str(_route_steps_carregados[-1].get('saida') or _route_steps_carregados[-1].get('chegada') or '').strip()
-                if re.fullmatch(r"\d{1,2}:\d{2}", _ultima_saida):
-                    _h, _m = map(int, _ultima_saida.split(':'))
-                    st.session_state['horario_conclusao_min'] = _h * 60 + _m
-
+            if st.session_state['route_steps']:
+                st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
+                h, m = map(int, st.session_state['route_steps'][-1]['saida'].split(':'))
+                st.session_state['horario_conclusao_min'] = h * 60 + m
             # Rotas viárias normalmente têm dezenas/centenas de pontos. Se o
             # fallback salvo contiver apenas os pontos das paradas, não o tratamos
             # como traçado viário real ao reabrir o aplicativo.
-            st.session_state['geometria_viaria'] = len(_geometria_carregada) > max(6, len(_route_steps_carregados) + 3)
+            _geom_carregada = st.session_state.get('geometria_rota') or []
+            _passos_carregados = st.session_state.get('route_steps') or []
+            st.session_state['geometria_viaria'] = len(_geom_carregada) > max(6, len(_passos_carregados) + 3)
             st.session_state['rota_gerada'] = True
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
-        except Exception:
-            # A conexão com o Supabase está normal; somente a rota salva ficou
-            # inconsistente. Ignorá-la permite recalcular sem derrubar o aplicativo.
-            for _chave in ('route_steps', 'locais_dict', 'geometria_rota', 'enderecos_dict', 'total_km', 'p_saida', 'horario_conclusao_min'):
-                st.session_state.pop(_chave, None)
-            st.session_state['rota_gerada'] = False
-            st.warning("⚠️ A rota salva de hoje estava inconsistente e foi ignorada. As baixas continuam preservadas; clique em **Calcular/Recalcular Rota** para gerar novamente.")
+except:
+    st.error("⚠️ Atenção: Não foi possível conectar ao Banco de Dados Supabase. Verifique se as credenciais estão corretas nos Secrets do Streamlit.")
+    st.stop()
 
 # =====================================================================
 # LÓGICA DE EXTRAÇÃO E AUTOMAÇÃO DO TRELLO
@@ -5094,7 +5063,7 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
 
     return score, distancia, duracao
 
-def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None):
+def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, precarregados_ids=None):
     """Busca em feixe para o problema de coleta e entrega com precedência.
 
     Avalia sequências completas, agrupa ações no mesmo endereço e pondera
@@ -5102,6 +5071,14 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     """
     if not tarefas:
         return []
+
+    # Demandas cuja origem é o ponto de saída já foram carregadas durante a
+    # preparação 07:30-08:00. Em um recálculo elas NÃO podem obrigar o motorista
+    # a voltar ao escritório apenas para repetir uma coleta que já aconteceu.
+    precarregados_ids = {str(x) for x in (precarregados_ids or set())}
+
+    def tarefa_precarregada(tarefa):
+        return str(tarefa.get("id", "")) in precarregados_ids
 
     def numero_seguro(valor, padrao):
         try:
@@ -5114,8 +5091,8 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     if total_tarefas > 24:
         # Contingência para dias excepcionalmente grandes: mantém as mesmas
         # regras logísticas sem deixar o aplicativo preso em busca combinatória.
-        pendentes = list(tarefas)
-        no_carro = []
+        pendentes = [t for t in tarefas if not tarefa_precarregada(t)]
+        no_carro = [t for t in tarefas if tarefa_precarregada(t)]
         atual = ponto_inicial
         ordem = []
         for _ in range(total_tarefas * 2 + 5):
@@ -5137,6 +5114,10 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     tempos_coleta = [numero_seguro(t.get('Tempo_Coleta', 10), 10.0) for t in tarefas]
     tempos_entrega = [numero_seguro(t.get('Tempo_Entrega', 10), 10.0) for t in tarefas]
     mascara_total = (1 << total_tarefas) - 1
+    mascara_precarregadas = 0
+    for indice, tarefa in enumerate(tarefas):
+        if tarefa_precarregada(tarefa):
+            mascara_precarregadas |= 1 << indice
 
     tarefas_por_origem = {}
     tarefas_por_destino = {}
@@ -5187,7 +5168,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     estado_inicial = {
         "atual": ponto_inicial,
         "hora": float(horario_inicio),
-        "coletadas": 0,
+        "coletadas": mascara_precarregadas,
         "entregues": 0,
         "ordem": tuple(),
         "custo": 0.0,
@@ -6787,129 +6768,62 @@ with tab_roteiro:
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
-
+            todos_registros_rota = df_ativos.to_dict('records')
+            tarefas_preparacao_base = [
+                t for t in todos_registros_rota
+                if canonicalizar_ponto_rota(t.get('Origem', '')) == canonicalizar_ponto_rota(ponto_saida)
+            ]
+            
             current_time_tsp = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
             current_point = ponto_saida
 
-            # Ao recalcular durante o dia, materiais que já estavam programados para
-            # sair do ESCRITÓRIO às 08:00 continuam sendo considerados carregados.
-            # Isso evita criar uma nova "PARADA: ESCRITÓRIO" no meio da rota.
-            registros_ativos_rota = df_ativos.to_dict('records')
-            ativos_por_id = {str(t.get('id', '')): t for t in registros_ativos_rota}
-            ids_precarregados_ativos = set()
-            preparacao_preservada = None
-            passos_concluidos_fisicos = []
-
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-            if rota_salva:
-                try:
-                    old_steps = json.loads(rota_salva[0]) if rota_salva[0] else []
-                except Exception:
-                    old_steps = []
+            if rota_salva and len(dict_concluidos_torre) > 0:
+                old_steps = json.loads(rota_salva[0])
+                for step in old_steps:
+                    if step.get('type') == 'stop':
+                        # Qualquer parada no ponto de saída contendo SOMENTE coletas
+                        # pertence à preparação da manhã. Isso também limpa rotas antigas
+                        # que haviam criado "PARADA: ESCRITÓRIO" depois das 08:00.
+                        acoes_step = step.get('actions', []) or []
+                        coleta_somente_na_base = (
+                            canonicalizar_ponto_rota(step.get('destino', '')) == canonicalizar_ponto_rota(ponto_saida)
+                            and bool(acoes_step)
+                            and all(str(a).upper() == 'COLETAR' for a, _ in acoes_step)
+                        )
+                        if coleta_somente_na_base:
+                            continue
 
-                base_canonica = canonicalizar_ponto_rota(ponto_saida)
-                for indice_step, step in enumerate(old_steps):
-                    if step.get('type') != 'stop':
-                        continue
-
-                    destino_canonico = canonicalizar_ponto_rota(step.get('destino', ''))
-                    fonte_tempo = remover_acentos(str(step.get('tempo_local_fonte', '') or '')).lower()
+                        c_acts = [(a, t) for a, t in acoes_step if str(t.get('id','')) in dict_concluidos_torre]
+                        if c_acts:
+                            new_s = step.copy()
+                            new_s['actions'] = c_acts
+                            past_route_steps.append(new_s)
+                
+                if past_route_steps:
+                    current_point = past_route_steps[-1]['destino']
                     try:
-                        dist_step = float(step.get('dist', 0) or 0)
-                    except (TypeError, ValueError):
-                        dist_step = 0.0
-                    eh_preparacao = (
-                        destino_canonico == base_canonica
-                        and dist_step <= 0.10
-                        and (indice_step == 0 or 'preparacao' in fonte_tempo)
-                    )
+                        h, m = map(int, past_route_steps[-1]['saida'].split(':'))
+                        current_time_tsp = h * 60 + m
+                    except: pass
+            
+            tarefas_pendentes = [t for t in todos_registros_rota if str(t['id']) not in dict_concluidos_torre]
 
-                    if eh_preparacao and preparacao_preservada is None:
-                        # Mantém na preparação tanto o que já foi entregue quanto o
-                        # que ainda está ativo. Assim o cartão continua mostrando tudo
-                        # que foi carregado de manhã, sem gerar nova coleta na base.
-                        acoes_prep = []
-                        for acao, tarefa_salva in step.get('actions', []):
-                            tarefa_id = str(tarefa_salva.get('id', ''))
-                            if acao != 'COLETAR':
-                                continue
-                            if tarefa_id in dict_concluidos_torre:
-                                acoes_prep.append((acao, tarefa_salva))
-                            elif tarefa_id in ativos_por_id:
-                                acoes_prep.append((acao, ativos_por_id[tarefa_id]))
-                                ids_precarregados_ativos.add(tarefa_id)
-                        if acoes_prep:
-                            preparacao_preservada = step.copy()
-                            preparacao_preservada['actions'] = acoes_prep
-                        continue
-
-                    # Fora da preparação, só reaproveita etapas/demandas já concluídas.
-                    c_acts = [
-                        (a, t) for a, t in step.get('actions', [])
-                        if str(t.get('id', '')) in dict_concluidos_torre
-                    ]
-                    if c_acts:
-                        new_s = step.copy()
-                        new_s['actions'] = c_acts
-                        passos_concluidos_fisicos.append(new_s)
-
-            if preparacao_preservada is not None:
-                past_route_steps.append(preparacao_preservada)
-            past_route_steps.extend(passos_concluidos_fisicos)
-
-            # Se ainda não havia uma preparação salva (primeiro cálculo ou rota
-            # antiga), TODA demanda ativa com origem na base entra na preparação.
-            base_canonica = canonicalizar_ponto_rota(ponto_saida)
-            novas_base = [
-                t for t in registros_ativos_rota
-                if str(t.get('id', '')) not in dict_concluidos_torre
-                and canonicalizar_ponto_rota(t.get('Origem', '')) == base_canonica
+            # O que tem origem na base já foi colocado no carro na preparação.
+            # Mantemos essas tarefas como carga pendente de ENTREGA, mas retiramos
+            # a origem ESCRITÓRIO da fila de futuras paradas.
+            tarefas_precarregadas = [
+                t for t in tarefas_pendentes
+                if canonicalizar_ponto_rota(t.get('Origem', '')) == canonicalizar_ponto_rota(ponto_saida)
             ]
-            if preparacao_preservada is None and novas_base:
-                ids_precarregados_ativos.update(str(t.get('id', '')) for t in novas_base)
-                past_route_steps.insert(0, {
-                    'type': 'stop', 'destino': ponto_saida, 'dist': 0.0,
-                    'travel_mins': 0.0, 'travel_mins_api': 0.0,
-                    'tempo_local': 30, 'tempo_local_fonte': 'preparação fixa da base',
-                    'chegada': format_time(current_time_tsp - 30),
-                    'saida': format_time(current_time_tsp),
-                    'actions': [('COLETAR', t) for t in novas_base],
-                })
-            elif preparacao_preservada is not None:
-                # Se apareceu uma nova demanda da base depois do primeiro cálculo,
-                # incorpora na preparação em vez de transformar a base em parada.
-                ids_ja_prep = {str(t.get('id', '')) for a, t in preparacao_preservada.get('actions', []) if a == 'COLETAR'}
-                extras = [t for t in novas_base if str(t.get('id', '')) not in ids_ja_prep]
-                if extras:
-                    past_route_steps[0]['actions'].extend([('COLETAR', t) for t in extras])
-                    ids_precarregados_ativos.update(str(t.get('id', '')) for t in extras)
-
-            # O ponto atual é a última parada realmente concluída; a preparação não
-            # conta como retorno físico ao escritório.
-            if passos_concluidos_fisicos:
-                current_point = passos_concluidos_fisicos[-1].get('destino', ponto_saida)
-                try:
-                    h, m = map(int, str(passos_concluidos_fisicos[-1].get('saida', '')).split(':'))
-                    current_time_tsp = h * 60 + m
-                except Exception:
-                    pass
-
-            unpicked = [
-                t for t in registros_ativos_rota
-                if str(t.get('id', '')) not in dict_concluidos_torre
-                and str(t.get('id', '')) not in ids_precarregados_ativos
-            ]
-            carrying_precarregado = [
-                ativos_por_id[tarefa_id] for tarefa_id in ids_precarregados_ativos
-                if tarefa_id in ativos_por_id
-            ]
+            ids_precarregados = {str(t.get('id', '')) for t in tarefas_precarregadas}
+            unpicked = [t for t in tarefas_pendentes if str(t.get('id', '')) not in ids_precarregados]
 
             pontos_brutos = (
                 [ponto_saida]
-                + [s.get('destino', '') for s in past_route_steps]
-                + [t['Origem'] for t in unpicked]
-                + [t['Destino'] for t in unpicked]
-                + [t['Destino'] for t in carrying_precarregado]
+                + [s['destino'] for s in past_route_steps]
+                + [t['Origem'] for t in tarefas_pendentes]
+                + [t['Destino'] for t in tarefas_pendentes]
             )
             pontos_necessarios = {canonicalizar_ponto_rota(p) for p in pontos_brutos if canonicalizar_ponto_rota(p) not in {"", "DESCONHECIDO", "NAN", "NONE"}}
             
@@ -6965,20 +6879,23 @@ with tab_roteiro:
                 dist, dur = get_dist_dur_bruto(p1, p2)
                 return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
+            tarefas_otimizacao = list(unpicked) + list(tarefas_precarregadas)
             ordem_otimizada = otimizar_sequencia_rota(
-                unpicked,
+                tarefas_otimizacao,
                 current_point,
                 estrategia,
                 get_dist_dur,
                 current_time_tsp,
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
+                precarregados_ids=ids_precarregados,
             )
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
-            # Coletas da preparação já estão fisicamente no veículo.
-            carrying = list(carrying_precarregado)
+            # As coletas da base começam no veículo; portanto seus DESTINOS ficam
+            # disponíveis imediatamente e o escritório não volta a ser candidato.
+            carrying = list(tarefas_precarregadas)
             current = current_point
             route_steps_new = []
             total_km = sum(p_step.get('dist', 0.0) for p_step in past_route_steps)
@@ -7074,7 +6991,25 @@ with tab_roteiro:
                 route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "travel_mins_api": dur_api, "chegada": format_time(current_time + dur), "saida": format_time(current_time + dur), "actions": []})
                 current_time += dur
 
-            route_steps = past_route_steps + route_steps_new
+            # A preparação é sempre reconstruída como a primeira etapa e reúne
+            # TODAS as demandas cuja origem é o ponto de saída, concluídas ou não.
+            # Assim o painel continua mostrando o que foi carregado 07:30-08:00.
+            preparacao_step = None
+            if tarefas_preparacao_base:
+                preparacao_step = {
+                    "type": "stop",
+                    "destino": ponto_saida,
+                    "dist": 0.0,
+                    "travel_mins": 0.0,
+                    "travel_mins_api": 0.0,
+                    "tempo_local": 30,
+                    "tempo_local_fonte": "preparação fixa da base",
+                    "chegada": format_time(parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR)) - 30),
+                    "saida": obter_hora_inicio_rota(DATA_REF_ROTA_STR),
+                    "actions": [("COLETAR", t) for t in tarefas_preparacao_base],
+                }
+
+            route_steps = ([preparacao_step] if preparacao_step else []) + past_route_steps + route_steps_new
 
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
