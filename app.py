@@ -3895,7 +3895,7 @@ retornar_base = st.session_state.get("cfg_retornar_base", True)
 
 if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar Manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
 
-tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_custos, tab_registros = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "💰 Dashboard & Custos", "🗂️ Registros da Frota"])
+tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_frota = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "🚗 Frota & Custos"])
 
 with tab_rastreador:
     st.subheader("📡 Rastreador ao Vivo — Protege Express")
@@ -4094,249 +4094,258 @@ with tab_enderecos:
 
     painel_enderecos()
 
-with tab_custos:
-    st.subheader("💰 Fechamento Mensal e Controle de Frota")
-    cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1").iloc[0]
+with tab_frota:
+    st.subheader("🚗 Frota & Custos")
+    st.caption("Custos, quilometragem, abastecimentos, manutenção e histórico operacional da frota em um só lugar.")
 
-    @fragmento_independente
-    def configuracao_base_frota():
-        st.markdown("#### ⚙️ Estimativa Base do Carro")
-        cc1, cc2 = st.columns(2)
-        novo_consumo_cfg = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1, key="cfg_consumo_frota")
-        novo_preco_cfg = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01, key="cfg_preco_gasolina")
-        if st.button("Atualizar Base"):
-            execute_db("UPDATE config_frota SET consumo=:c, preco_gasolina=:p WHERE id=1", {"c": novo_consumo_cfg, "p": novo_preco_cfg})
-            st.success("✅ Base de cálculo atualizada!")
-
-    configuracao_base_frota()
-    novo_preco = float(st.session_state.get("cfg_preco_gasolina", cfg['preco_gasolina']))
-    
-    st.divider()
-    col_recibo, col_km = st.columns(2)
-    with col_recibo:
-        st.markdown("#### ⛽ Lançar Recibo de Gasto")
-
-        @fragmento_independente
-        def formulario_recibo():
-            with st.form("form_recibo", clear_on_submit=True):
-                f_data = st.date_input("Data do Recibo")
-                fc_veic = st.selectbox("Veículo do Gasto", ["Strada", "L200"])
-                fc1, fc2 = st.columns(2)
-                f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
-                f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
-                f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
-                f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
-                if st.form_submit_button("Lançar no Caixa"):
-                    execute_db("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (:data, :litros, :valor, :manut, :obs, :veic)", {"data": f_data.strftime("%d/%m/%Y"), "litros": f_litros, "valor": f_valor, "manut": f_manut, "obs": f_obs, "veic": fc_veic})
-                    carregar_abastecimentos_df.clear()
-                    st.success("Recibo salvo com sucesso!")
-
-        formulario_recibo()
-
-    with col_km:
-        st.markdown("#### 🛣️ Lançar KMs Avulsos")
-
-        @fragmento_independente
-        def formulario_km_avulso():
-            with st.form("form_km", clear_on_submit=True):
-                k_data = st.date_input("Data da Corrida")
-                k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
-                k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
-                k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
-                if st.form_submit_button("Lançar KMs"):
-                    execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": k_data.strftime("%d/%m/%Y"), "km": k_km, "obs": k_obs, "veic": k_veic})
-                    carregar_registro_km_df.clear()
-                    st.success(f"{k_km} km salvos com sucesso!")
-
-        formulario_km_avulso()
-
-    st.divider()
-    st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
-
-    @fragmento_independente
-    def formulario_fechamento_km():
-        with st.form("form_fechamento_km", clear_on_submit=True):
-            col_f1, col_f2 = st.columns([1, 2])
-            f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
-            f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
-            
-            col_f3, col_f4, col_f5, col_f6 = st.columns(4)
-            f_data_ini = col_f3.date_input("Data Inicial")
-            f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
-            f_data_fin = col_f5.date_input("Data Final")
-            f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
-            
-            if st.form_submit_button("Calcular e Lançar Fechamento"):
-                km_rodado = f_km_fin - f_km_ini
-                if km_rodado > 0:
-                    obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
-                    execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": f_data_fin.strftime("%d/%m/%Y"), "km": km_rodado, "obs": obs_final, "veic": f_veic})
-                    carregar_registro_km_df.clear()
-                    st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
-                else:
-                    st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
-
-    formulario_fechamento_km()
-
-    st.divider()
-    st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
-    mes_atual_str = AGORA_REAL.strftime("%m/%Y")
-    
-    df_km = carregar_registro_km_df()
-    if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
-    df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
-    df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
-    
-    km_strada = df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'].sum() if not df_km_mes.empty else 0.0
-    km_l200 = df_km_mes[df_km_mes['veiculo'] == 'L200']['km'].sum() if not df_km_mes.empty else 0.0
-    
-    df_abastec = carregar_abastecimentos_df()
-    if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
-    df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
-    df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
-    if not df_abastec_mes.empty:
-        df_abastec_mes['custo_combustivel'] = pd.to_numeric(df_abastec_mes['litros'], errors='coerce').fillna(0) * pd.to_numeric(df_abastec_mes['valor_litro'], errors='coerce').fillna(0)
-        df_abastec_mes['custo_total'] = df_abastec_mes['custo_combustivel'] + pd.to_numeric(df_abastec_mes['manutencao'], errors='coerce').fillna(0)
-    
-    df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
-    gas_strada = (df_gas_strada['litros'] * df_gas_strada['valor_litro']).sum() if not df_gas_strada.empty else 0.0
-    manut_strada = df_gas_strada['manutencao'].sum() if not df_gas_strada.empty else 0.0
-
-    df_gas_l200 = df_abastec_mes[df_abastec_mes['veiculo'] == 'L200']
-    gas_l200 = (df_gas_l200['litros'] * df_gas_l200['valor_litro']).sum() if not df_gas_l200.empty else 0.0
-    manut_l200 = df_gas_l200['manutencao'].sum() if not df_gas_l200.empty else 0.0
-
-    custo_km_strada = (gas_strada + manut_strada) / km_strada if km_strada > 0 else 0.0
-    custo_km_l200 = (gas_l200 + manut_l200) / km_l200 if km_l200 > 0 else 0.0
-
-    def tabelas_fechamento_veiculo(veiculo):
-        gastos = df_abastec_mes[df_abastec_mes['veiculo'] == veiculo].copy()
-        quilometragem = df_km_mes[df_km_mes['veiculo'] == veiculo].copy()
-        if not gastos.empty:
-            gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
-                "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
-                "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
-                "custo_total": "Total (R$)", "obs": "Observação",
-            })
-            for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
-                gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
-        if not quilometragem.empty:
-            quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
-        return gastos, quilometragem
-
-    gastos_strada_mes, kms_strada_mes = tabelas_fechamento_veiculo("Strada")
-    gastos_l200_mes, kms_l200_mes = tabelas_fechamento_veiculo("L200")
-
-    col_strada, col_l200 = st.columns(2)
-    with col_strada:
-        s1, s2 = st.columns(2)
-        s1.metric("🚗 Strada (KM)", f"{km_strada:.1f} km", delta_color="off")
-        s2.metric("Custo / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
-        st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_strada:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_strada:.2f}</p>", unsafe_allow_html=True)
-        renderizar_detalhes_fechamento("Strada", gastos_strada_mes, kms_strada_mes, "strada")
-
-    with col_l200:
-        l1, l2 = st.columns(2)
-        l1.metric("🚙 L200 (KM)", f"{km_l200:.1f} km", delta_color="off")
-        l2.metric("Custo / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
-        st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_l200:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_l200:.2f}</p>", unsafe_allow_html=True)
-        renderizar_detalhes_fechamento("L200", gastos_l200_mes, kms_l200_mes, "l200")
-
-    df_resumo_fechamento = pd.DataFrame([
-        {"Veículo": "Strada", "KM": round(km_strada, 2), "Combustível (R$)": round(gas_strada, 2), "Manutenção (R$)": round(manut_strada, 2), "Custo total (R$)": round(gas_strada + manut_strada, 2), "Custo/KM (R$)": round(custo_km_strada, 2)},
-        {"Veículo": "L200", "KM": round(km_l200, 2), "Combustível (R$)": round(gas_l200, 2), "Manutenção (R$)": round(manut_l200, 2), "Custo total (R$)": round(gas_l200 + manut_l200, 2), "Custo/KM (R$)": round(custo_km_l200, 2)},
+    sub_resumo_frota, sub_operacao_frota, sub_historico_frota = st.tabs([
+        "📊 Resumo & Lançamentos",
+        "🕒 Operação & Paradas",
+        "🗂️ Histórico Editável",
     ])
-    renderizar_exportador(
-        f"Fechamento Individualizado — {mes_atual_str}",
-        {
-            "Resumo": df_resumo_fechamento,
-            "Gastos Strada": gastos_strada_mes,
-            "KM Strada": kms_strada_mes,
-            "Gastos L200": gastos_l200_mes,
-            "KM L200": kms_l200_mes,
-        },
-        "fechamento_mensal_frota", "custos",
-    )
 
-# --- NOVA ABA: REGISTROS DA FROTA ---
-with tab_registros:
-    st.subheader("🗂️ Registros e Histórico da Frota")
-    st.caption("Acompanhe os horários de operação, as rotas e edite os gastos detalhados dos veículos.")
-    
-    st.markdown("#### 🕒 Horários da Operação (Rastreador)")
-    c_inicio, c_paradas = st.columns([1, 1.8])
-    
-    with c_inicio:
-        st.markdown("**🏁 Início da Rota (Saídas do Pátio)**")
-        st.caption("Marcado quando o carro afasta > 500m do escritório.")
-        df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora Saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC")
-        if not df_inicio.empty:
-            st.dataframe(df_inicio, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhum registro de início encontrado.")
-            
-    with c_paradas:
-        st.markdown("**📍 Paradas Realizadas nas Obras (Geofence)**")
-        st.caption("Registra tempo parado no raio de 250m do destino.")
-        df_paradas_tbl = get_df("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150")
-        if not df_paradas_tbl.empty:
-            st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhum registro de parada do rastreador encontrado.")
-
-    st.divider()
-    st.markdown("#### 💰 Histórico de Custos e Abastecimentos (Editável)")
-    st.caption("Você pode alterar os valores nas tabelas abaixo ou apagar linhas inteiras. Para salvar, clique no botão azul correspondente.")
-    
-    cx_abast, cx_km = st.columns(2)
-    with cx_abast:
-        st.markdown("**⛽ Combustível e Manutenções**")
+    with sub_resumo_frota:
+        cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1").iloc[0]
 
         @fragmento_independente
-        def editor_abastecimentos():
-            df_abastec_all = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
-            if not df_abastec_all.empty:
-                edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
-                if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
-                    edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
-                    save_df_to_db(edited_abastec_clean, "abastecimentos")
-                    carregar_abastecimentos_df.clear()
-                    st.success("Abastecimentos atualizados na Nuvem com sucesso!")
-            else:
-                st.info("Nenhum abastecimento ou manutenção registrada.")
+        def configuracao_base_frota():
+            st.markdown("#### ⚙️ Estimativa Base do Carro")
+            cc1, cc2 = st.columns(2)
+            novo_consumo_cfg = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1, key="cfg_consumo_frota")
+            novo_preco_cfg = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01, key="cfg_preco_gasolina")
+            if st.button("Atualizar Base"):
+                execute_db("UPDATE config_frota SET consumo=:c, preco_gasolina=:p WHERE id=1", {"c": novo_consumo_cfg, "p": novo_preco_cfg})
+                st.success("✅ Base de cálculo atualizada!")
 
-        editor_abastecimentos()
-            
-    with cx_km:
-        st.markdown("**🛣️ Quilometragem Rodada**")
+        configuracao_base_frota()
+        novo_preco = float(st.session_state.get("cfg_preco_gasolina", cfg['preco_gasolina']))
+
+        st.divider()
+        col_recibo, col_km = st.columns(2)
+        with col_recibo:
+            st.markdown("#### ⛽ Lançar Recibo de Gasto")
+
+            @fragmento_independente
+            def formulario_recibo():
+                with st.form("form_recibo", clear_on_submit=True):
+                    f_data = st.date_input("Data do Recibo")
+                    fc_veic = st.selectbox("Veículo do Gasto", ["Strada", "L200"])
+                    fc1, fc2 = st.columns(2)
+                    f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
+                    f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
+                    f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
+                    f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
+                    if st.form_submit_button("Lançar no Caixa"):
+                        execute_db("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (:data, :litros, :valor, :manut, :obs, :veic)", {"data": f_data.strftime("%d/%m/%Y"), "litros": f_litros, "valor": f_valor, "manut": f_manut, "obs": f_obs, "veic": fc_veic})
+                        carregar_abastecimentos_df.clear()
+                        st.success("Recibo salvo com sucesso!")
+
+            formulario_recibo()
+
+        with col_km:
+            st.markdown("#### 🛣️ Lançar KMs Avulsos")
+
+            @fragmento_independente
+            def formulario_km_avulso():
+                with st.form("form_km", clear_on_submit=True):
+                    k_data = st.date_input("Data da Corrida")
+                    k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
+                    k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
+                    k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
+                    if st.form_submit_button("Lançar KMs"):
+                        execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": k_data.strftime("%d/%m/%Y"), "km": k_km, "obs": k_obs, "veic": k_veic})
+                        carregar_registro_km_df.clear()
+                        st.success(f"{k_km} km salvos com sucesso!")
+
+            formulario_km_avulso()
+
+        st.divider()
+        st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
 
         @fragmento_independente
-        def editor_quilometragem():
-            df_km_all = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
-            if not df_km_all.empty:
-                edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
-                if st.button("💾 Salvar Alterações (KM)", type="primary"):
-                    edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
-                    save_df_to_db(edited_km_clean, "registro_km")
-                    carregar_registro_km_df.clear()
-                    st.success("KMs atualizados na Nuvem com sucesso!")
+        def formulario_fechamento_km():
+            with st.form("form_fechamento_km", clear_on_submit=True):
+                col_f1, col_f2 = st.columns([1, 2])
+                f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
+                f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
+                
+                col_f3, col_f4, col_f5, col_f6 = st.columns(4)
+                f_data_ini = col_f3.date_input("Data Inicial")
+                f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
+                f_data_fin = col_f5.date_input("Data Final")
+                f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
+                
+                if st.form_submit_button("Calcular e Lançar Fechamento"):
+                    km_rodado = f_km_fin - f_km_ini
+                    if km_rodado > 0:
+                        obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
+                        execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": f_data_fin.strftime("%d/%m/%Y"), "km": km_rodado, "obs": obs_final, "veic": f_veic})
+                        carregar_registro_km_df.clear()
+                        st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
+                    else:
+                        st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
+
+        formulario_fechamento_km()
+
+        st.divider()
+        st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
+        mes_atual_str = AGORA_REAL.strftime("%m/%Y")
+
+        df_km = carregar_registro_km_df()
+        if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
+        df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
+        df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
+
+        km_strada = df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'].sum() if not df_km_mes.empty else 0.0
+        km_l200 = df_km_mes[df_km_mes['veiculo'] == 'L200']['km'].sum() if not df_km_mes.empty else 0.0
+
+        df_abastec = carregar_abastecimentos_df()
+        if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
+        df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
+        df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
+        if not df_abastec_mes.empty:
+            df_abastec_mes['custo_combustivel'] = pd.to_numeric(df_abastec_mes['litros'], errors='coerce').fillna(0) * pd.to_numeric(df_abastec_mes['valor_litro'], errors='coerce').fillna(0)
+            df_abastec_mes['custo_total'] = df_abastec_mes['custo_combustivel'] + pd.to_numeric(df_abastec_mes['manutencao'], errors='coerce').fillna(0)
+
+        df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
+        gas_strada = (df_gas_strada['litros'] * df_gas_strada['valor_litro']).sum() if not df_gas_strada.empty else 0.0
+        manut_strada = df_gas_strada['manutencao'].sum() if not df_gas_strada.empty else 0.0
+
+        df_gas_l200 = df_abastec_mes[df_abastec_mes['veiculo'] == 'L200']
+        gas_l200 = (df_gas_l200['litros'] * df_gas_l200['valor_litro']).sum() if not df_gas_l200.empty else 0.0
+        manut_l200 = df_gas_l200['manutencao'].sum() if not df_gas_l200.empty else 0.0
+
+        custo_km_strada = (gas_strada + manut_strada) / km_strada if km_strada > 0 else 0.0
+        custo_km_l200 = (gas_l200 + manut_l200) / km_l200 if km_l200 > 0 else 0.0
+
+        def tabelas_fechamento_veiculo(veiculo):
+            gastos = df_abastec_mes[df_abastec_mes['veiculo'] == veiculo].copy()
+            quilometragem = df_km_mes[df_km_mes['veiculo'] == veiculo].copy()
+            if not gastos.empty:
+                gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
+                    "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
+                    "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
+                    "custo_total": "Total (R$)", "obs": "Observação",
+                })
+                for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
+                    gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
+            if not quilometragem.empty:
+                quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
+            return gastos, quilometragem
+
+        gastos_strada_mes, kms_strada_mes = tabelas_fechamento_veiculo("Strada")
+        gastos_l200_mes, kms_l200_mes = tabelas_fechamento_veiculo("L200")
+
+        col_strada, col_l200 = st.columns(2)
+        with col_strada:
+            s1, s2 = st.columns(2)
+            s1.metric("🚗 Strada (KM)", f"{km_strada:.1f} km", delta_color="off")
+            s2.metric("Custo / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
+            st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_strada:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_strada:.2f}</p>", unsafe_allow_html=True)
+            renderizar_detalhes_fechamento("Strada", gastos_strada_mes, kms_strada_mes, "strada")
+
+        with col_l200:
+            l1, l2 = st.columns(2)
+            l1.metric("🚙 L200 (KM)", f"{km_l200:.1f} km", delta_color="off")
+            l2.metric("Custo / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
+            st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_l200:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_l200:.2f}</p>", unsafe_allow_html=True)
+            renderizar_detalhes_fechamento("L200", gastos_l200_mes, kms_l200_mes, "l200")
+
+        df_resumo_fechamento = pd.DataFrame([
+            {"Veículo": "Strada", "KM": round(km_strada, 2), "Combustível (R$)": round(gas_strada, 2), "Manutenção (R$)": round(manut_strada, 2), "Custo total (R$)": round(gas_strada + manut_strada, 2), "Custo/KM (R$)": round(custo_km_strada, 2)},
+            {"Veículo": "L200", "KM": round(km_l200, 2), "Combustível (R$)": round(gas_l200, 2), "Manutenção (R$)": round(manut_l200, 2), "Custo total (R$)": round(gas_l200 + manut_l200, 2), "Custo/KM (R$)": round(custo_km_l200, 2)},
+        ])
+        renderizar_exportador(
+            f"Fechamento Individualizado — {mes_atual_str}",
+            {
+                "Resumo": df_resumo_fechamento,
+                "Gastos Strada": gastos_strada_mes,
+                "KM Strada": kms_strada_mes,
+                "Gastos L200": gastos_l200_mes,
+                "KM L200": kms_l200_mes,
+            },
+            "fechamento_mensal_frota", "custos",
+        )
+
+    with sub_operacao_frota:
+        st.markdown("### 🕒 Operação do Rastreador")
+        st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
+        st.markdown("#### 🕒 Horários da Operação (Rastreador)")
+        c_inicio, c_paradas = st.columns([1, 1.8])
+
+        with c_inicio:
+            st.markdown("**🏁 Início da Rota (Saídas do Pátio)**")
+            st.caption("Marcado quando o carro afasta > 500m do escritório.")
+            df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora Saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC")
+            if not df_inicio.empty:
+                st.dataframe(df_inicio, use_container_width=True, hide_index=True)
             else:
-                st.info("Nenhuma quilometragem registrada.")
+                st.info("Nenhum registro de início encontrado.")
+                
+        with c_paradas:
+            st.markdown("**📍 Paradas Realizadas nas Obras (Geofence)**")
+            st.caption("Registra tempo parado no raio de 250m do destino.")
+            df_paradas_tbl = get_df("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150")
+            if not df_paradas_tbl.empty:
+                st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum registro de parada do rastreador encontrado.")
 
-        editor_quilometragem()
+    with sub_historico_frota:
+        st.markdown("### 🗂️ Histórico e Correções")
+        st.caption("Consulte, ajuste e exporte os registros consolidados da frota.")
+        st.markdown("#### 💰 Histórico de Custos e Abastecimentos (Editável)")
+        st.caption("Você pode alterar os valores nas tabelas abaixo ou apagar linhas inteiras. Para salvar, clique no botão azul correspondente.")
 
-    df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
-    df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
-    renderizar_exportador(
-        "Registros e Histórico da Frota",
-        {
-            "Inícios de rota": df_inicio,
-            "Paradas rastreadas": df_paradas_tbl,
-            "Abastecimentos e manutenção": df_abastecimentos_relatorio,
-            "Quilometragens": df_quilometragens_relatorio,
-        },
-        "registros_da_frota", "registros",
-    )
+        cx_abast, cx_km = st.columns(2)
+        with cx_abast:
+            st.markdown("**⛽ Combustível e Manutenções**")
+
+            @fragmento_independente
+            def editor_abastecimentos():
+                df_abastec_all = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
+                if not df_abastec_all.empty:
+                    edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
+                    if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
+                        edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
+                        save_df_to_db(edited_abastec_clean, "abastecimentos")
+                        carregar_abastecimentos_df.clear()
+                        st.success("Abastecimentos atualizados na Nuvem com sucesso!")
+                else:
+                    st.info("Nenhum abastecimento ou manutenção registrada.")
+
+            editor_abastecimentos()
+                
+        with cx_km:
+            st.markdown("**🛣️ Quilometragem Rodada**")
+
+            @fragmento_independente
+            def editor_quilometragem():
+                df_km_all = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
+                if not df_km_all.empty:
+                    edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
+                    if st.button("💾 Salvar Alterações (KM)", type="primary"):
+                        edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
+                        save_df_to_db(edited_km_clean, "registro_km")
+                        carregar_registro_km_df.clear()
+                        st.success("KMs atualizados na Nuvem com sucesso!")
+                else:
+                    st.info("Nenhuma quilometragem registrada.")
+
+            editor_quilometragem()
+
+        df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
+        df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
+        renderizar_exportador(
+            "Registros e Histórico da Frota",
+            {
+                "Inícios de rota": df_inicio,
+                "Paradas rastreadas": df_paradas_tbl,
+                "Abastecimentos e manutenção": df_abastecimentos_relatorio,
+                "Quilometragens": df_quilometragens_relatorio,
+            },
+            "registros_da_frota", "registros",
+        )
 
 with tab_roteiro:
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR): st.session_state['rota_gerada'] = False
