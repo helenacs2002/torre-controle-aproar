@@ -3579,6 +3579,7 @@ def inicializar_bd():
         SQL_TABELA_CHECKINS_DAVI,
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS horario_matriz TEXT",
+        "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS json_ajustes_manuais TEXT",
         # Controle de entrega ao Teams. `NULL` identifica registros antigos criados
         # antes desta melhoria; novas baixas entram explicitamente como FALSE e são
         # tentadas novamente até o Teams confirmar o recebimento.
@@ -4008,6 +4009,227 @@ def canonicalizar_ponto_rota(nome):
             
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
+
+
+# =====================================================================
+# AJUSTES MANUAIS DA ROTA — ARRASTAR DEMANDAS ENTRE PARADAS
+# =====================================================================
+@st.cache_data(ttl=20, show_spinner=False)
+def carregar_ajustes_manuais_rota(data_rota):
+    """Lê os ajustes feitos pelo usuário sem alterar o Trello."""
+    try:
+        row = fetch_one(
+            "SELECT json_ajustes_manuais FROM rota_ativa WHERE id = 1 AND data_rota = :data",
+            {"data": data_rota},
+        )
+        if not row or not row[0]:
+            return {}
+        dados = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        return dados if isinstance(dados, dict) else {}
+    except Exception:
+        return {}
+
+
+def salvar_ajustes_manuais_rota(data_rota, ajustes):
+    ajustes = ajustes if isinstance(ajustes, dict) else {}
+    execute_db(
+        "UPDATE rota_ativa SET json_ajustes_manuais = :ajustes WHERE id = 1 AND data_rota = :data",
+        {"ajustes": json.dumps(ajustes, ensure_ascii=False), "data": data_rota},
+    )
+    try:
+        carregar_ajustes_manuais_rota.clear()
+    except Exception:
+        pass
+
+
+def limpar_ajustes_manuais_rota(data_rota):
+    salvar_ajustes_manuais_rota(data_rota, {})
+
+
+def _chave_acao_rota(tarefa, acao):
+    return f"{str((tarefa or {}).get('id', '') or '')}|{str(acao or '').upper()}"
+
+
+def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
+    """Aplica origem/destino manuais antes do otimizador montar a rota."""
+    if df is None or df.empty or not isinstance(ajustes, dict):
+        return df
+    mapa = ajustes.get("acoes", {}) or {}
+    if not mapa:
+        return df
+    resultado = df.copy()
+    for idx, linha in resultado.iterrows():
+        demanda_id = str(linha.get("id", "") or "")
+        if not demanda_id:
+            continue
+        ajuste_coleta = mapa.get(f"{demanda_id}|COLETAR", {}) or {}
+        ajuste_entrega = mapa.get(f"{demanda_id}|ENTREGAR", {}) or {}
+        alvo_coleta = canonicalizar_ponto_rota(ajuste_coleta.get("destino", ""))
+        alvo_entrega = canonicalizar_ponto_rota(ajuste_entrega.get("destino", ""))
+        if alvo_coleta:
+            resultado.at[idx, "Origem"] = alvo_coleta
+        if alvo_entrega:
+            resultado.at[idx, "Destino"] = alvo_entrega
+    return resultado
+
+
+def aplicar_ordem_manual_route_steps(route_steps, ajustes):
+    """Reaplica a ordem dos cartões dentro de cada parada após recalcular."""
+    if not route_steps or not isinstance(ajustes, dict):
+        return route_steps
+    ordem_por_local = ajustes.get("ordem_por_local", {}) or {}
+    for step in route_steps:
+        if step.get("type") != "stop":
+            continue
+        local = canonicalizar_ponto_rota(step.get("destino", ""))
+        ordem = list(ordem_por_local.get(local, []) or [])
+        if not ordem:
+            continue
+        pos = {chave: i for i, chave in enumerate(ordem)}
+        acoes = list(step.get("actions", []) or [])
+        acoes.sort(key=lambda item: pos.get(_chave_acao_rota(item[1], item[0]), 10000))
+        step["actions"] = acoes
+    return route_steps
+
+
+def registrar_movimento_manual_rota(data_rota, route_steps, demanda_id, acao, destino_alvo, indice_alvo, ponto_saida=""):
+    """Persiste um drag-and-drop e devolve True quando o movimento é válido."""
+    demanda_id = str(demanda_id or "").strip()
+    acao = str(acao or "").upper().strip()
+    destino_alvo = canonicalizar_ponto_rota(destino_alvo)
+    if not demanda_id or acao not in {"COLETAR", "ENTREGAR"} or not destino_alvo:
+        return False
+
+    chave = f"{demanda_id}|{acao}"
+    encontrado = False
+    locais_validos = set()
+    listas_atuais = {}
+    for step in route_steps or []:
+        if step.get("type") != "stop":
+            continue
+        local = canonicalizar_ponto_rota(step.get("destino", ""))
+        if not local:
+            continue
+        locais_validos.add(local)
+        lista = []
+        for acao_step, tarefa_step in step.get("actions", []) or []:
+            chave_step = _chave_acao_rota(tarefa_step, acao_step)
+            if chave_step:
+                lista.append(chave_step)
+            if chave_step == chave:
+                encontrado = True
+        listas_atuais[local] = lista
+
+    base_manual = canonicalizar_ponto_rota(ponto_saida)
+    if base_manual:
+        locais_validos.add(base_manual)
+    if not encontrado or destino_alvo not in locais_validos:
+        return False
+
+    ajustes = dict(carregar_ajustes_manuais_rota(data_rota) or {})
+    mapa = dict(ajustes.get("acoes", {}) or {})
+    ordem_por_local = {k: list(v or []) for k, v in (ajustes.get("ordem_por_local", {}) or {}).items()}
+    mapa[chave] = {"destino": destino_alvo}
+
+    for local, lista in listas_atuais.items():
+        ordem_por_local[local] = [k for k in lista if k != chave]
+
+    alvo_lista = [k for k in listas_atuais.get(destino_alvo, []) if k != chave]
+    try:
+        pos = max(0, min(int(indice_alvo), len(alvo_lista)))
+    except Exception:
+        pos = len(alvo_lista)
+    alvo_lista.insert(pos, chave)
+    ordem_por_local[destino_alvo] = alvo_lista
+
+    ajustes["acoes"] = mapa
+    ajustes["ordem_por_local"] = ordem_por_local
+    salvar_ajustes_manuais_rota(data_rota, ajustes)
+    return True
+
+
+def construir_editor_arrastavel_rota(route_steps, ponto_saida, ajustes):
+    """Monta um editor HTML5 para arrastar ações entre as paradas."""
+    ponto_saida = canonicalizar_ponto_rota(ponto_saida)
+    ajustes_acoes = (ajustes or {}).get("acoes", {}) or {}
+    secoes = []
+    vistos = set()
+
+    prep_step = next(
+        (s for i, s in enumerate(route_steps or [])
+         if s.get("type") == "stop" and i == 0
+         and canonicalizar_ponto_rota(s.get("destino", "")) == ponto_saida),
+        None,
+    )
+    secoes.append(("PREPARAÇÃO", ponto_saida, list((prep_step or {}).get("actions", []) or [])))
+    vistos.add(ponto_saida)
+
+    numero = 1
+    for step in route_steps or []:
+        if step.get("type") != "stop":
+            continue
+        local = canonicalizar_ponto_rota(step.get("destino", ""))
+        if not local or local in vistos:
+            continue
+        secoes.append((f"PARADA {numero}", local, list(step.get("actions", []) or [])))
+        vistos.add(local)
+        numero += 1
+
+    blocos = []
+    for rotulo, local, acoes in secoes:
+        cards = []
+        for acao, tarefa in acoes:
+            did = str(tarefa.get("id", "") or "")
+            if not did:
+                continue
+            acao_txt = str(acao).upper()
+            chave = f"{did}|{acao_txt}"
+            manual = chave in ajustes_acoes
+            obra = html_escape(str(tarefa.get("Obra", "Demanda") or "Demanda"))
+            mats = html_escape(str(tarefa.get("Materiais", "") or ""))
+            classe = "coleta" if acao_txt == "COLETAR" else "entrega"
+            etiqueta = "📦 COLETA" if acao_txt == "COLETAR" else "📬 ENTREGA"
+            selo_manual = '<span class="manual">manual</span>' if manual else ''
+            cards.append(
+                f'<div class="demanda {classe}" draggable="true" data-id="{html_escape(did)}" data-acao="{acao_txt}">'
+                f'<div class="top"><span class="handle">⠿</span><b>{etiqueta}</b>{selo_manual}</div>'
+                f'<div class="obra">{obra}</div><div class="mat">{mats}</div></div>'
+            )
+        cards_html = "".join(cards) if cards else '<div class="vazio">Solte uma demanda aqui</div>'
+        blocos.append(
+            f'<section class="secao"><div class="secao-head"><b>{html_escape(rotulo)}</b>'
+            f'<span>{html_escape(local)}</span></div><div class="zona" data-destino="{html_escape(local)}">'
+            f'{cards_html}</div></section>'
+        )
+
+    html = """<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box} body{margin:0;background:#070913;color:#e5e7eb;font-family:Inter,Arial,sans-serif}
+.aviso{font-size:12px;color:#94a3b8;margin:0 0 10px}.secao{border:1px solid #263452;background:#0b1020;border-radius:12px;margin:0 0 10px;overflow:hidden}
+.secao-head{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:#11182d;border-bottom:1px solid #263452;font-size:13px}.secao-head span{color:#9fb1ca;font-weight:700}
+.zona{min-height:62px;padding:8px}.zona.over{outline:2px dashed #60a5fa;outline-offset:-4px;background:#0f1c37}.demanda{padding:9px 10px;margin:5px 0;border-radius:9px;border:1px solid #334155;background:#10182b;cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.18)}
+.demanda.dragging{opacity:.35}.demanda.coleta{border-left:5px solid #f59e0b}.demanda.entrega{border-left:5px solid #22c55e}.top{display:flex;align-items:center;gap:7px;font-size:12px}.handle{font-size:18px;color:#93c5fd}.manual{margin-left:auto;background:#1d4ed8;color:#dbeafe;padding:2px 6px;border-radius:999px;font-size:10px}
+.obra{font-size:12.5px;font-weight:800;margin-top:3px;color:#f1f5f9}.mat{font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vazio{font-size:11px;color:#64748b;text-align:center;padding:12px;border:1px dashed #334155;border-radius:8px}
+</style></head><body><div class="aviso">Arraste pelo ⠿. Solte dentro de outra parada para mudar o local dessa ação; solte acima/abaixo para mudar a ordem. O Trello não é alterado.</div>""" + "".join(blocos) + """
+<script>
+let arrastado=null;
+document.querySelectorAll('.demanda').forEach(card=>{
+  card.addEventListener('dragstart',e=>{arrastado=card;card.classList.add('dragging');e.dataTransfer.effectAllowed='move';});
+  card.addEventListener('dragend',()=>{card.classList.remove('dragging');document.querySelectorAll('.zona').forEach(z=>z.classList.remove('over'));});
+});
+document.querySelectorAll('.zona').forEach(zona=>{
+  zona.addEventListener('dragover',e=>{e.preventDefault();zona.classList.add('over');e.dataTransfer.dropEffect='move';});
+  zona.addEventListener('dragleave',e=>{if(!zona.contains(e.relatedTarget))zona.classList.remove('over');});
+  zona.addEventListener('drop',e=>{
+    e.preventDefault();zona.classList.remove('over');if(!arrastado)return;
+    const outros=[...zona.querySelectorAll('.demanda:not(.dragging)')];let indice=outros.length;
+    for(let i=0;i<outros.length;i++){const r=outros[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){indice=i;break;}}
+    const p=new URLSearchParams();p.set('mr_demanda',arrastado.dataset.id);p.set('mr_acao',arrastado.dataset.acao);p.set('mr_destino',zona.dataset.destino);p.set('mr_ordem',String(indice));
+    try{window.top.location.href=window.top.location.pathname+'?'+p.toString();}catch(err){window.parent.location.href='?'+p.toString();}
+  });
+});
+</script></body></html>"""
+    altura = min(720, max(220, 96 + len(secoes) * 118 + sum(len(a) for _, _, a in secoes) * 54))
+    return html, altura
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -6760,9 +6982,12 @@ with tab_roteiro:
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR): st.session_state['rota_gerada'] = False
 
     df_ativos = st.session_state.demandas.copy()
+    ajustes_manuais = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
     if not df_ativos.empty:
         df_ativos["Origem"] = df_ativos["Origem"].apply(canonicalizar_ponto_rota)
         df_ativos["Destino"] = df_ativos["Destino"].apply(canonicalizar_ponto_rota)
+        # O que foi arrastado manualmente prevalece sobre a interpretação automática do Trello.
+        df_ativos = aplicar_ajustes_manuais_demandas(df_ativos, ajustes_manuais, ponto_saida)
 
         origem_invalida, destino_invalido = df_ativos["Origem"].fillna("").isin(["", "DESCONHECIDO"]), df_ativos["Destino"].fillna("").isin(["", "DESCONHECIDO"])
         if not df_ativos[origem_invalida | destino_invalido].empty:
@@ -6770,6 +6995,26 @@ with tab_roteiro:
             df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
+
+    # Recebe um movimento do editor arrastável e o transforma em regra persistente.
+    _mr_id = str(st.query_params.get("mr_demanda", "") or "").strip()
+    _mr_acao = str(st.query_params.get("mr_acao", "") or "").strip().upper()
+    _mr_destino = str(st.query_params.get("mr_destino", "") or "").strip()
+    _mr_ordem = str(st.query_params.get("mr_ordem", "") or "").strip()
+    if _mr_id and st.session_state.get('route_steps'):
+        try:
+            movimento_ok = registrar_movimento_manual_rota(
+                DATA_REF_ROTA_STR, st.session_state.get('route_steps') or [],
+                _mr_id, _mr_acao, _mr_destino, int(_mr_ordem or 0), ponto_saida,
+            )
+            st.query_params.clear()
+            if movimento_ok:
+                st.session_state["_recalcular_rota_automatico"] = True
+                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. A rota foi recalculada mantendo seu ajuste manual."
+                st.rerun()
+        except Exception as _erro_movimento_rota:
+            st.query_params.clear()
+            st.warning(f"Não foi possível mover essa demanda agora: {_erro_movimento_rota}")
 
     # A rota pode ser recalculada sem apagar as baixas já registradas.
     # As etapas concluídas são reaproveitadas logo abaixo a partir de historico_concluidos.
@@ -7096,6 +7341,7 @@ with tab_roteiro:
                 current_time += dur
 
             route_steps = past_route_steps + route_steps_new
+            route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais)
 
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
@@ -7116,11 +7362,71 @@ with tab_roteiro:
             st.session_state['geometria_viaria'] = geometria_viaria
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
 
-            execute_db("INSERT INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz) VALUES (1, :data, :route, :locs, :geom, :end, :km, :fonte, :horario) ON CONFLICT (id) DO UPDATE SET data_rota=EXCLUDED.data_rota, json_route=EXCLUDED.json_route, json_locais=EXCLUDED.json_locais, json_geometria=EXCLUDED.json_geometria, json_enderecos=EXCLUDED.json_enderecos, total_km=EXCLUDED.total_km, fonte_matriz=EXCLUDED.fonte_matriz, horario_matriz=EXCLUDED.horario_matriz", {"data": DATA_REF_ROTA_STR, "route": json.dumps(route_steps), "locs": json.dumps(locais_dict), "geom": json.dumps(geometria_rota), "end": json.dumps(enderecos_dict), "km": total_km, "fonte": fonte_matriz, "horario": horario_partida_matriz.strftime("%d/%m/%Y %H:%M")})
+            execute_db(
+                "INSERT INTO rota_ativa (id, data_rota, json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz, json_ajustes_manuais) "
+                "VALUES (1, :data, :route, :locs, :geom, :end, :km, :fonte, :horario, :ajustes) "
+                "ON CONFLICT (id) DO UPDATE SET data_rota=EXCLUDED.data_rota, json_route=EXCLUDED.json_route, json_locais=EXCLUDED.json_locais, "
+                "json_geometria=EXCLUDED.json_geometria, json_enderecos=EXCLUDED.json_enderecos, total_km=EXCLUDED.total_km, "
+                "fonte_matriz=EXCLUDED.fonte_matriz, horario_matriz=EXCLUDED.horario_matriz, json_ajustes_manuais=EXCLUDED.json_ajustes_manuais",
+                {
+                    "data": DATA_REF_ROTA_STR, "route": json.dumps(route_steps), "locs": json.dumps(locais_dict),
+                    "geom": json.dumps(geometria_rota), "end": json.dumps(enderecos_dict), "km": total_km,
+                    "fonte": fonte_matriz, "horario": horario_partida_matriz.strftime("%d/%m/%Y %H:%M"),
+                    "ajustes": json.dumps(ajustes_manuais, ensure_ascii=False),
+                },
+            )
+            try:
+                carregar_ajustes_manuais_rota.clear()
+            except Exception:
+                pass
 
     if st.session_state.get('rota_gerada', False):
         route_steps, total_km, locais_dict = st.session_state['route_steps'], st.session_state['total_km'], st.session_state['locais_dict']
         enderecos_dict, p_saida = st.session_state.get('enderecos_dict', {}), st.session_state['p_saida']
+        ajustes_manuais_atual = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+        route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais_atual)
+        st.session_state['route_steps'] = route_steps
+
+        # Correção pontual da demanda atual que ficou como COLETA na UNIFOR.
+        # Salvamos pelo ID da demanda, então isso NÃO vira regra geral para futuras
+        # coletas reais na UNIFOR. A entrega da mesma demanda continua no destino normal.
+        _meta_ajustes = dict((ajustes_manuais_atual or {}).get('_meta', {}) or {})
+        _chave_reparo_unifor = 'coleta_unifor_para_preparacao_2026_08_21'
+        if DATA_REF_ROTA_STR == '21/08/2026' and not _meta_ajustes.get(_chave_reparo_unifor):
+            _mapa_ajustes = dict((ajustes_manuais_atual or {}).get('acoes', {}) or {})
+            _movidos_unifor = []
+            for _step_unifor in route_steps or []:
+                if _step_unifor.get('type') != 'stop' or canonicalizar_ponto_rota(_step_unifor.get('destino', '')) != 'UNIFOR':
+                    continue
+                for _acao_unifor, _tarefa_unifor in _step_unifor.get('actions', []) or []:
+                    if _acao_unifor != 'COLETAR':
+                        continue
+                    _id_unifor = str(_tarefa_unifor.get('id', '') or '')
+                    if not _id_unifor:
+                        continue
+                    _chave_unifor = f"{_id_unifor}|COLETAR"
+                    if _chave_unifor not in _mapa_ajustes:
+                        _mapa_ajustes[_chave_unifor] = {'destino': canonicalizar_ponto_rota(p_saida)}
+                        _movidos_unifor.append(_chave_unifor)
+            _meta_ajustes[_chave_reparo_unifor] = True
+            ajustes_manuais_atual = dict(ajustes_manuais_atual or {})
+            ajustes_manuais_atual['_meta'] = _meta_ajustes
+            if _movidos_unifor:
+                ajustes_manuais_atual['acoes'] = _mapa_ajustes
+                _ordens = dict(ajustes_manuais_atual.get('ordem_por_local', {}) or {})
+                _prep_local = canonicalizar_ponto_rota(p_saida)
+                _lista_prep = list(_ordens.get(_prep_local, []) or [])
+                for _ch in _movidos_unifor:
+                    if _ch not in _lista_prep:
+                        _lista_prep.append(_ch)
+                _ordens[_prep_local] = _lista_prep
+                ajustes_manuais_atual['ordem_por_local'] = _ordens
+                salvar_ajustes_manuais_rota(DATA_REF_ROTA_STR, ajustes_manuais_atual)
+                st.session_state['_recalcular_rota_automatico'] = True
+                st.session_state['_mensagem_ajuste_rota'] = '✅ A coleta da UNIFOR foi movida para PREPARAÇÃO: ESCRITÓRIO.'
+                st.rerun()
+            else:
+                salvar_ajustes_manuais_rota(DATA_REF_ROTA_STR, ajustes_manuais_atual)
 
         if st.session_state.get('demandas_adiadas'): st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã.")
         
@@ -7189,6 +7495,25 @@ with tab_roteiro:
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
             renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+
+            _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
+            if _msg_ajuste:
+                st.success(_msg_ajuste)
+
+            with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
+                st.caption(
+                    "Arraste uma COLETA ou ENTREGA para cima/baixo ou solte dentro de outra parada. "
+                    "O ajuste fica salvo no Supabase e continua valendo quando o Trello atualizar a rota."
+                )
+                _html_editor, _altura_editor = construir_editor_arrastavel_rota(
+                    route_steps, p_saida, carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                )
+                st.components.v1.html(_html_editor, height=_altura_editor, scrolling=True)
+                if st.button("♻️ Limpar ajustes manuais e voltar ao automático", key="limpar_ajustes_rota_manual"):
+                    limpar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                    st.session_state["_recalcular_rota_automatico"] = True
+                    st.session_state["_mensagem_ajuste_rota"] = "♻️ Ajustes manuais removidos. A rota voltou para o planejamento automático."
+                    st.rerun()
             
             texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
