@@ -3579,12 +3579,6 @@ def inicializar_bd():
         SQL_TABELA_CHECKINS_DAVI,
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS horario_matriz TEXT",
-        # Controle de entrega ao Teams. `NULL` identifica registros antigos criados
-        # antes desta melhoria; novas baixas entram explicitamente como FALSE e são
-        # tentadas novamente até o Teams confirmar o recebimento.
-        "ALTER TABLE historico_concluidos ADD COLUMN IF NOT EXISTS teams_notificado BOOLEAN",
-        "ALTER TABLE historico_concluidos ADD COLUMN IF NOT EXISTS teams_tentativas INTEGER DEFAULT 0",
-        "ALTER TABLE historico_concluidos ADD COLUMN IF NOT EXISTS teams_ultimo_erro TEXT",
         "CREATE INDEX IF NOT EXISTS idx_historico_concluidos_data ON historico_concluidos (data_conclusao)",
         "CREATE INDEX IF NOT EXISTS idx_inicio_movimento_data ON inicio_movimento (data)",
         "CREATE INDEX IF NOT EXISTS idx_rastreio_paradas_data_placa ON rastreio_paradas (data, placa)",
@@ -3633,7 +3627,7 @@ def inicializar_bd():
 
     return True
 
-# Garante a inicialização segura do banco Supabase
+# Garante a inicialização segura do banco Supabase. Esta versão mantém o schema estável.
 try:
     inicializar_bd()
     if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
@@ -3723,16 +3717,13 @@ def identificar_grupo_teams(destino, obra=""):
     return ""
 
 def obter_webhook_teams(setor, supervisor=None, obra=""):
-    """Resolve o canal da unidade e nunca perde a baixa por falta de webhook específico.
-
-    Ordem: grupo da unidade -> cadastro do supervisor -> banco -> grupo geral.
-    O grupo geral é apenas contingência; não duplica mensagens quando o canal correto existe.
-    """
+    """Resolve o canal da unidade; grupo geral é apenas contingência."""
     chave_unidade = identificar_grupo_teams(setor, obra)
     if chave_unidade:
         try:
             url_secret = str(st.secrets["teams_unidades"].get(chave_unidade, "")).strip()
-            if url_secret: return url_secret, "Secrets — grupo da unidade"
+            if url_secret:
+                return url_secret, "Secrets — grupo da unidade"
         except Exception:
             pass
 
@@ -3740,31 +3731,30 @@ def obter_webhook_teams(setor, supervisor=None, obra=""):
     if chave_supervisor:
         try:
             url_secret = str(st.secrets["teams"].get(chave_supervisor, "")).strip()
-            if url_secret: return url_secret, "Secrets — cadastro anterior"
+            if url_secret:
+                return url_secret, "Secrets — cadastro anterior"
         except Exception:
             pass
 
     try:
         registro = fetch_one("SELECT url FROM webhooks_teams WHERE setor = :setor", {"setor": supervisor or setor})
-        if registro and registro[0]: return registro[0].strip(), "Banco local"
+        if registro and registro[0]:
+            return registro[0].strip(), "Banco local"
     except Exception:
         pass
 
-    # Se uma unidade ainda não tiver webhook próprio, a baixa vai para o grupo geral
-    # em vez de desaparecer silenciosamente.
-    try:
-        url_geral = str(st.secrets["teams_unidades"].get("geral_logistica", "")).strip()
-        if url_geral: return url_geral, "Secrets — grupo geral (contingência)"
-    except Exception:
-        pass
-    try:
-        url_geral = str(st.secrets["teams"].get("geral_logistica", "")).strip()
-        if url_geral: return url_geral, "Secrets — grupo geral (contingência)"
-    except Exception:
-        pass
+    # Não deixa uma baixa desaparecer apenas porque o grupo específico não foi cadastrado.
+    for secao in ("teams_unidades", "teams"):
+        try:
+            url_geral = str(st.secrets[secao].get("geral_logistica", "")).strip()
+            if url_geral:
+                return url_geral, "Secrets — grupo geral (contingência)"
+        except Exception:
+            pass
     try:
         registro = fetch_one("SELECT url FROM webhooks_teams WHERE setor = 'Geral / Logística'")
-        if registro and registro[0]: return registro[0].strip(), "Banco local — grupo geral (contingência)"
+        if registro and registro[0]:
+            return registro[0].strip(), "Banco local — grupo geral (contingência)"
     except Exception:
         pass
     return "", "Não configurado"
@@ -3783,8 +3773,9 @@ def disparar_teams(webhook_url, titulo, mensagem):
         if tentativa < 2: time.sleep(1 + tentativa)
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
-def _limpar_texto_extra_trello(texto):
-    """Remove atividade padrão do Trello e preserva somente conteúdo útil da demanda."""
+
+def _limpar_comentario_trello(texto):
+    """Normaliza comentário humano sem reaproveitar a descrição do cartão."""
     if not texto:
         return ""
     linhas = []
@@ -3793,23 +3784,17 @@ def _limpar_texto_extra_trello(texto):
         if not limpa:
             continue
         norm = remover_acentos(re.sub(r"[*_`]", "", limpa)).upper()
-        # Ex.: **Fulano** adicionou este cartão a EM ROTA [20 de ago...](link)
-        if "ADICIONOU ESTE CARTAO A" in norm and "EM ROTA" in norm:
+        # Defesa extra: comentários que apenas reproduzam uma movimentação automática.
+        if "ADICIONOU ESTE CARTAO A" in norm or "MOVEU ESTE CARTAO" in norm:
             continue
         linhas.append(limpa)
     return "\n".join(linhas).strip()
 
-def extrair_observacoes_trello(card, acoes=None, limite=1200):
-    """Retorna SOMENTE comentários humanos do cartão.
 
-    A descrição do cartão não entra aqui porque ela já é a fonte usada para extrair
-    origem, destino e materiais. Colocá-la novamente no alerta do Teams repetia toda
-    a lista de materiais. Atividades automáticas (ex.: mover o cartão para EM ROTA,
-    CONCLUÍDAS etc.) também não entram: na API do Trello elas não são `commentCard`.
-    """
-    textos = []
+def extrair_comentarios_trello(card, acoes=None, limite=1400):
+    """Pega somente ações commentCard; movimentos de lista ficam automaticamente fora."""
     card_id = str((card or {}).get("id", ""))
-
+    comentarios, vistos = [], set()
     for acao in acoes or []:
         if str(acao.get("type", "")) != "commentCard":
             continue
@@ -3817,34 +3802,25 @@ def extrair_observacoes_trello(card, acoes=None, limite=1200):
         card_acao = dados.get("card") or {}
         if card_id and str(card_acao.get("id", "")) != card_id:
             continue
-
-        comentario = _limpar_texto_extra_trello(dados.get("text", ""))
-        if comentario:
-            textos.append(comentario)
-
-    # Evita repetir o mesmo comentário caso o JSON do Trello traga ações duplicadas.
-    unicos, vistos = [], set()
-    for texto in textos:
-        chave = re.sub(r"\s+", " ", remover_acentos(texto).upper()).strip()
-        if chave and chave not in vistos:
-            vistos.add(chave)
-            unicos.append(texto)
-
-    resultado = "\n\n".join(unicos).strip()
-    if len(resultado) > limite:
-        resultado = resultado[:limite - 3].rstrip() + "..."
-    return resultado
+        comentario = _limpar_comentario_trello(dados.get("text", ""))
+        if not comentario:
+            continue
+        chave = re.sub(r"\s+", " ", remover_acentos(comentario).upper()).strip()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        comentarios.append(comentario)
+    resultado = "\n\n".join(comentarios).strip()
+    return resultado if len(resultado) <= limite else resultado[:limite - 3].rstrip() + "..."
 
 
 def formatar_materiais_teams(materiais):
-    """Formata os materiais em lista vertical para o alerta do Teams."""
-    texto = str(materiais or "").replace("\r", "").strip()
-    if not texto:
+    """Um material por linha no Teams; nunca repete a descrição completa do Trello."""
+    texto_materiais = str(materiais or "").replace("\r", "").strip()
+    if not texto_materiais:
         return "- Ver Trello"
-
-    partes = re.split(r"\s*\|\s*|\n+", texto)
     itens, vistos = [], set()
-    for parte in partes:
+    for parte in re.split(r"\s*\|\s*|\n+", texto_materiais):
         item = re.sub(r"^[\-•▪◦]+\s*", "", str(parte)).strip()
         item = re.sub(r"\s+", " ", item)
         if not item:
@@ -3854,108 +3830,156 @@ def formatar_materiais_teams(materiais):
             continue
         vistos.add(chave)
         itens.append(item)
+    return "\n".join(f"- {item}" for item in itens) if itens else "- Ver Trello"
 
-    if not itens:
-        return "- Ver Trello"
-    return "\n".join(f"- {item}" for item in itens)
+
+def _garantir_tabela_notificacoes_teams():
+    """Cria controle isolado de Teams sem alterar historico_concluidos.
+
+    Se o banco negar DDL, o app continua normalmente usando apenas session_state.
+    Assim uma melhoria de Teams nunca derruba a inicialização do Supabase.
+    """
+    chave = "_teams_tabela_notificacoes_ok"
+    if chave in st.session_state:
+        return bool(st.session_state[chave])
+    try:
+        execute_db(
+            "CREATE TABLE IF NOT EXISTS teams_notificacoes ("
+            "card_id TEXT PRIMARY KEY, data TEXT, enviado BOOLEAN NOT NULL DEFAULT FALSE, "
+            "tentativa_em TEXT, erro TEXT)"
+        )
+        st.session_state[chave] = True
+    except Exception:
+        st.session_state[chave] = False
+    return bool(st.session_state[chave])
+
+
+def _estado_notificacao_teams(card_id):
+    card_id = str(card_id or "")
+    if not card_id:
+        return None
+    if _garantir_tabela_notificacoes_teams():
+        try:
+            row = fetch_one(
+                "SELECT enviado, tentativa_em, erro FROM teams_notificacoes WHERE card_id=:id",
+                {"id": card_id},
+            )
+            if row:
+                return {"enviado": bool(row[0]), "tentativa_em": row[1] or "", "erro": row[2] or ""}
+        except Exception:
+            pass
+    return st.session_state.get("_teams_notificacoes_sessao", {}).get(card_id)
+
+
+def _registrar_notificacao_teams(card_id, enviado, erro=""):
+    card_id = str(card_id or "")
+    tentativa_em = datetime.now(FUSO_LOCAL).isoformat(timespec="seconds")
+    estado = {"enviado": bool(enviado), "tentativa_em": tentativa_em, "erro": str(erro or "")[:500]}
+    sessao = st.session_state.setdefault("_teams_notificacoes_sessao", {})
+    sessao[card_id] = estado
+    if _garantir_tabela_notificacoes_teams():
+        try:
+            execute_db(
+                "INSERT INTO teams_notificacoes (card_id, data, enviado, tentativa_em, erro) "
+                "VALUES (:id, :data, :enviado, :tentativa, :erro) "
+                "ON CONFLICT (card_id) DO UPDATE SET data=EXCLUDED.data, enviado=EXCLUDED.enviado, "
+                "tentativa_em=EXCLUDED.tentativa_em, erro=EXCLUDED.erro",
+                {"id": card_id, "data": DATA_HOJE_REAL_STR, "enviado": bool(enviado), "tentativa": tentativa_em, "erro": estado["erro"]},
+            )
+        except Exception:
+            pass
+    return estado
+
+
+def _pode_tentar_teams_agora(card_id, intervalo_segundos=120):
+    estado = _estado_notificacao_teams(card_id)
+    if estado is None:
+        return True
+    if estado.get("enviado") is True:
+        return False
+    tentativa = str(estado.get("tentativa_em", "") or "")
+    if not tentativa:
+        return True
+    try:
+        anterior = datetime.fromisoformat(tentativa)
+        if anterior.tzinfo is None:
+            anterior = anterior.replace(tzinfo=FUSO_LOCAL)
+        return (datetime.now(FUSO_LOCAL) - anterior).total_seconds() >= intervalo_segundos
+    except Exception:
+        return True
+
+
+def _montar_mensagem_entrega_teams(short_name, destino, materiais, momento, comentarios="", manual=False):
+    cabecalho = (
+        "✅ **Os materiais foram informados como entregues pela Torre de Controle.**"
+        if manual else
+        "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**"
+    )
+    mensagem = (
+        f"{cabecalho}\n\n"
+        f"**Obra:** {short_name}\n\n"
+        f"**Local:** {destino}\n\n"
+        f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
+        f"**Data e Hora:** {momento.strftime('%d/%m/%Y às %H:%M')}"
+    )
+    if comentarios:
+        mensagem += f"\n\n**Comentários do Trello:**\n{comentarios}"
+    if manual:
+        mensagem += "\n\n**Origem do aviso:** Informado manualmente na aba Demandas Ativas."
+    return mensagem
 
 
 def informar_entrega_manual_teams(card_id, tarefa):
-    """Fallback manual: registra a entrega e dispara o mesmo alerta do Teams.
-
-    A automação do Trello continua sendo o caminho principal. Este método só deve
-    ser usado quando a baixa automática não sinalizar. Não move o cartão no Trello;
-    apenas registra a entrega no histórico interno e informa o Teams imediatamente.
-    """
+    """Contingência manual. O automático de 2 minutos continua prioritário."""
     card_id = str(card_id or "").strip()
     tarefa = tarefa or {}
     if not card_id:
         return False, "Demanda sem identificador do Trello."
 
     agora = datetime.now(FUSO_LOCAL)
-    data_str = agora.strftime("%d/%m/%Y")
-    hora_str = agora.strftime("%H:%M")
+    short_name = str(tarefa.get("Obra", "") or "")
+    origem = str(tarefa.get("Origem", "") or "")
+    destino = str(tarefa.get("Destino", "") or "")
+    materiais = str(tarefa.get("Materiais", "") or "")
+    comentarios = ""
 
-    # Usa o cartão real para preservar nome, descrição e comentários sempre que possível.
-    card = None
-    acoes = []
     try:
         dados_trello = obter_dados_trello(forcar=True) or {}
         card = next((c for c in dados_trello.get("cards", []) if str(c.get("id", "")) == card_id), None)
-        acoes = dados_trello.get("actions", []) or []
+        if card:
+            nome_trello, origem_trello, destino_trello, materiais_trello = extrair_dados_completos(card.get("desc", ""), card.get("name", ""))
+            short_name = nome_trello or short_name
+            origem = origem_trello or origem
+            destino = destino_trello or destino
+            materiais = materiais_trello or materiais
+            comentarios = extrair_comentarios_trello(card, dados_trello.get("actions", []) or [])
     except Exception:
-        card = None
-        acoes = []
+        pass
 
-    if card:
-        short_name, origem, destino, materiais = extrair_dados_completos(
-            card.get("desc", ""), card.get("name", "")
-        )
-        observacao_trello = extrair_observacoes_trello(card, acoes)
-    else:
-        short_name = str(tarefa.get("Obra", "") or "")
-        origem = str(tarefa.get("Origem", "") or "")
-        destino = str(tarefa.get("Destino", "") or "")
-        materiais = str(tarefa.get("Materiais", "") or "")
-        observacao_trello = ""
-
-    # Se o parser do Trello vier incompleto, reaproveita os dados da rota.
-    short_name = short_name or str(tarefa.get("Obra", "") or "")
-    origem = origem or str(tarefa.get("Origem", "") or "")
-    destino = destino or str(tarefa.get("Destino", "") or "")
-    materiais = materiais or str(tarefa.get("Materiais", "") or "")
-    supervisor = str(tarefa.get("Supervisor", "") or SUPERVISORES_MAP.get(destino, "Sede / Logística"))
-
-    # Registra a baixa interna antes do envio. Assim o roteiro/app também reconhece
-    # a entrega informada manualmente, mesmo se o webhook estiver temporariamente fora.
+    # Usa apenas as colunas antigas e estáveis do histórico.
     execute_db(
-        "INSERT INTO historico_concluidos "
-        "(id, obra, origem, destino, materiais, data_conclusao, hora_conclusao, teams_notificado, teams_tentativas, teams_ultimo_erro) "
-        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora, FALSE, 0, NULL) "
+        "INSERT INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) "
+        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora) "
         "ON CONFLICT (id) DO UPDATE SET obra=EXCLUDED.obra, origem=EXCLUDED.origem, destino=EXCLUDED.destino, "
         "materiais=EXCLUDED.materiais, data_conclusao=EXCLUDED.data_conclusao, hora_conclusao=EXCLUDED.hora_conclusao",
-        {
-            "id": card_id,
-            "obra": short_name,
-            "origem": origem,
-            "destino": destino,
-            "mat": materiais,
-            "data": data_str,
-            "hora": hora_str,
-        },
+        {"id": card_id, "obra": short_name, "origem": origem, "destino": destino, "mat": materiais,
+         "data": DATA_HOJE_REAL_STR, "hora": agora.strftime("%H:%M")},
     )
 
-    url_webhook, fonte_webhook = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
-    mensagem = (
-        "✅ **Os materiais foram informados como entregues pela Torre de Controle.**\n\n"
-        f"**Obra:** {short_name}\n\n"
-        f"**Local:** {destino}\n\n"
-        f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
-        f"**Data e Hora:** {agora.strftime('%d/%m/%Y às %H:%M')}\n\n"
-        "**Origem do aviso:** Informado manualmente na aba Demandas Ativas."
-    )
-    if observacao_trello:
-        mensagem += f"\n\n**Comentários do Trello:**\n{observacao_trello}"
-
+    supervisor = str(tarefa.get("Supervisor", "") or SUPERVISORES_MAP.get(destino, "Sede / Logística"))
+    url_webhook, fonte = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
+    mensagem = _montar_mensagem_entrega_teams(short_name, destino, materiais, agora, comentarios, manual=True)
     if not url_webhook:
-        enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte_webhook})."
-    else:
-        enviado, detalhe = disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
+        detalhe = f"Webhook do Teams não configurado ({fonte})."
+        _registrar_notificacao_teams(card_id, False, detalhe)
+        return False, detalhe
 
+    enviado, detalhe = disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
+    _registrar_notificacao_teams(card_id, enviado, "" if enviado else detalhe)
     if enviado:
-        execute_db(
-            "UPDATE historico_concluidos SET teams_notificado=TRUE, "
-            "teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=NULL WHERE id=:id",
-            {"id": card_id},
-        )
-        return True, "Entrega registrada e alerta enviado ao Teams."
+        return True, "Entrega registrada e Teams avisado."
+    return False, f"Entrega registrada, mas o Teams ainda não confirmou: {detalhe}"
 
-    execute_db(
-        "UPDATE historico_concluidos SET teams_notificado=FALSE, "
-        "teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=:erro WHERE id=:id",
-        {"id": card_id, "erro": str(detalhe)[:500]},
-    )
-    return False, f"Entrega registrada, mas o Teams não confirmou o alerta: {detalhe}"
 
 def is_in_ceara(lat, lon): return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
@@ -5072,6 +5096,11 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     if not tarefas:
         return []
 
+    ids_pre_coletados = {str(t.get("id", "")) for t in (tarefas_pre_coletadas or [])}
+
+    def tarefa_pre_coletada(tarefa):
+        return str(tarefa.get("id", "")) in ids_pre_coletados
+
     def numero_seguro(valor, padrao):
         try:
             numero = float(valor)
@@ -5080,20 +5109,11 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             return padrao
 
     total_tarefas = len(tarefas)
-    ids_pre_coletadas = {
-        str(t.get('id', '') or '') for t in (tarefas_pre_coletadas or [])
-        if str(t.get('id', '') or '')
-    }
-
-    def tarefa_ja_coletada(tarefa):
-        tarefa_id = str(tarefa.get('id', '') or '')
-        return bool(tarefa_id and tarefa_id in ids_pre_coletadas)
-
     if total_tarefas > 24:
         # Contingência para dias excepcionalmente grandes: mantém as mesmas
         # regras logísticas sem deixar o aplicativo preso em busca combinatória.
-        pendentes = [t for t in tarefas if not tarefa_ja_coletada(t)]
-        no_carro = [t for t in tarefas if tarefa_ja_coletada(t)]
+        pendentes = [t for t in tarefas if not tarefa_pre_coletada(t)]
+        no_carro = [t for t in tarefas if tarefa_pre_coletada(t)]
         atual = ponto_inicial
         ordem = []
         for _ in range(total_tarefas * 2 + 5):
@@ -5162,15 +5182,15 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         menor_tempo = min(get_dist_dur(atual, p)[1] for p in pontos)
         return menor_tempo * 0.35 + len(pontos) * 0.8
 
-    mascara_pre_coletadas = 0
+    coletadas_iniciais = 0
     for indice, tarefa in enumerate(tarefas):
-        if tarefa_ja_coletada(tarefa):
-            mascara_pre_coletadas |= 1 << indice
+        if tarefa_pre_coletada(tarefa):
+            coletadas_iniciais |= 1 << indice
 
     estado_inicial = {
         "atual": ponto_inicial,
         "hora": float(horario_inicio),
-        "coletadas": mascara_pre_coletadas,
+        "coletadas": coletadas_iniciais,
         "entregues": 0,
         "ordem": tuple(),
         "custo": 0.0,
@@ -5303,8 +5323,8 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
 
     # Se a busca atingir o limite de tempo, conclui de forma determinística
     # com o motor guloso seguro, sem travar a geração da rota.
-    pendentes = list(tarefas)
-    no_carro = []
+    pendentes = [t for t in tarefas if not tarefa_pre_coletada(t)]
+    no_carro = [t for t in tarefas if tarefa_pre_coletada(t)]
     atual = ponto_inicial
     ordem = []
     for _ in range(total_tarefas * 2 + 5):
@@ -5748,15 +5768,13 @@ def loop_automacoes_background():
         if data:
             trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
             cards = data.get('cards', [])
-            acoes = data.get('actions', [])
-            
-            registros_hist = fetch_all(
-                "SELECT id, teams_notificado, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data",
-                {"data": DATA_HOJE_REAL_STR},
-            )
-            historico_hoje = {
-                str(r[0]): {"teams_notificado": r[1], "hora": r[2]}
-                for r in registros_hist
+            acoes = data.get('actions', []) or []
+
+            ids_historico = {
+                str(r[0]) for r in fetch_all(
+                    "SELECT id FROM historico_concluidos WHERE data_conclusao = :data",
+                    {"data": DATA_HOJE_REAL_STR},
+                )
             }
 
             novas_entregas = 0
@@ -5772,82 +5790,56 @@ def loop_automacoes_background():
 
                 card_id = str(c['id'])
                 short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
-                hora_str = momento_conclusao.strftime("%H:%M")
-                registro_existente = historico_hoje.get(card_id)
+                era_novo = card_id not in ids_historico
 
-                # A baixa é registrada imediatamente para atualizar roteiro/app, mesmo se
-                # o Teams estiver temporariamente fora. A notificação fica pendente e será
-                # tentada novamente nos próximos ciclos até receber HTTP 2xx.
-                if registro_existente is None:
+                # A baixa entra no histórico independentemente do Teams. Não alteramos
+                # o schema estável de historico_concluidos para controlar notificação.
+                if era_novo:
                     execute_db(
-                        "INSERT INTO historico_concluidos "
-                        "(id, obra, origem, destino, materiais, data_conclusao, hora_conclusao, teams_notificado, teams_tentativas, teams_ultimo_erro) "
-                        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora, FALSE, 0, NULL) "
-                        "ON CONFLICT (id) DO UPDATE SET obra=EXCLUDED.obra, origem=EXCLUDED.origem, destino=EXCLUDED.destino, "
-                        "materiais=EXCLUDED.materiais, data_conclusao=EXCLUDED.data_conclusao, hora_conclusao=EXCLUDED.hora_conclusao",
-                        {"id": c['id'], "obra": short_name, "origem": origem, "destino": destino, "mat": materiais, "data": DATA_HOJE_REAL_STR, "hora": hora_str},
+                        "INSERT INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) "
+                        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora) "
+                        "ON CONFLICT (id) DO UPDATE SET hora_conclusao=EXCLUDED.hora_conclusao",
+                        {"id": c['id'], "obra": short_name, "origem": origem, "destino": destino, "mat": materiais,
+                         "data": DATA_HOJE_REAL_STR, "hora": momento_conclusao.strftime("%H:%M")},
                     )
-                    historico_hoje[card_id] = {"teams_notificado": False, "hora": hora_str}
-                    registro_existente = historico_hoje[card_id]
+                    ids_historico.add(card_id)
                     novas_entregas += 1
-                else:
-                    # Mantém os dados do histórico coerentes caso o cartão tenha sido
-                    # ajustado no Trello antes da baixa.
-                    execute_db(
-                        "UPDATE historico_concluidos SET obra=:obra, origem=:origem, destino=:destino, materiais=:mat, hora_conclusao=:hora WHERE id=:id",
-                        {"id": c['id'], "obra": short_name, "origem": origem, "destino": destino, "mat": materiais, "hora": hora_str},
-                    )
 
-                status_teams = registro_existente.get("teams_notificado")
+                estado_teams = _estado_notificacao_teams(card_id)
                 minutos_desde_baixa = max(0.0, (agora_loop - momento_conclusao).total_seconds() / 60.0)
 
-                # Mantém a automação no mesmo ritmo operacional do Trello: 2 minutos.
-                # NULL = registro legado; só tenta recuperar se a baixa ocorreu nos últimos
-                # 2 minutos. FALSE = notificação nova pendente; ela é tentada novamente
-                # a cada ciclo de 2 minutos até o Teams confirmar o recebimento.
-                deve_notificar = (status_teams is False) or (status_teams is None and minutos_desde_baixa <= 2)
+                # Registro legado sem controle de Teams só é recuperado se a baixa for
+                # recente. Uma notificação que falhou fica pendente e tenta de novo a
+                # cada 2 minutos. Uma baixa recém-detectada tenta imediatamente.
+                if estado_teams is None:
+                    deve_notificar = era_novo or minutos_desde_baixa <= 2.0
+                else:
+                    deve_notificar = _pode_tentar_teams_agora(card_id, INTERVALO_TRELLO_SEGUNDOS)
                 if not deve_notificar:
                     continue
 
-                url_webhook, fonte_webhook = obter_webhook_teams(
+                comentarios = extrair_comentarios_trello(c, acoes)
+                mensagem = _montar_mensagem_entrega_teams(
+                    short_name, destino, materiais, momento_conclusao, comentarios, manual=False
+                )
+                url_webhook, fonte = obter_webhook_teams(
                     destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name
                 )
-                observacao_trello = extrair_observacoes_trello(c, acoes)
-                mensagem = (
-                    f"✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
-                    f"**Obra:** {short_name}\n\n"
-                    f"**Local:** {destino}\n\n"
-                    f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
-                    f"**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}"
-                )
-                if observacao_trello:
-                    mensagem += f"\n\n**Comentários do Trello:**\n{observacao_trello}"
-
                 if not url_webhook:
-                    enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte_webhook})."
+                    enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte})."
                 else:
                     enviado, detalhe = disparar_teams(
                         url_webhook, f"✅ Entrega concluída — {destino}", mensagem
                     )
-
-                if enviado:
-                    execute_db(
-                        "UPDATE historico_concluidos SET teams_notificado=TRUE, teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=NULL WHERE id=:id",
-                        {"id": c['id']},
-                    )
-                    historico_hoje[card_id]["teams_notificado"] = True
-                    st.session_state.pop("_teams_ultimo_erro", None)
-                else:
-                    execute_db(
-                        "UPDATE historico_concluidos SET teams_notificado=FALSE, teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=:erro WHERE id=:id",
-                        {"id": c['id'], "erro": str(detalhe)[:500]},
-                    )
-                    historico_hoje[card_id]["teams_notificado"] = False
+                _registrar_notificacao_teams(card_id, enviado, "" if enviado else detalhe)
+                if not enviado:
                     st.session_state["_teams_ultimo_erro"] = f"{short_name}: {detalhe}"
 
             if novas_entregas > 0:
                 st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
-    except: pass
+    except Exception:
+        # O rastreador e o restante do app nunca param por uma falha de aviso no Teams.
+        pass
 
     try:
         sessao, pagina = st.session_state.get("protege_sessao"), st.session_state.get("protege_pagina")
@@ -6177,20 +6169,10 @@ with tab_demandas:
     st.caption("⏱️ Os tempos de coleta/entrega representam a complexidade de cada demanda. Quando várias demandas acontecem no mesmo endereço, o sistema calcula uma única permanência no local — não soma 10/20 minutos completos para cada cartão.")
     st.divider()
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
-    st.caption("A baixa do Trello continua sendo automática a cada 2 minutos. O botão **Informar entrega** é apenas uma contingência caso o alerta automático não apareça no Teams.")
+    st.caption("A baixa automática do Trello continua sendo verificada a cada 2 minutos. **Informar entrega** é somente a contingência manual.")
 
-    df_entregues_hoje = get_df(
-        "SELECT id, hora_conclusao, teams_notificado, teams_ultimo_erro FROM historico_concluidos WHERE data_conclusao = :data",
-        {"data": DATA_REF_ROTA_STR},
-    )
+    df_entregues_hoje = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
     dict_concluidos_monitor = dict(zip(df_entregues_hoje['id'].astype(str), df_entregues_hoje['hora_conclusao']))
-    status_teams_monitor = {
-        str(r['id']): {
-            "notificado": r.get('teams_notificado'),
-            "erro": r.get('teams_ultimo_erro', ''),
-        }
-        for _, r in df_entregues_hoje.iterrows()
-    } if not df_entregues_hoje.empty else {}
     demandas_na_rota = {str(t.get('id', '')): t for step in st.session_state.get('route_steps', []) for acao, t in step.get('actions', [])}
 
     feedback_manual = st.session_state.pop("_feedback_informar_entrega", None)
@@ -6198,34 +6180,32 @@ with tab_demandas:
         ok_feedback, texto_feedback = feedback_manual
         (st.success if ok_feedback else st.warning)(texto_feedback)
 
-    if not demandas_na_rota: st.info("Gere uma rota na aba 'Roteiro do Davi' para monitorar o status das entregas aqui.")
+    if not demandas_na_rota:
+        st.info("Gere uma rota na aba 'Roteiro do Davi' para monitorar o status das entregas aqui.")
     else:
         for card_id, row in demandas_na_rota.items():
-            c1, c_status, c_manual = st.columns([3.4, 2.15, 1.55])
+            c1, c_status, c_manual = st.columns([3.25, 1.9, 1.55])
             c1.markdown(f"📦 **{row.get('Obra', '')} — {row.get('Destino', '')}** (Resp: {row.get('Supervisor', 'Sede')}) <br><span style='font-size:12px; color:gray;'>{row.get('Materiais', '')}</span>", unsafe_allow_html=True)
 
-            info_teams = status_teams_monitor.get(card_id, {})
-            teams_ok = info_teams.get("notificado") is True
+            estado_teams = _estado_notificacao_teams(card_id)
+            teams_ok = bool(estado_teams and estado_teams.get("enviado") is True)
             if card_id in dict_concluidos_monitor:
                 c_status.success(f"✅ **Entregue às {dict_concluidos_monitor[card_id]}**")
                 if teams_ok:
                     c_status.caption("📣 Teams avisado")
-                elif info_teams.get("notificado") is False:
+                elif estado_teams is not None:
                     c_status.caption("⚠️ Teams pendente")
             else:
                 c_status.warning("⏳ Pendente / No Carro")
 
-            # Se o Teams já confirmou, evita duplicidade. Caso contrário, o botão fica
-            # disponível tanto para uma entrega ainda sem baixa automática quanto para
-            # uma baixa cuja notificação falhou.
             if c_manual.button(
                 "📣 Informar entrega",
                 key=f"informar_entrega_manual_{card_id}",
                 use_container_width=True,
                 disabled=teams_ok,
                 help=(
-                    "O Teams já confirmou este alerta." if teams_ok
-                    else "Contingência manual. A automação do Trello continua prioritária e roda a cada 2 minutos."
+                    "O Teams já confirmou este aviso." if teams_ok
+                    else "Use apenas se o automático de 2 minutos não sinalizar a entrega."
                 ),
             ):
                 try:
@@ -6769,112 +6749,94 @@ with tab_roteiro:
             df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
-            past_route_steps = []
-
             current_time_tsp = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
             current_point = ponto_saida
-
-            # Tudo que sai da base deve ser carregado UMA VEZ na preparação das
-            # 07:30–08:00. Ao recalcular a rota durante o dia, essas coletas não
-            # podem voltar como uma nova "PARADA: ESCRITÓRIO".
-            registros_ativos_rota = df_ativos.to_dict('records')
             base_canonica = canonicalizar_ponto_rota(ponto_saida)
+
+            registros_ativos_rota = [
+                t for t in df_ativos.to_dict('records')
+                if str(t.get('id', '')) not in dict_concluidos_torre
+            ]
             tarefas_base_ativas = [
                 t for t in registros_ativos_rota
-                if str(t.get('id', '')) not in dict_concluidos_torre
-                and canonicalizar_ponto_rota(t.get('Origem', '')) == base_canonica
+                if canonicalizar_ponto_rota(t.get('Origem', '')) == base_canonica
             ]
             ids_base_ativos = {str(t.get('id', '')) for t in tarefas_base_ativas}
 
+            # Reaproveita somente paradas realmente concluídas. Qualquer coleta pura
+            # no ponto de saída é dobrada para dentro da preparação inicial, mesmo que
+            # uma versão antiga a tenha criado como "PARADA: ESCRITÓRIO".
+            historico_route_steps = []
+            acoes_preparacao_antigas = []
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-            preparacao_salva = None
             if rota_salva:
                 old_steps = json.loads(rota_salva[0])
                 for indice_old, step in enumerate(old_steps):
                     if step.get('type') != 'stop':
                         continue
-
-                    destino_step = canonicalizar_ponto_rota(step.get('destino', ''))
-                    fonte_step = remover_acentos(str(step.get('tempo_local_fonte', '') or '')).lower()
-                    eh_preparacao = (
-                        destino_step == base_canonica
-                        and (indice_old == 0 or 'preparacao' in fonte_step)
-                        and float(step.get('dist', 0) or 0) <= 0.10
-                    )
-
-                    if eh_preparacao and preparacao_salva is None:
-                        preparacao_salva = step.copy()
+                    acoes_step = step.get('actions', []) or []
+                    destino_base = canonicalizar_ponto_rota(step.get('destino', '')) == base_canonica
+                    so_coleta = bool(acoes_step) and all(a == 'COLETAR' for a, _t in acoes_step)
+                    fonte_prep = 'preparacao' in remover_acentos(str(step.get('tempo_local_fonte', '') or '')).lower()
+                    if destino_base and (so_coleta or fonte_prep):
+                        for acao, tarefa in acoes_step:
+                            tarefa_id = str(tarefa.get('id', ''))
+                            if acao == 'COLETAR' and (tarefa_id in dict_concluidos_torre or tarefa_id in ids_base_ativos):
+                                acoes_preparacao_antigas.append((acao, tarefa))
                         continue
 
-                    # Fora da preparação, só preservamos fisicamente o que já foi
-                    # concluído. O restante será reotimizado a partir do ponto atual.
                     c_acts = [
-                        (a, t) for a, t in step.get('actions', [])
+                        (a, t) for a, t in acoes_step
                         if str(t.get('id', '')) in dict_concluidos_torre
                     ]
                     if c_acts:
                         new_s = step.copy()
                         new_s['actions'] = c_acts
-                        past_route_steps.append(new_s)
+                        historico_route_steps.append(new_s)
 
-            # Reconstrói uma única preparação no início da rota. Mantém as coletas
-            # já concluídas que existiam na preparação salva e acrescenta TODAS as
-            # demandas ainda ativas cuja origem é a base. Assim elas aparecem na
-            # preparação, mas seguem pendentes até a entrega no destino.
-            acoes_preparacao = []
-            ids_prep_vistos = set()
-            if preparacao_salva:
-                for acao, tarefa in preparacao_salva.get('actions', []):
-                    tarefa_id = str(tarefa.get('id', ''))
-                    if acao == 'COLETAR' and tarefa_id in dict_concluidos_torre and tarefa_id not in ids_prep_vistos:
-                        acoes_preparacao.append((acao, tarefa))
-                        ids_prep_vistos.add(tarefa_id)
-
-            for tarefa in tarefas_base_ativas:
-                tarefa_id = str(tarefa.get('id', ''))
-                if tarefa_id and tarefa_id not in ids_prep_vistos:
-                    acoes_preparacao.append(('COLETAR', tarefa))
-                    ids_prep_vistos.add(tarefa_id)
-
-            if acoes_preparacao:
-                prep = (preparacao_salva or {}).copy()
-                prep.update({
-                    'type': 'stop',
-                    'destino': ponto_saida,
-                    'dist': 0.0,
-                    'travel_mins': 0.0,
-                    'travel_mins_api': 0.0,
-                    'tempo_local': 30,
-                    'tempo_local_fonte': 'preparação fixa da base',
-                    'chegada': format_time(parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR)) - 30),
-                    'saida': obter_hora_inicio_rota(DATA_REF_ROTA_STR),
-                    'actions': acoes_preparacao,
-                })
-                past_route_steps.insert(0, prep)
-
-            # A posição/horário corrente deve ser a última parada realmente concluída.
-            # Se só existe a preparação, continuamos na base às 08:00.
-            if past_route_steps:
-                current_point = past_route_steps[-1]['destino']
+            if historico_route_steps:
+                current_point = historico_route_steps[-1]['destino']
                 try:
-                    h, m = map(int, str(past_route_steps[-1]['saida']).split(':'))
+                    h, m = map(int, str(historico_route_steps[-1]['saida']).split(':'))
                     current_time_tsp = h * 60 + m
                 except Exception:
                     pass
 
-            # As coletas da base já estão fisicamente no veículo desde a preparação:
-            # elas saem de "a coletar" e entram direto em "carrying".
-            unpicked = [
-                t for t in registros_ativos_rota
-                if str(t.get('id', '')) not in dict_concluidos_torre
-                and str(t.get('id', '')) not in ids_base_ativos
-            ]
+            # Uma única preparação fixa 07:30–08:00, contendo tudo que precisa sair
+            # do escritório/base. Baixa na entrega não transforma coleta em nova parada.
+            acoes_preparacao = []
+            ids_prep = set()
+            for acao, tarefa in acoes_preparacao_antigas:
+                tarefa_id = str(tarefa.get('id', ''))
+                if tarefa_id and tarefa_id not in ids_prep:
+                    acoes_preparacao.append((acao, tarefa))
+                    ids_prep.add(tarefa_id)
+            for tarefa in tarefas_base_ativas:
+                tarefa_id = str(tarefa.get('id', ''))
+                if tarefa_id and tarefa_id not in ids_prep:
+                    acoes_preparacao.append(('COLETAR', tarefa))
+                    ids_prep.add(tarefa_id)
+
+            past_route_steps = []
+            if acoes_preparacao:
+                inicio_rota_min = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
+                past_route_steps.append({
+                    'type': 'stop', 'destino': ponto_saida, 'dist': 0.0,
+                    'travel_mins': 0.0, 'travel_mins_api': 0.0,
+                    'tempo_local': 30, 'tempo_local_fonte': 'preparação fixa da base',
+                    'chegada': format_time(inicio_rota_min - 30),
+                    'saida': format_time(inicio_rota_min),
+                    'actions': acoes_preparacao,
+                })
+            past_route_steps.extend(historico_route_steps)
+
+            # O material da base já está no carro às 08:00: não pode reaparecer como
+            # candidato de coleta no escritório durante o restante do roteiro.
+            unpicked = [t for t in registros_ativos_rota if str(t.get('id', '')) not in ids_base_ativos]
 
             pontos_brutos = (
-                [ponto_saida]
-                + [s['destino'] for s in past_route_steps]
-                + [t['Origem'] for t in unpicked]
-                + [t['Destino'] for t in unpicked]
+                [ponto_saida] + [s['destino'] for s in past_route_steps]
+                + [t['Origem'] for t in unpicked] + [t['Destino'] for t in unpicked]
                 + [t['Destino'] for t in tarefas_base_ativas]
             )
             pontos_necessarios = {canonicalizar_ponto_rota(p) for p in pontos_brutos if canonicalizar_ponto_rota(p) not in {"", "DESCONHECIDO", "NAN", "NONE"}}
@@ -6945,8 +6907,6 @@ with tab_roteiro:
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
-            # Materiais coletados no escritório durante a preparação já começam
-            # no veículo e não geram uma parada futura na base.
             carrying = list(tarefas_base_ativas)
             current = current_point
             route_steps_new = []
