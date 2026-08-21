@@ -3296,76 +3296,98 @@ if modo_url == "true":
     st.divider()
     st.markdown("#### 🗺️ Visão Geral da Rota")
     m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
-    path_points_mobile = []
-    offsets_dict_mobile = {}
-    
+    pontos_reais_mobile = []
+    if p_saida in locais_dict:
+        pontos_reais_mobile.append([float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])])
+    for i, step in enumerate(route_steps):
+        if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+            _lat_r, _lon_r = locais_dict[step['destino']]
+            pontos_reais_mobile.append([float(_lat_r), float(_lon_r)])
+
+    def _escala_visual_mobile(pontos):
+        if len(pontos) < 2:
+            return 0.75
+        lat_ref = sum(p[0] for p in pontos) / len(pontos)
+        span_lat_km = (max(p[0] for p in pontos) - min(p[0] for p in pontos)) * 111.0
+        span_lon_km = (max(p[1] for p in pontos) - min(p[1] for p in pontos)) * 111.0 * max(math.cos(math.radians(lat_ref)), 0.2)
+        return max(0.70, min(2.0, max(span_lat_km, span_lon_km, 1.0) * 0.070))
+
+    distancia_visual_mobile = _escala_visual_mobile(pontos_reais_mobile)
     marcadores_posicionados_mobile = []
 
     def apply_offset_mobile(lat, lon):
-        """Afasta visualmente marcadores próximos para que os números não fiquem sobrepostos."""
         lat, lon = float(lat), float(lon)
         if not marcadores_posicionados_mobile:
             marcadores_posicionados_mobile.append((lat, lon))
             return lat, lon
-
-        # Em zoom de rota, marcadores de 30 px podem se sobrepor mesmo a algumas centenas de metros.
-        distancia_min_km = 0.28
-        conflito = any(calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_min_km for p_lat, p_lon in marcadores_posicionados_mobile)
-        if not conflito:
+        if all(calcular_distancia_km(lat, lon, p_lat, p_lon) >= distancia_visual_mobile for p_lat, p_lon in marcadores_posicionados_mobile):
             marcadores_posicionados_mobile.append((lat, lon))
             return lat, lon
-
-        import math
-        # Procura uma posição visual próxima, em anéis, preservando o ponto real por uma linha-guia.
-        for tentativa in range(1, 25):
-            anel = 1 + (tentativa - 1) // 8
-            angulo = math.radians(((tentativa - 1) % 8) * 45 + anel * 17)
-            raio_km = 0.14 * anel
+        for tentativa in range(1, 49):
+            anel = 1 + (tentativa - 1) // 12
+            angulo = math.radians(((tentativa - 1) % 12) * 30 + anel * 11)
+            raio_km = distancia_visual_mobile * (0.82 + 0.42 * (anel - 1))
             dlat = (raio_km / 111.0) * math.sin(angulo)
             dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
             candidato = (lat + dlat, lon + dlon)
-            if all(calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= 0.20 for p_lat, p_lon in marcadores_posicionados_mobile):
+            if all(calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= distancia_visual_mobile * 0.92 for p_lat, p_lon in marcadores_posicionados_mobile):
                 marcadores_posicionados_mobile.append(candidato)
                 return candidato
-
-        candidato = (lat - 0.0015, lon + 0.0015)
+        candidato = (lat - distancia_visual_mobile / 111.0, lon + distancia_visual_mobile / 111.0)
         marcadores_posicionados_mobile.append(candidato)
         return candidato
 
     p_num_mapa = 1
-    if p_saida in locais_dict:
-        lat_s, lon_s = apply_offset_mobile(*locais_dict[p_saida])
-        path_points_mobile.append([lat_s, lon_s])
+    pos_base_mobile = apply_offset_mobile(*locais_dict[p_saida]) if p_saida in locais_dict else None
+
+    # Sempre desenha algum traçado: sólido quando é viário, tracejado apenas no fallback.
+    geom_mobile = geometria_rota or []
+    geom_mobile_viaria = bool(st.session_state.get('geometria_viaria', False))
+    if len(geom_mobile) > 1:
+        folium.PolyLine(geom_mobile, color="#FFFFFF", weight=8, opacity=0.80).add_to(m_mobile)
+        folium.PolyLine(
+            geom_mobile, color="#2563eb", weight=5, opacity=0.98,
+            dash_array=None if geom_mobile_viaria else "9,7",
+            tooltip="Traçado da rota" if geom_mobile_viaria else "Ligação aproximada entre as paradas",
+        ).add_to(m_mobile)
 
     for i, step in enumerate(route_steps):
         if step.get('destino') and step['destino'] in locais_dict:
-            if step['type'] in ['lunch', 'return']: continue
-            if (i == 0 and step['destino'] == p_saida): continue 
+            if step.get('type') in ['lunch', 'return']: continue
+            if (i == 0 and step['destino'] == p_saida): continue
 
-            lat_orig, lon_orig = locais_dict[step['destino']]
+            lat_orig, lon_orig = map(float, locais_dict[step['destino']])
             lat, lon = apply_offset_mobile(lat_orig, lon_orig)
-            path_points_mobile.append([lat, lon])
             if calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01:
                 folium.PolyLine(
-                    [[lat_orig, lon_orig], [lat, lon]],
-                    color="#64748b", weight=1.5, opacity=0.75, dash_array="4,5",
-                    tooltip="Marcador deslocado apenas para não ficar escondido",
+                    [[lat_orig, lon_orig], [lat, lon]], color="#475569", weight=2,
+                    opacity=0.90, dash_array="4,5",
+                    tooltip="O círculo foi afastado; a ponta da linha é o local real",
                 ).add_to(m_mobile)
+                folium.CircleMarker([lat_orig, lon_orig], radius=3, color="#475569", weight=1, fill=True, fill_opacity=0.9).add_to(m_mobile)
 
             acoes = [a[0] for a in step.get('actions', [])]
             tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
             fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
-            
             popup_html = f"<b>Parada {p_num_mapa}: {html_escape(str(step['destino']))}</b>"
-            folium.Marker([lat, lon], popup=folium.Popup(popup_html, max_width=280), icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-size: 14px;">{p_num_mapa}</div>''')).add_to(m_mobile)
+            folium.Marker(
+                [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num_mapa}",
+                z_index_offset=1200 + p_num_mapa,
+                icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{p_num_mapa}</div>''')
+            ).add_to(m_mobile)
             p_num_mapa += 1
 
-    if len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m_mobile)
-    if len(path_points_mobile) > 1: m_mobile.fit_bounds(path_points_mobile, padding=(30, 30), max_zoom=14)
-    if p_saida in locais_dict: folium.Marker([path_points_mobile[0][0], path_points_mobile[0][1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m_mobile)
+    if len(pontos_reais_mobile) > 1:
+        m_mobile.fit_bounds(pontos_reais_mobile, padding=(30, 30), max_zoom=14)
+    if p_saida in locais_dict and pos_base_mobile is not None:
+        folium.Marker(
+            [pos_base_mobile[0], pos_base_mobile[1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280),
+            z_index_offset=2500,
+            icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
+        ).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
-    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos<br><span style='font-size:11px;'>Azul = trajeto • cinza pontilhado = marcador deslocado para ficar legível</span></div>", unsafe_allow_html=True)
     st.divider()
     st.caption("Central de Logística APROAR")
     st.stop()
@@ -3530,7 +3552,12 @@ try:
                 st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
                 h, m = map(int, st.session_state['route_steps'][-1]['saida'].split(':'))
                 st.session_state['horario_conclusao_min'] = h * 60 + m
-            st.session_state['geometria_viaria'] = True
+            # Rotas viárias normalmente têm dezenas/centenas de pontos. Se o
+            # fallback salvo contiver apenas os pontos das paradas, não o tratamos
+            # como traçado viário real ao reabrir o aplicativo.
+            _geom_carregada = st.session_state.get('geometria_rota') or []
+            _passos_carregados = st.session_state.get('route_steps') or []
+            st.session_state['geometria_viaria'] = len(_geom_carregada) > max(6, len(_passos_carregados) + 3)
             st.session_state['rota_gerada'] = True
             st.session_state['data_rota'] = DATA_REF_ROTA_STR
 except:
@@ -6392,72 +6419,139 @@ with tab_roteiro:
 
         with col_dir:
             st.subheader("🗺️ Mapa da Rota")
-            # MAPA CLARO (OPENSTREETMAP) RESTAURADO AQUI
+            # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
-            path_points = []
+
+            # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
+            # existem somente para impedir que um número fique escondido por outro.
+            pontos_reais_mapa = []
+            if p_saida in locais_dict:
+                pontos_reais_mapa.append([float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])])
+            for i, step in enumerate(route_steps):
+                if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+                    _lat_real, _lon_real = locais_dict[step['destino']]
+                    pontos_reais_mapa.append([float(_lat_real), float(_lon_real)])
+
+            def _escala_visual_mapa(pontos):
+                if len(pontos) < 2:
+                    return 0.85
+                lat_ref = sum(p[0] for p in pontos) / len(pontos)
+                span_lat_km = (max(p[0] for p in pontos) - min(p[0] for p in pontos)) * 111.0
+                span_lon_km = (max(p[1] for p in pontos) - min(p[1] for p in pontos)) * 111.0 * max(math.cos(math.radians(lat_ref)), 0.2)
+                span_km = max(span_lat_km, span_lon_km, 1.0)
+                # Em um mapa de ~450 px, 30–34 px de marcador equivalem a cerca
+                # de 6–8% da largura útil. Esse limite cresce junto com o zoom geral.
+                return max(0.75, min(2.20, span_km * 0.065))
+
+            distancia_visual_min = _escala_visual_mapa(pontos_reais_mapa)
             marcadores_posicionados = []
-            
+
             def apply_offset(lat, lon):
-                """Espalha apenas os marcadores que ficariam visualmente sobrepostos no mapa."""
+                """Mantém cada número visível, deslocando somente o ícone quando necessário."""
                 lat, lon = float(lat), float(lon)
                 if not marcadores_posicionados:
                     marcadores_posicionados.append((lat, lon))
                     return lat, lon
 
-                distancia_min_km = 0.28
-                conflito = any(calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_min_km for p_lat, p_lon in marcadores_posicionados)
+                conflito = any(
+                    calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_visual_min
+                    for p_lat, p_lon in marcadores_posicionados
+                )
                 if not conflito:
                     marcadores_posicionados.append((lat, lon))
                     return lat, lon
 
-                import math
-                for tentativa in range(1, 25):
-                    anel = 1 + (tentativa - 1) // 8
-                    angulo = math.radians(((tentativa - 1) % 8) * 45 + anel * 17)
-                    raio_km = 0.14 * anel
+                # Espalha os pontos em anéis ao redor da posição real. Como o
+                # fit_bounds usa as coordenadas verdadeiras, esse afastamento não
+                # faz o mapa dar zoom para fora novamente.
+                for tentativa in range(1, 49):
+                    anel = 1 + (tentativa - 1) // 12
+                    angulo = math.radians(((tentativa - 1) % 12) * 30 + anel * 11)
+                    raio_km = distancia_visual_min * (0.82 + 0.42 * (anel - 1))
                     dlat = (raio_km / 111.0) * math.sin(angulo)
                     dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
                     candidato = (lat + dlat, lon + dlon)
-                    if all(calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= 0.20 for p_lat, p_lon in marcadores_posicionados):
+                    if all(
+                        calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= distancia_visual_min * 0.92
+                        for p_lat, p_lon in marcadores_posicionados
+                    ):
                         marcadores_posicionados.append(candidato)
                         return candidato
 
-                candidato = (lat - 0.0015, lon + 0.0015)
+                # Contingência para aglomerações muito grandes.
+                raio_km = distancia_visual_min * 1.8
+                dlat = raio_km / 111.0
+                candidato = (lat - dlat, lon + dlat)
                 marcadores_posicionados.append(candidato)
                 return candidato
 
             p_num = 1
-            if p_saida in locais_dict: path_points.append(list(apply_offset(*locais_dict[p_saida])))
+            pos_base_visual = None
+            if p_saida in locais_dict:
+                pos_base_visual = apply_offset(*locais_dict[p_saida])
+
+            # Traçado primeiro: fica por baixo dos marcadores e permanece visível.
+            geometria_rota = st.session_state.get('geometria_rota') or []
+            geometria_viaria = bool(st.session_state.get('geometria_viaria', False))
+            coords_ordem_real = []
+            if p_saida in locais_dict:
+                coords_ordem_real.append(locais_dict[p_saida])
+            coords_ordem_real.extend([
+                locais_dict[s['destino']] for s in route_steps
+                if s.get('destino') in locais_dict and s.get('type') != 'lunch'
+            ])
+            if len(geometria_rota) < 2:
+                geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
+
+            if len(geometria_rota) > 1:
+                # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
+                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.82).add_to(m)
+                folium.PolyLine(
+                    geometria_rota,
+                    color="#2563EB", weight=5.5, opacity=0.98,
+                    dash_array=None if geometria_viaria else "9,7",
+                    tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
+                ).add_to(m)
 
             for i, step in enumerate(route_steps):
-                if step.get('destino') in locais_dict and step['type'] not in ['lunch', 'return'] and not (i == 0 and step['destino'] == p_saida):
-                    lat_orig, lon_orig = locais_dict[step['destino']]
+                if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+                    lat_orig, lon_orig = map(float, locais_dict[step['destino']])
                     lat, lon = apply_offset(lat_orig, lon_orig)
-                    path_points.append([lat, lon])
-                    if calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01:
+                    deslocado = calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01
+                    if deslocado:
                         folium.PolyLine(
                             [[lat_orig, lon_orig], [lat, lon]],
-                            color="#64748b", weight=1.5, opacity=0.75, dash_array="4,5",
-                            tooltip="Marcador deslocado apenas para não ficar escondido",
+                            color="#475569", weight=2.0, opacity=0.90, dash_array="4,5",
+                            tooltip="O círculo foi afastado; a ponta da linha é o local real",
+                        ).add_to(m)
+                        folium.CircleMarker(
+                            [lat_orig, lon_orig], radius=3, color="#475569", weight=1,
+                            fill=True, fill_opacity=0.9, tooltip=f"Posição real — {step['destino']}"
                         ).add_to(m)
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
                     fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
-                    
-                    popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step['dyn_chegada']}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
-                    folium.Marker([lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}", icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; justify-content: center; align-items: center; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); font-size: 14px;">{p_num}</div>''')).add_to(m)
+                    popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
+                    folium.Marker(
+                        [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
+                        z_index_offset=1200 + p_num,
+                        icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{p_num}</div>''')
+                    ).add_to(m)
                     p_num += 1
 
-            geometria_rota, geometria_viaria = st.session_state.get('geometria_rota'), st.session_state.get('geometria_viaria', False)
-            if not geometria_rota: geometria_rota, geometria_viaria = buscar_geometria_rota([locais_dict[p_saida]] + [locais_dict[s['destino']] for s in route_steps if s.get('destino') in locais_dict])
-
-            if geometria_viaria and len(geometria_rota) > 1: folium.PolyLine(geometria_rota, color="#2563eb", weight=5, opacity=0.85).add_to(m)
-            if len(path_points) > 1: m.fit_bounds(path_points, padding=(45, 45), max_zoom=14)
-            if p_saida in locais_dict: folium.Marker([path_points[0][0], path_points[0][1]], popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280), z_index_offset=1000, icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 2px 2px 7px rgba(0,0,0,0.6); font-size: 16px;">🏁</div>''')).add_to(m)
+            if len(pontos_reais_mapa) > 1:
+                m.fit_bounds(pontos_reais_mapa, padding=(45, 45), max_zoom=14)
+            if p_saida in locais_dict and pos_base_visual is not None:
+                folium.Marker(
+                    [pos_base_visual[0], pos_base_visual[1]],
+                    popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
+                    z_index_offset=2500,
+                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
+                ).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Linhas pontilhadas aparecem apenas quando um marcador foi deslocado visualmente para não esconder outro número.</span></div>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = trajeto da rota. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
