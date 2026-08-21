@@ -2934,16 +2934,17 @@ def canonicalizar_ponto_rota(nome):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def carregar_medias_historicas_paradas():
-    """Calcula a permanência típica por local usando as paradas reais do rastreador.
+    """Permanência típica por local usando o rastreador com estatística robusta.
 
-    Usa apenas visitas concluídas e limita durações absurdas. Quando há amostras
-    suficientes, remove o menor e o maior valor antes da média para uma conversa,
-    café ou parada muito curta não distorcerem sozinhos a previsão.
+    Visitas muito curtas tendem a ser passagem/ruído de GPS. Visitas muito longas
+    podem incluir almoço, conversa, café ou falha de leitura. Para a previsão usamos
+    mediana + média aparada das visitas recentes, limitando o quanto um dia atípico
+    consegue puxar a estimativa.
     """
     try:
         df_hist = get_df(
             "SELECT local, hora_chegada, hora_saida FROM rastreio_paradas "
-            "WHERE hora_saida IS NOT NULL ORDER BY id DESC LIMIT 800"
+            "WHERE hora_saida IS NOT NULL ORDER BY id DESC LIMIT 1000"
         )
     except Exception:
         return {}
@@ -2966,27 +2967,37 @@ def carregar_medias_historicas_paradas():
             dur = float(fim - ini)
         except Exception:
             continue
-        # Menos de 3 min costuma ser passagem/ruído de geofence. Acima de 120 min
-        # normalmente é uma ocorrência excepcional e não deve dominar a média.
-        if 3 <= dur <= 120:
+
+        # Menos de 5 min normalmente é passagem. Acima de 90 min é tratado como
+        # ocorrência excepcional e não entra no aprendizado operacional.
+        if 5 <= dur <= 90:
             por_local.setdefault(local, []).append(dur)
 
     resultado = {}
     for local, valores in por_local.items():
-        # Prioriza as visitas mais recentes que vieram primeiro da consulta.
-        valores = valores[:20]
-        if len(valores) >= 5:
-            ordenados = sorted(valores)
-            usados = ordenados[1:-1]
-        else:
-            usados = valores
-        if usados:
-            resultado[local] = {
-                'media': sum(usados) / len(usados),
-                'amostras': len(valores),
-            }
-    return resultado
+        valores = valores[:24]  # prioriza as visitas mais recentes
+        if not valores:
+            continue
 
+        ordenados = sorted(float(v) for v in valores)
+        n = len(ordenados)
+        meio = n // 2
+        mediana = ordenados[meio] if n % 2 else (ordenados[meio - 1] + ordenados[meio]) / 2.0
+
+        # Com histórico suficiente remove aproximadamente 15% em cada ponta.
+        corte = max(1, int(n * 0.15)) if n >= 7 else 0
+        aparados = ordenados[corte:n-corte] if corte and (n - 2 * corte) >= 3 else ordenados
+        media_aparada = sum(aparados) / len(aparados)
+
+        # Mediana recebe maior peso porque resiste melhor a dias com café/conversa.
+        tipica = mediana * 0.65 + media_aparada * 0.35
+        tipica = min(max(tipica, 10.0), 45.0)
+        resultado[local] = {
+            'media': tipica,
+            'mediana': mediana,
+            'amostras': n,
+        }
+    return resultado
 
 # Tempos típicos informados pela operação. São a base de permanência de uma
 # visita normal; volume, peso, coleta e histórico real ajustam esse valor.
@@ -3120,20 +3131,20 @@ def _analisar_carga_parada(entregas, coletas):
     if pontos_volume < 3.0:
         ajuste_volume, rotulo_volume = 0, 'baixo volume'
     elif pontos_volume < 7.0:
-        ajuste_volume, rotulo_volume = 4, 'volume moderado'
+        ajuste_volume, rotulo_volume = 2, 'volume moderado'
     elif pontos_volume < 12.0:
-        ajuste_volume, rotulo_volume = 8, 'volume alto'
+        ajuste_volume, rotulo_volume = 4, 'volume alto'
     else:
-        ajuste_volume, rotulo_volume = 13, 'volume muito alto'
+        ajuste_volume, rotulo_volume = 6, 'volume muito alto'
 
     if pontos_peso < 2.5 and pesados == 0:
         ajuste_peso, rotulo_peso = 0, 'carga leve'
     elif pontos_peso < 6.0:
-        ajuste_peso, rotulo_peso = 4, 'carga de peso médio'
+        ajuste_peso, rotulo_peso = 2, 'carga de peso médio'
     elif pontos_peso < 11.0:
-        ajuste_peso, rotulo_peso = 8, 'carga pesada'
+        ajuste_peso, rotulo_peso = 4, 'carga pesada'
     else:
-        ajuste_peso, rotulo_peso = 13, 'carga muito pesada'
+        ajuste_peso, rotulo_peso = 6, 'carga muito pesada'
 
     # Se quase tudo for EPI/ferragem pequena, evita penalizar só por uma quantidade
     # numérica grande (ex.: 100 abraçadeiras ou 72 pares de luva).
@@ -3185,15 +3196,16 @@ def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=Fals
         tempo_base = float(TEMPOS_BASE_UNIDADES_DAVI[grupo_local])
         fonte_base = f"base {grupo_local.title()} {int(tempo_base)} min"
     elif coletas and not entregas:
-        # Fornecedor/loja: espera, separação, nota e carregamento costumam pesar mais.
-        tempo_base = 30.0
-        fonte_base = "base de coleta/fornecedor 30 min"
+        # Fornecedor/loja costuma consumir mais tempo que uma entrega simples,
+        # mas a estimativa normal deve permanecer na faixa operacional de 15–30 min.
+        tempo_base = 25.0
+        fonte_base = "base de coleta/fornecedor 25 min"
     elif coletas and entregas:
-        tempo_base = 30.0
-        fonte_base = "base de coleta + entrega 30 min"
+        tempo_base = 27.0
+        fonte_base = "base de coleta + entrega 27 min"
     else:
-        tempo_base = 20.0
-        fonte_base = "base de entrega 20 min"
+        tempo_base = 18.0
+        fonte_base = "base de entrega 18 min"
 
     # Histórico corrige a base do local, mas as referências informadas pela operação
     # continuam sendo a principal âncora para FIEC/Maracanaú/Unifor/Museu/Centro.
@@ -3203,9 +3215,13 @@ def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=Fals
         media_hist = float(historico.get('media', tempo_base))
         amostras = int(historico.get('amostras', 0))
         if grupo_local:
-            peso_hist = 0.20 if amostras < 5 else 0.30
+            # As referências operacionais fornecidas continuam sendo a âncora.
+            peso_hist = 0.12 if amostras < 5 else 0.22
         else:
-            peso_hist = 0.35 if amostras < 5 else 0.55
+            peso_hist = 0.20 if amostras < 5 else 0.35
+        # Histórico real corrige a base, sem deixar uma sequência de visitas longas
+        # transformar uma parada normalmente curta em previsão de quase uma hora.
+        media_hist = min(max(media_hist, 10.0), 40.0)
         tempo_contexto = tempo_base * (1.0 - peso_hist) + media_hist * peso_hist
         fonte_hist = f" + histórico {amostras} visita{'s' if amostras != 1 else ''}"
     else:
@@ -3229,22 +3245,23 @@ def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=Fals
         desvios.append(max(0.0, tempo_num(tarefa, 'Tempo_Entrega', 10) - 10.0))
     for tarefa in coletas:
         desvios.append(max(0.0, tempo_num(tarefa, 'Tempo_Coleta', 20) - 20.0))
-    ajuste_manual = min(max(desvios or [0.0]) * 0.45, 10.0)
+    ajuste_manual = min(max(desvios or [0.0]) * 0.25, 5.0)
 
-    # Coleta tende a consumir mais tempo que entrega no mesmo local. Quando a base já
-    # é uma coleta de fornecedor (30 min), não duplica essa margem.
+    # Em unidades conhecidas, uma coleta acrescenta só uma pequena margem. Nos
+    # fornecedores a própria base de 25–27 min já inclui espera/separação.
     ajuste_coleta = 0.0
     if grupo_local and coletas:
-        ajuste_coleta = 5.0 if not entregas else 7.0
-    elif not grupo_local and coletas and entregas:
-        ajuste_coleta = 4.0
+        ajuste_coleta = 2.0 if not entregas else 3.0
 
-    # Múltiplas demandas no mesmo endereço compartilham chegada/saída. Acrescenta só
-    # uma pequena conferência administrativa, não 10 min por demanda.
-    ajuste_multiplas = min(max(qtd_acoes - 1, 0) * 1.2, 6.0)
+    # Demandas no mesmo endereço compartilham a visita. Só há acréscimo leve de
+    # conferência/organização, nunca outro atendimento completo por cartão.
+    ajuste_multiplas = min(max(qtd_acoes - 1, 0) * 0.6, 3.0)
 
-    estimativa = tempo_contexto + carga['ajuste'] + ajuste_manual + ajuste_coleta + ajuste_multiplas
-    estimativa = int(round(min(max(estimativa, 10.0), 90.0)))
+    # Volume e peso influenciam, porém de forma conservadora. A rotina normal fica
+    # próxima de 15–30 min; cargas realmente grandes podem passar disso, com teto de 40.
+    ajuste_carga = min(float(carga.get('ajuste', 0) or 0), 8.0)
+    estimativa = tempo_contexto + ajuste_carga + ajuste_manual + ajuste_coleta + ajuste_multiplas
+    estimativa = int(round(min(max(estimativa, 12.0), 40.0)))
 
     detalhes = [fonte_base, carga['volume'], carga['peso']]
     if ajuste_coleta > 0:
@@ -4193,9 +4210,22 @@ def loop_automacoes_background():
     try:
         sessao, pagina = st.session_state.get("protege_sessao"), st.session_state.get("protege_pagina")
         usuario_protege, senha_protege, ids_veiculos = carregar_config_protege()
-        if sessao and pagina and ids_veiculos:
-            posicoes = consultar_posicoes_protege(sessao, pagina, ids_veiculos)
-            
+        posicoes = []
+
+        # O medidor não depende mais de alguém abrir primeiro a aba do rastreador:
+        # se houver credenciais, tenta autenticar automaticamente no ciclo de fundo.
+        if ids_veiculos and usuario_protege and senha_protege:
+            try:
+                if sessao and pagina:
+                    posicoes = consultar_posicoes_protege(sessao, pagina, ids_veiculos)
+                else:
+                    raise RuntimeError("sessão do rastreador ainda não iniciada")
+            except Exception:
+                sessao, pagina, posicoes = autenticar_protege(usuario_protege, senha_protege, ids_veiculos)
+                st.session_state["protege_sessao"] = sessao
+                st.session_state["protege_pagina"] = pagina
+
+        if posicoes:
             # 1. Inteligência de Início de Rota (>500m do escritório)
             lat_base, lon_base = LOCAL_BASE_COORDS
             for p in posicoes:
@@ -4203,44 +4233,118 @@ def loop_automacoes_background():
                     dist_base_km = calcular_distancia_km(lat_base, lon_base, p["Latitude"], p["Longitude"])
                     if dist_base_km > 0.5:
                         if not fetch_one("SELECT hora_inicio FROM inicio_movimento WHERE placa=:placa AND data=:data", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR}):
-                            match_time = re.search(r'(\d{2}:\d{2})', p['Última atualização'])
-                            execute_db("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (:placa, :data, :hora) ON CONFLICT (placa, data) DO NOTHING", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR, "hora": match_time.group(1) if match_time else agora_loop.strftime("%H:%M")})
-            
-            # 2. Inteligência de GEOFENCE (Medidor de tempo nas paradas ativas da Rota)
-            try:
-                res_rota = fetch_one("SELECT json_locais FROM rota_ativa WHERE id=1 AND data_rota=:data", {"data": DATA_HOJE_REAL_STR})
-                if res_rota and posicoes:
-                    locais_rota = json.loads(res_rota[0])
-                    for p in posicoes:
-                        lat_v, lon_v = p['Latitude'], p['Longitude']
-                        placa_v = p['Placa']
-                        vel_v = p['Velocidade (km/h)']
-                        
-                        local_proximo = None
-                        menor_dist = 999
-                        for nome_loc, coords in locais_rota.items():
-                            if nome_loc == "ESCRITÓRIO": continue
-                            dist_km = calcular_distancia_km(coords[0], coords[1], lat_v, lon_v)
-                            if dist_km <= 0.25 and dist_km < menor_dist: 
-                                local_proximo = nome_loc
-                                menor_dist = dist_km
-                        
-                        agora_hm = agora_loop.strftime("%H:%M")
-                        parada_ativa = fetch_one("SELECT id, local, hora_chegada FROM rastreio_paradas WHERE data=:data AND placa=:placa AND hora_saida IS NULL ORDER BY id DESC LIMIT 1", {"data": DATA_HOJE_REAL_STR, "placa": placa_v})
-                        
-                        if local_proximo and vel_v < 5:
-                            if parada_ativa:
-                                if parada_ativa[1] != local_proximo:
-                                    execute_db("UPDATE rastreio_paradas SET hora_saida=:hora WHERE id=:id", {"hora": agora_hm, "id": parada_ativa[0]})
-                                    execute_db("INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (:data, :placa, :local, :hora)", {"data": DATA_HOJE_REAL_STR, "placa": placa_v, "local": local_proximo, "hora": agora_hm})
-                            else:
-                                execute_db("INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (:data, :placa, :local, :hora)", {"data": DATA_HOJE_REAL_STR, "placa": placa_v, "local": local_proximo, "hora": agora_hm})
+                            match_time = re.search(r'(\d{1,2}:\d{2})', str(p.get('Última atualização', '')))
+                            hora_leitura = match_time.group(1).zfill(5) if match_time else agora_loop.strftime("%H:%M")
+                            execute_db("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (:placa, :data, :hora) ON CONFLICT (placa, data) DO NOTHING", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR, "hora": hora_leitura})
+
+            # 2. GEOFENCE ROBUSTA — chegada/saída com histerese e confirmação.
+            # Entrada: <=250m + baixa velocidade por 2 leituras (~1 min).
+            # Permanência: não encerra só porque o carro anda dentro da obra.
+            # Saída: >350m por 2 leituras; >600m confirma imediatamente.
+            RAIO_ENTRADA_KM = 0.25
+            RAIO_SAIDA_KM = 0.35
+            RAIO_SAIDA_IMEDIATA_KM = 0.60
+            VELOCIDADE_MAX_ENTRADA = 8.0
+            LEITURAS_CONFIRMAR = 2
+
+            estados_geo = st.session_state.setdefault("_geofence_confirmacao", {})
+            res_rota = fetch_one("SELECT json_locais FROM rota_ativa WHERE id=1 AND data_rota=:data", {"data": DATA_HOJE_REAL_STR})
+            if res_rota:
+                locais_rota = json.loads(res_rota[0])
+
+                for p in posicoes:
+                    lat_v, lon_v = p['Latitude'], p['Longitude']
+                    placa_v = str(p['Placa'])
+                    vel_v = float(p.get('Velocidade (km/h)', 0) or 0)
+                    match_time = re.search(r'(\d{1,2}:\d{2})', str(p.get('Última atualização', '')))
+                    hora_leitura = match_time.group(1).zfill(5) if match_time else agora_loop.strftime("%H:%M")
+
+                    estado_geo = estados_geo.setdefault(placa_v, {
+                        'entrada_local': None,
+                        'entrada_contagem': 0,
+                        'entrada_hora': '',
+                        'saida_contagem': 0,
+                        'saida_hora': '',
+                    })
+
+                    # Distâncias a todos os locais da rota (menos base).
+                    distancias = {}
+                    for nome_loc, coords in locais_rota.items():
+                        if nome_loc == "ESCRITÓRIO" or not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                            continue
+                        try:
+                            distancias[nome_loc] = calcular_distancia_km(coords[0], coords[1], lat_v, lon_v)
+                        except Exception:
+                            continue
+
+                    parada_ativa = fetch_one(
+                        "SELECT id, local, hora_chegada FROM rastreio_paradas "
+                        "WHERE data=:data AND placa=:placa AND hora_saida IS NULL ORDER BY id DESC LIMIT 1",
+                        {"data": DATA_HOJE_REAL_STR, "placa": placa_v},
+                    )
+
+                    if parada_ativa:
+                        id_ativa, local_ativo = parada_ativa[0], str(parada_ativa[1])
+                        dist_ativa = distancias.get(local_ativo)
+                        if dist_ativa is None:
+                            # Tenta casar por nome normalizado caso a rota tenha sido recalculada.
+                            chave_ativa = _normalizar_local_rastreio(local_ativo)
+                            for nome_loc, dist_loc in distancias.items():
+                                if _normalizar_local_rastreio(nome_loc) == chave_ativa:
+                                    dist_ativa = dist_loc
+                                    break
+
+                        esta_fora = dist_ativa is None or dist_ativa > RAIO_SAIDA_KM
+                        if not esta_fora:
+                            # Continua no mesmo local mesmo que mova o carro internamente.
+                            estado_geo['saida_contagem'] = 0
+                            estado_geo['saida_hora'] = ''
                         else:
-                            if parada_ativa and (not local_proximo or vel_v >= 5):
-                                execute_db("UPDATE rastreio_paradas SET hora_saida=:hora WHERE id=:id", {"hora": agora_hm, "id": parada_ativa[0]})
-            except Exception as e:
-                pass
-    except: pass
+                            if estado_geo.get('saida_contagem', 0) == 0:
+                                estado_geo['saida_hora'] = hora_leitura
+                            estado_geo['saida_contagem'] = int(estado_geo.get('saida_contagem', 0)) + 1
+                            saida_imediata = dist_ativa is not None and dist_ativa >= RAIO_SAIDA_IMEDIATA_KM
+                            if saida_imediata or estado_geo['saida_contagem'] >= LEITURAS_CONFIRMAR:
+                                hora_saida = estado_geo.get('saida_hora') or hora_leitura
+                                execute_db("UPDATE rastreio_paradas SET hora_saida=:hora WHERE id=:id", {"hora": hora_saida, "id": id_ativa})
+                                estado_geo.update({
+                                    'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
+                                    'saida_contagem': 0, 'saida_hora': '',
+                                })
+                    else:
+                        # Só abre uma parada após duas leituras coerentes. Isso reduz falsos
+                        # positivos causados por semáforo/congestionamento perto da obra.
+                        candidatos = [
+                            (dist, nome) for nome, dist in distancias.items()
+                            if dist <= RAIO_ENTRADA_KM
+                        ]
+                        candidato = min(candidatos)[1] if candidatos and vel_v <= VELOCIDADE_MAX_ENTRADA else None
+
+                        if candidato:
+                            if estado_geo.get('entrada_local') == candidato:
+                                estado_geo['entrada_contagem'] = int(estado_geo.get('entrada_contagem', 0)) + 1
+                            else:
+                                estado_geo['entrada_local'] = candidato
+                                estado_geo['entrada_contagem'] = 1
+                                estado_geo['entrada_hora'] = hora_leitura
+
+                            if estado_geo['entrada_contagem'] >= LEITURAS_CONFIRMAR:
+                                hora_chegada = estado_geo.get('entrada_hora') or hora_leitura
+                                execute_db(
+                                    "INSERT INTO rastreio_paradas (data, placa, local, hora_chegada) VALUES (:data, :placa, :local, :hora)",
+                                    {"data": DATA_HOJE_REAL_STR, "placa": placa_v, "local": candidato, "hora": hora_chegada},
+                                )
+                                estado_geo.update({
+                                    'entrada_local': None, 'entrada_contagem': 0, 'entrada_hora': '',
+                                    'saida_contagem': 0, 'saida_hora': '',
+                                })
+                        else:
+                            estado_geo['entrada_local'] = None
+                            estado_geo['entrada_contagem'] = 0
+                            estado_geo['entrada_hora'] = ''
+    except Exception:
+        # Rastreador não pode derrubar o restante do sistema; tenta novamente no próximo ciclo.
+        pass
 
 # =====================================================================
 # INTERFACE STREAMLIT
