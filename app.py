@@ -3003,8 +3003,8 @@ def carregar_medias_historicas_paradas():
 # visita normal; volume, peso, coleta e histórico real ajustam esse valor.
 TEMPOS_BASE_UNIDADES_DAVI = {
     "FIEC": 20,
-    "MARACANAÚ": 30,
-    "UNIFOR": 30,
+    "MARACANAÚ": 25,
+    "UNIFOR": 25,
     "MUSEU": 15,
     "CENTRO": 20,
 }
@@ -3197,12 +3197,12 @@ def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=Fals
         fonte_base = f"base {grupo_local.title()} {int(tempo_base)} min"
     elif coletas and not entregas:
         # Fornecedor/loja costuma consumir mais tempo que uma entrega simples,
-        # mas a estimativa normal deve permanecer na faixa operacional de 15–30 min.
-        tempo_base = 25.0
-        fonte_base = "base de coleta/fornecedor 25 min"
+        # mas a previsão normal deve permanecer na faixa operacional de 15–25 min.
+        tempo_base = 22.0
+        fonte_base = "base de coleta/fornecedor 22 min"
     elif coletas and entregas:
-        tempo_base = 27.0
-        fonte_base = "base de coleta + entrega 27 min"
+        tempo_base = 24.0
+        fonte_base = "base de coleta + entrega 24 min"
     else:
         tempo_base = 18.0
         fonte_base = "base de entrega 18 min"
@@ -3219,9 +3219,10 @@ def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=Fals
             peso_hist = 0.12 if amostras < 5 else 0.22
         else:
             peso_hist = 0.20 if amostras < 5 else 0.35
-        # Histórico real corrige a base, sem deixar uma sequência de visitas longas
-        # transformar uma parada normalmente curta em previsão de quase uma hora.
-        media_hist = min(max(media_hist, 10.0), 40.0)
+        # Histórico real corrige a base, mas não empurra a previsão para fora da
+        # faixa operacional normal. Visitas longas continuam registradas como tempo
+        # real, porém não viram automaticamente uma previsão longa para o dia seguinte.
+        media_hist = min(max(media_hist, 12.0), 30.0)
         tempo_contexto = tempo_base * (1.0 - peso_hist) + media_hist * peso_hist
         fonte_hist = f" + histórico {amostras} visita{'s' if amostras != 1 else ''}"
     else:
@@ -3257,11 +3258,12 @@ def estimar_tempo_parada(ponto, entregas=None, coletas=None, retornar_fonte=Fals
     # conferência/organização, nunca outro atendimento completo por cartão.
     ajuste_multiplas = min(max(qtd_acoes - 1, 0) * 0.6, 3.0)
 
-    # Volume e peso influenciam, porém de forma conservadora. A rotina normal fica
-    # próxima de 15–30 min; cargas realmente grandes podem passar disso, com teto de 40.
-    ajuste_carga = min(float(carga.get('ajuste', 0) or 0), 8.0)
+    # Volume, peso e complexidade continuam influenciando, mas a estimativa operacional
+    # fica deliberadamente entre 15 e 25 minutos. O tempo REAL medido pelo rastreador
+    # pode ser maior ou menor; esta faixa é apenas a previsão usada no planejamento.
+    ajuste_carga = min(float(carga.get('ajuste', 0) or 0), 6.0)
     estimativa = tempo_contexto + ajuste_carga + ajuste_manual + ajuste_coleta + ajuste_multiplas
-    estimativa = int(round(min(max(estimativa, 12.0), 40.0)))
+    estimativa = int(round(min(max(estimativa, 15.0), 25.0)))
 
     detalhes = [fonte_base, carga['volume'], carga['peso']]
     if ajuste_coleta > 0:
