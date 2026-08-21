@@ -2057,6 +2057,8 @@ def normalizar_geometria_mapa(geometria, referencias=None):
 
 PLACA_DAVI = "TIF-2123"
 HORA_INICIO_ROTA_DAVI = "08:00"
+HORA_PREPARACAO_INICIO = "07:30"
+HORA_PREPARACAO_FIM = "08:00"
 
 def ajustar_tempo_deslocamento_operacional(dist_km, duracao_api_min, horario_partida_min=None):
     """Evita ETAs urbanos otimistas demais sem substituir a matriz viária.
@@ -4090,6 +4092,141 @@ def aplicar_ordem_manual_route_steps(route_steps, ajustes):
         acoes.sort(key=lambda item: pos.get(_chave_acao_rota(item[1], item[0]), 10000))
         step["actions"] = acoes
     return route_steps
+
+
+
+def consolidar_coletas_base_na_preparacao(route_steps, ajustes, ponto_saida):
+    """Move toda COLETA destinada à base para a etapa PREPARAÇÃO.
+
+    A função atua também sobre etapas antigas/concluídas já salvas no Supabase.
+    Assim, quando uma coleta foi corrigida manualmente para ESCRITÓRIO, ela não
+    reaparece como "PARADA: ESCRITÓRIO": fica dentro da preparação 07:30–08:00.
+
+    A ENTREGA da mesma demanda continua no destino real (ex.: UNIFOR).
+    """
+    if not route_steps:
+        return route_steps
+
+    base = canonicalizar_ponto_rota(ponto_saida)
+    if not base:
+        return route_steps
+
+    mapa_ajustes = (ajustes or {}).get("acoes", {}) or {}
+    passos = []
+    for step in route_steps:
+        copia = dict(step)
+        if step.get("type") == "stop":
+            copia["actions"] = list(step.get("actions", []) or [])
+        passos.append(copia)
+
+    def _eh_prep(step, indice):
+        if step.get("type") != "stop":
+            return False
+        local = canonicalizar_ponto_rota(step.get("destino", ""))
+        if local != base:
+            return False
+        fonte = remover_acentos(str(step.get("tempo_local_fonte", "") or "")).lower()
+        try:
+            dist = float(step.get("dist", 0) or 0)
+        except Exception:
+            dist = 999.0
+        try:
+            viagem = float(step.get("travel_mins", 0) or 0)
+        except Exception:
+            viagem = 999.0
+        return ("preparacao" in fonte) or (indice == 0 and dist <= 0.10 and viagem <= 0.5)
+
+    idx_prep = next((i for i, s in enumerate(passos) if _eh_prep(s, i)), None)
+    prep = passos[idx_prep] if idx_prep is not None else None
+
+    # Tudo que já existe na preparação permanece, sem duplicar.
+    acoes_prep = []
+    chaves_prep = set()
+    if prep is not None:
+        for acao, tarefa in prep.get("actions", []) or []:
+            chave = _chave_acao_rota(tarefa, acao)
+            if chave and chave not in chaves_prep:
+                acoes_prep.append((acao, tarefa))
+                chaves_prep.add(chave)
+
+    novos_passos = []
+    houve_movimento = False
+
+    for indice, step in enumerate(passos):
+        if indice == idx_prep:
+            continue
+        if step.get("type") != "stop":
+            novos_passos.append(step)
+            continue
+
+        local_atual = canonicalizar_ponto_rota(step.get("destino", ""))
+        restantes = []
+        for acao, tarefa in step.get("actions", []) or []:
+            acao_txt = str(acao or "").upper()
+            chave = _chave_acao_rota(tarefa, acao_txt)
+            alvo_manual = canonicalizar_ponto_rota((mapa_ajustes.get(chave, {}) or {}).get("destino", ""))
+            alvo_efetivo = alvo_manual or local_atual
+
+            # Regra central: COLETA na base nunca é uma parada operacional.
+            # Ela pertence à preparação, inclusive quando já foi concluída.
+            if acao_txt == "COLETAR" and alvo_efetivo == base:
+                if chave and chave not in chaves_prep:
+                    acoes_prep.append((acao_txt, tarefa))
+                    chaves_prep.add(chave)
+                houve_movimento = True
+                continue
+
+            # Se a mesma coleta já está na preparação, elimina a cópia duplicada
+            # que possa ter sobrado em uma rota antiga.
+            if acao_txt == "COLETAR" and chave in chaves_prep:
+                houve_movimento = True
+                continue
+
+            restantes.append((acao, tarefa))
+
+        if restantes:
+            step["actions"] = restantes
+            novos_passos.append(step)
+        elif step.get("actions"):
+            # Parada ficou vazia depois de absorver a coleta na preparação.
+            houve_movimento = True
+        else:
+            novos_passos.append(step)
+
+    if acoes_prep:
+        if prep is None:
+            prep = {
+                "type": "stop",
+                "destino": base,
+                "dist": 0.0,
+                "travel_mins": 0.0,
+                "travel_mins_api": 0.0,
+                "tempo_local": 30,
+                "tempo_local_fonte": "preparação fixa da base",
+                "chegada": HORA_PREPARACAO_INICIO,
+                "saida": HORA_PREPARACAO_FIM,
+                "actions": [],
+            }
+            houve_movimento = True
+        else:
+            prep = dict(prep)
+
+        prep.update({
+            "type": "stop",
+            "destino": base,
+            "dist": 0.0,
+            "travel_mins": 0.0,
+            "travel_mins_api": 0.0,
+            "tempo_local": 30,
+            "tempo_local_fonte": "preparação fixa da base",
+            "chegada": HORA_PREPARACAO_INICIO,
+            "saida": HORA_PREPARACAO_FIM,
+            "actions": acoes_prep,
+        })
+        novos_passos.insert(0, prep)
+
+    # Só retorna lista nova; o chamador decide se precisa persistir/recalcular.
+    return novos_passos
 
 
 def registrar_movimento_manual_rota(data_rota, route_steps, demanda_id, acao, destino_alvo, indice_alvo, ponto_saida=""):
@@ -7143,21 +7280,47 @@ with tab_roteiro:
                     'travel_mins_api': 0.0,
                     'tempo_local': 30,
                     'tempo_local_fonte': 'preparação fixa da base',
-                    'chegada': format_time(parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR)) - 30),
-                    'saida': obter_hora_inicio_rota(DATA_REF_ROTA_STR),
+                    'chegada': HORA_PREPARACAO_INICIO,
+                    'saida': HORA_PREPARACAO_FIM,
                     'actions': acoes_preparacao,
                 })
                 past_route_steps.insert(0, prep)
 
+            # Corrige também o histórico já salvo: qualquer COLETA que hoje esteja
+            # em uma parada ESCRITÓRIO (ou tenha sido arrastada para a base) é
+            # absorvida pela PREPARAÇÃO, inclusive se a demanda já tomou baixa.
+            past_route_steps = consolidar_coletas_base_na_preparacao(
+                past_route_steps, ajustes_manuais, ponto_saida
+            )
+
             # A posição/horário corrente deve ser a última parada realmente concluída.
             # Se só existe a preparação, continuamos na base às 08:00.
             if past_route_steps:
-                current_point = past_route_steps[-1]['destino']
-                try:
-                    h, m = map(int, str(past_route_steps[-1]['saida']).split(':'))
-                    current_time_tsp = h * 60 + m
-                except Exception:
-                    pass
+                # Se há alguma parada operacional concluída, partimos dela.
+                # Se só existe a preparação, preservamos o horário real de saída
+                # detectado/manual (a preparação visual continua fixa 07:30–08:00).
+                operacionais_passadas = [
+                    s for i_s, s in enumerate(past_route_steps)
+                    if not (
+                        s.get('type') == 'stop'
+                        and canonicalizar_ponto_rota(s.get('destino', '')) == base_canonica
+                        and (
+                            'preparacao' in remover_acentos(str(s.get('tempo_local_fonte', '') or '')).lower()
+                            or (i_s == 0 and float(s.get('dist', 0) or 0) <= 0.10)
+                        )
+                    )
+                ]
+                if operacionais_passadas:
+                    ultima_operacional = operacionais_passadas[-1]
+                    current_point = ultima_operacional['destino']
+                    try:
+                        h, m = map(int, str(ultima_operacional['saida']).split(':'))
+                        current_time_tsp = h * 60 + m
+                    except Exception:
+                        pass
+                else:
+                    current_point = ponto_saida
+                    current_time_tsp = max(current_time_tsp, parse_time_to_mins(HORA_PREPARACAO_FIM))
 
             # As coletas da base já estão fisicamente no veículo desde a preparação:
             # elas saem de "a coletar" e entram direto em "carrying".
@@ -7341,7 +7504,19 @@ with tab_roteiro:
                 current_time += dur
 
             route_steps = past_route_steps + route_steps_new
+            route_steps = consolidar_coletas_base_na_preparacao(
+                route_steps, ajustes_manuais, ponto_saida
+            )
             route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais)
+
+            # Recalcula a quilometragem a partir das etapas que realmente ficaram
+            # na rota; uma antiga "PARADA: ESCRITÓRIO" absorvida pela preparação
+            # não pode continuar somando quilômetros.
+            total_km = sum(
+                float(s.get('dist', 0) or 0)
+                for s in route_steps
+                if s.get('type') in {'stop', 'return'}
+            )
 
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
@@ -7384,49 +7559,29 @@ with tab_roteiro:
         route_steps, total_km, locais_dict = st.session_state['route_steps'], st.session_state['total_km'], st.session_state['locais_dict']
         enderecos_dict, p_saida = st.session_state.get('enderecos_dict', {}), st.session_state['p_saida']
         ajustes_manuais_atual = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+
+        # Saneia rotas antigas já persistidas antes de renderizar. É justamente o
+        # caso do print em que havia "PARADA: ESCRITÓRIO" com a coleta da UNIFOR:
+        # a coleta é fundida na preparação e a entrega continua na UNIFOR.
+        _route_antes_normalizacao = json.dumps(route_steps, ensure_ascii=False, sort_keys=True, default=str)
+        route_steps = consolidar_coletas_base_na_preparacao(
+            route_steps, ajustes_manuais_atual, p_saida
+        )
         route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais_atual)
+        _route_depois_normalizacao = json.dumps(route_steps, ensure_ascii=False, sort_keys=True, default=str)
         st.session_state['route_steps'] = route_steps
 
-        # Correção pontual da demanda atual que ficou como COLETA na UNIFOR.
-        # Salvamos pelo ID da demanda, então isso NÃO vira regra geral para futuras
-        # coletas reais na UNIFOR. A entrega da mesma demanda continua no destino normal.
-        _meta_ajustes = dict((ajustes_manuais_atual or {}).get('_meta', {}) or {})
-        _chave_reparo_unifor = 'coleta_unifor_para_preparacao_2026_08_21'
-        if DATA_REF_ROTA_STR == '21/08/2026' and not _meta_ajustes.get(_chave_reparo_unifor):
-            _mapa_ajustes = dict((ajustes_manuais_atual or {}).get('acoes', {}) or {})
-            _movidos_unifor = []
-            for _step_unifor in route_steps or []:
-                if _step_unifor.get('type') != 'stop' or canonicalizar_ponto_rota(_step_unifor.get('destino', '')) != 'UNIFOR':
-                    continue
-                for _acao_unifor, _tarefa_unifor in _step_unifor.get('actions', []) or []:
-                    if _acao_unifor != 'COLETAR':
-                        continue
-                    _id_unifor = str(_tarefa_unifor.get('id', '') or '')
-                    if not _id_unifor:
-                        continue
-                    _chave_unifor = f"{_id_unifor}|COLETAR"
-                    if _chave_unifor not in _mapa_ajustes:
-                        _mapa_ajustes[_chave_unifor] = {'destino': canonicalizar_ponto_rota(p_saida)}
-                        _movidos_unifor.append(_chave_unifor)
-            _meta_ajustes[_chave_reparo_unifor] = True
-            ajustes_manuais_atual = dict(ajustes_manuais_atual or {})
-            ajustes_manuais_atual['_meta'] = _meta_ajustes
-            if _movidos_unifor:
-                ajustes_manuais_atual['acoes'] = _mapa_ajustes
-                _ordens = dict(ajustes_manuais_atual.get('ordem_por_local', {}) or {})
-                _prep_local = canonicalizar_ponto_rota(p_saida)
-                _lista_prep = list(_ordens.get(_prep_local, []) or [])
-                for _ch in _movidos_unifor:
-                    if _ch not in _lista_prep:
-                        _lista_prep.append(_ch)
-                _ordens[_prep_local] = _lista_prep
-                ajustes_manuais_atual['ordem_por_local'] = _ordens
-                salvar_ajustes_manuais_rota(DATA_REF_ROTA_STR, ajustes_manuais_atual)
-                st.session_state['_recalcular_rota_automatico'] = True
-                st.session_state['_mensagem_ajuste_rota'] = '✅ A coleta da UNIFOR foi movida para PREPARAÇÃO: ESCRITÓRIO.'
-                st.rerun()
-            else:
-                salvar_ajustes_manuais_rota(DATA_REF_ROTA_STR, ajustes_manuais_atual)
+        if _route_depois_normalizacao != _route_antes_normalizacao:
+            # Atualiza somente o JSON da rota; não regrava cache/Trello nem cria
+            # uma nova rota. Na próxima recálculo, a mesma regra já atua na origem.
+            execute_db(
+                "UPDATE rota_ativa SET json_route=:route WHERE id=1 AND data_rota=:data",
+                {"route": json.dumps(route_steps, ensure_ascii=False), "data": DATA_REF_ROTA_STR},
+            )
+
+        # A regra acima é genérica: não depende de data, obra ou nome UNIFOR.
+        # Qualquer COLETA arrastada para a base vira PREPARAÇÃO e nunca uma
+        # parada operacional separada.
 
         if st.session_state.get('demandas_adiadas'): st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã.")
         
