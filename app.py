@@ -4188,73 +4188,220 @@ with tab_frota:
         formulario_fechamento_km()
 
         st.divider()
-        st.markdown("#### 📊 Painel de Fechamento Individualizado (Mês Atual)")
+        # ===============================================================
+        # PAINEL GERENCIAL DE FECHAMENTO DA FROTA — MÊS ATUAL
+        # ===============================================================
+        nomes_meses_pt = {
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+            5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+            9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
+        }
         mes_atual_str = AGORA_REAL.strftime("%m/%Y")
+        mes_atual_nome = f"{nomes_meses_pt.get(AGORA_REAL.month, AGORA_REAL.strftime('%m'))} de {AGORA_REAL.year}"
 
-        df_km = carregar_registro_km_df()
-        if 'veiculo' not in df_km.columns: df_km['veiculo'] = 'Strada'
+        st.markdown(f"### 📊 Fechamento da Frota — {mes_atual_nome}")
+        st.caption("Visão gerencial do mês atual com quilometragem, combustível, manutenção e custo real por quilômetro de cada veículo.")
+
+        df_km = carregar_registro_km_df().copy()
+        if 'veiculo' not in df_km.columns:
+            df_km['veiculo'] = 'Strada'
         df_km['data_dt'] = pd.to_datetime(df_km['data'], format="%d/%m/%Y", errors='coerce')
-        df_km_mes = df_km.dropna(subset=['data_dt'])[df_km.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
+        df_km['km'] = pd.to_numeric(df_km.get('km', 0), errors='coerce').fillna(0)
+        df_km_mes = df_km.dropna(subset=['data_dt']).copy()
+        df_km_mes = df_km_mes[df_km_mes['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
 
-        km_strada = df_km_mes[df_km_mes['veiculo'] == 'Strada']['km'].sum() if not df_km_mes.empty else 0.0
-        km_l200 = df_km_mes[df_km_mes['veiculo'] == 'L200']['km'].sum() if not df_km_mes.empty else 0.0
-
-        df_abastec = carregar_abastecimentos_df()
-        if 'veiculo' not in df_abastec.columns: df_abastec['veiculo'] = 'Strada'
+        df_abastec = carregar_abastecimentos_df().copy()
+        if 'veiculo' not in df_abastec.columns:
+            df_abastec['veiculo'] = 'Strada'
         df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
-        df_abastec_mes = df_abastec.dropna(subset=['data_dt'])[df_abastec.dropna(subset=['data_dt'])['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
-        if not df_abastec_mes.empty:
-            df_abastec_mes['custo_combustivel'] = pd.to_numeric(df_abastec_mes['litros'], errors='coerce').fillna(0) * pd.to_numeric(df_abastec_mes['valor_litro'], errors='coerce').fillna(0)
-            df_abastec_mes['custo_total'] = df_abastec_mes['custo_combustivel'] + pd.to_numeric(df_abastec_mes['manutencao'], errors='coerce').fillna(0)
+        for coluna_num in ['litros', 'valor_litro', 'manutencao']:
+            if coluna_num not in df_abastec.columns:
+                df_abastec[coluna_num] = 0.0
+            df_abastec[coluna_num] = pd.to_numeric(df_abastec[coluna_num], errors='coerce').fillna(0.0)
+        df_abastec_mes = df_abastec.dropna(subset=['data_dt']).copy()
+        df_abastec_mes = df_abastec_mes[df_abastec_mes['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
+        df_abastec_mes['custo_combustivel'] = df_abastec_mes['litros'] * df_abastec_mes['valor_litro']
+        df_abastec_mes['custo_total'] = df_abastec_mes['custo_combustivel'] + df_abastec_mes['manutencao']
 
-        df_gas_strada = df_abastec_mes[df_abastec_mes['veiculo'] == 'Strada']
-        gas_strada = (df_gas_strada['litros'] * df_gas_strada['valor_litro']).sum() if not df_gas_strada.empty else 0.0
-        manut_strada = df_gas_strada['manutencao'].sum() if not df_gas_strada.empty else 0.0
+        def resumo_veiculo_mes(veiculo):
+            km_df = df_km_mes[df_km_mes['veiculo'].astype(str) == veiculo].copy()
+            gasto_df = df_abastec_mes[df_abastec_mes['veiculo'].astype(str) == veiculo].copy()
 
-        df_gas_l200 = df_abastec_mes[df_abastec_mes['veiculo'] == 'L200']
-        gas_l200 = (df_gas_l200['litros'] * df_gas_l200['valor_litro']).sum() if not df_gas_l200.empty else 0.0
-        manut_l200 = df_gas_l200['manutencao'].sum() if not df_gas_l200.empty else 0.0
+            km = float(km_df['km'].sum()) if not km_df.empty else 0.0
+            litros = float(gasto_df['litros'].sum()) if not gasto_df.empty else 0.0
+            combustivel = float(gasto_df['custo_combustivel'].sum()) if not gasto_df.empty else 0.0
+            manutencao = float(gasto_df['manutencao'].sum()) if not gasto_df.empty else 0.0
+            custo_total = combustivel + manutencao
+            custo_km = custo_total / km if km > 0 else None
+            preco_medio_litro = combustivel / litros if litros > 0 else None
+            abastecimentos = int((gasto_df['litros'] > 0).sum()) if not gasto_df.empty else 0
+            manutencoes = int((gasto_df['manutencao'] > 0).sum()) if not gasto_df.empty else 0
 
-        custo_km_strada = (gas_strada + manut_strada) / km_strada if km_strada > 0 else 0.0
-        custo_km_l200 = (gas_l200 + manut_l200) / km_l200 if km_l200 > 0 else 0.0
+            return {
+                'veiculo': veiculo,
+                'km': km,
+                'litros': litros,
+                'combustivel': combustivel,
+                'manutencao': manutencao,
+                'custo_total': custo_total,
+                'custo_km': custo_km,
+                'preco_medio_litro': preco_medio_litro,
+                'abastecimentos': abastecimentos,
+                'manutencoes': manutencoes,
+                'gastos_df': gasto_df,
+                'km_df': km_df,
+            }
 
-        def tabelas_fechamento_veiculo(veiculo):
-            gastos = df_abastec_mes[df_abastec_mes['veiculo'] == veiculo].copy()
-            quilometragem = df_km_mes[df_km_mes['veiculo'] == veiculo].copy()
-            if not gastos.empty:
-                gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
-                    "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
-                    "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
-                    "custo_total": "Total (R$)", "obs": "Observação",
-                })
-                for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
-                    gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
-            if not quilometragem.empty:
-                quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
-            return gastos, quilometragem
+        resumos_veiculos = {veiculo: resumo_veiculo_mes(veiculo) for veiculo in ['Strada', 'L200']}
+        resumo_strada = resumos_veiculos['Strada']
+        resumo_l200 = resumos_veiculos['L200']
 
-        gastos_strada_mes, kms_strada_mes = tabelas_fechamento_veiculo("Strada")
-        gastos_l200_mes, kms_l200_mes = tabelas_fechamento_veiculo("L200")
+        km_total_frota = sum(item['km'] for item in resumos_veiculos.values())
+        litros_total_frota = sum(item['litros'] for item in resumos_veiculos.values())
+        combustivel_total_frota = sum(item['combustivel'] for item in resumos_veiculos.values())
+        manutencao_total_frota = sum(item['manutencao'] for item in resumos_veiculos.values())
+        custo_total_frota = combustivel_total_frota + manutencao_total_frota
+        custo_km_frota = custo_total_frota / km_total_frota if km_total_frota > 0 else None
+        preco_medio_frota = combustivel_total_frota / litros_total_frota if litros_total_frota > 0 else None
+        lancamentos_total = len(df_abastec_mes) + len(df_km_mes)
+
+        # -------- Resumo consolidado --------
+        st.markdown("#### 🧾 Resumo do mês")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("🛣️ KM total", f"{km_total_frota:,.1f} km".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        k2.metric("💳 Custo total", f"R$ {custo_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        k3.metric("📉 Custo médio / KM", f"R$ {custo_km_frota:.2f}".replace('.', ',') if custo_km_frota is not None else "—",
+                  "Dentro da referência" if custo_km_frota is not None and custo_km_frota <= 1.50 else "Acima de R$ 1,50/km" if custo_km_frota is not None else "Sem KM lançado",
+                  delta_color="normal" if custo_km_frota is not None and custo_km_frota <= 1.50 else "inverse")
+        k4.metric("⛽ Combustível", f"R$ {combustivel_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+
+        k5, k6, k7, k8 = st.columns(4)
+        k5.metric("🔧 Manutenção", f"R$ {manutencao_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        k6.metric("🧪 Litros abastecidos", f"{litros_total_frota:,.1f} L".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        k7.metric("🏷️ Preço médio / L", f"R$ {preco_medio_frota:.2f}".replace('.', ',') if preco_medio_frota is not None else "—")
+        k8.metric("🧾 Lançamentos", str(lancamentos_total))
+
+        if custo_total_frota <= 0 and km_total_frota <= 0:
+            st.info("Ainda não há lançamentos suficientes neste mês para montar o fechamento da frota.")
+
+        # -------- Comparação por veículo --------
+        st.markdown("#### 🚘 Comparativo por veículo")
+
+        veiculos_validos_custo = [
+            r for r in resumos_veiculos.values()
+            if r['custo_km'] is not None and r['custo_total'] > 0
+        ]
+        mais_economico = min(veiculos_validos_custo, key=lambda r: r['custo_km'])['veiculo'] if veiculos_validos_custo else None
+
+        def formatar_moeda_br(valor):
+            return f"R$ {float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+        def formatar_numero_br(valor, casas=1):
+            return f"{float(valor):,.{casas}f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+        def renderizar_cartao_veiculo(resumo, icone, chave):
+            veiculo = resumo['veiculo']
+            custo_km = resumo['custo_km']
+            status = "🟢 Dentro da referência" if custo_km is not None and custo_km <= 1.50 else "🔴 Acima da referência" if custo_km is not None else "⚪ Sem KM para calcular"
+            destaque = " • 🏆 Menor custo/KM" if mais_economico == veiculo and len(veiculos_validos_custo) > 1 else ""
+            participacao = (resumo['custo_total'] / custo_total_frota) if custo_total_frota > 0 else 0.0
+
+            with st.container(border=True):
+                st.markdown(f"### {icone} {veiculo}")
+                st.caption(f"{status}{destaque}")
+
+                a1, a2 = st.columns(2)
+                a1.metric("KM no mês", f"{formatar_numero_br(resumo['km'])} km")
+                a2.metric("Custo total", formatar_moeda_br(resumo['custo_total']))
+                a3, a4 = st.columns(2)
+                a3.metric("Custo / KM", formatar_moeda_br(custo_km) if custo_km is not None else "—")
+                a4.metric("Litros", f"{formatar_numero_br(resumo['litros'])} L")
+
+                st.caption(
+                    f"⛽ Combustível: **{formatar_moeda_br(resumo['combustivel'])}**  •  "
+                    f"🔧 Manutenção: **{formatar_moeda_br(resumo['manutencao'])}**"
+                )
+                st.caption(
+                    f"🏷️ Média do litro: **{formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else '—'}**  •  "
+                    f"🧾 {resumo['abastecimentos']} abastecimento(s)  •  🔧 {resumo['manutencoes']} manutenção(ões)"
+                )
+
+                if custo_total_frota > 0:
+                    st.progress(min(max(participacao, 0.0), 1.0), text=f"{participacao * 100:.1f}% do custo total da frota")
+
+                gastos = resumo['gastos_df'].copy()
+                quilometragem = resumo['km_df'].copy()
+                if not gastos.empty:
+                    gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
+                        "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
+                        "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
+                        "custo_total": "Total (R$)", "obs": "Observação",
+                    })
+                    for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
+                        gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
+                if not quilometragem.empty:
+                    quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
+
+                renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave)
+                return gastos, quilometragem
 
         col_strada, col_l200 = st.columns(2)
         with col_strada:
-            s1, s2 = st.columns(2)
-            s1.metric("🚗 Strada (KM)", f"{km_strada:.1f} km", delta_color="off")
-            s2.metric("Custo / KM", f"R$ {custo_km_strada:.2f}", "Ideal <= R$ 1.50" if custo_km_strada <= 1.50 else "Atenção!", delta_color="normal" if custo_km_strada <= 1.50 else "inverse")
-            st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_strada:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_strada:.2f}</p>", unsafe_allow_html=True)
-            renderizar_detalhes_fechamento("Strada", gastos_strada_mes, kms_strada_mes, "strada")
-
+            gastos_strada_mes, kms_strada_mes = renderizar_cartao_veiculo(resumo_strada, "🚗", "strada")
         with col_l200:
-            l1, l2 = st.columns(2)
-            l1.metric("🚙 L200 (KM)", f"{km_l200:.1f} km", delta_color="off")
-            l2.metric("Custo / KM", f"R$ {custo_km_l200:.2f}", "Ideal <= R$ 1.50" if custo_km_l200 <= 1.50 else "Atenção!", delta_color="normal" if custo_km_l200 <= 1.50 else "inverse")
-            st.markdown(f"<p style='text-align:center; font-size:14px; color:#8da0b8; margin-top:-10px;'>⛽ R$ {gas_l200:.2f} &nbsp;|&nbsp; 🔧 R$ {manut_l200:.2f}</p>", unsafe_allow_html=True)
-            renderizar_detalhes_fechamento("L200", gastos_l200_mes, kms_l200_mes, "l200")
+            gastos_l200_mes, kms_l200_mes = renderizar_cartao_veiculo(resumo_l200, "🚙", "l200")
+
+        # -------- Gráfico rápido --------
+        if custo_total_frota > 0:
+            st.markdown("#### 📈 Composição dos custos")
+            df_composicao_custos = pd.DataFrame({
+                "Veículo": ["Strada", "L200"],
+                "Combustível": [resumo_strada['combustivel'], resumo_l200['combustivel']],
+                "Manutenção": [resumo_strada['manutencao'], resumo_l200['manutencao']],
+            }).set_index("Veículo")
+            st.bar_chart(df_composicao_custos, use_container_width=True)
+
+        # -------- Leitura gerencial --------
+        alertas_frota = []
+        for resumo in resumos_veiculos.values():
+            if resumo['custo_total'] > 0 and resumo['km'] <= 0:
+                alertas_frota.append(f"⚠️ **{resumo['veiculo']}** tem custos lançados, mas ainda não possui KM no mês; o custo/KM não pode ser calculado.")
+            if resumo['custo_km'] is not None and resumo['custo_km'] > 1.50:
+                alertas_frota.append(f"🔴 **{resumo['veiculo']}** está em **{formatar_moeda_br(resumo['custo_km'])}/km**, acima da referência de R$ 1,50/km.")
+            if resumo['custo_total'] > 0 and resumo['manutencao'] / resumo['custo_total'] >= 0.35:
+                perc_manut = resumo['manutencao'] / resumo['custo_total'] * 100
+                alertas_frota.append(f"🔧 Manutenção representa **{perc_manut:.0f}%** do custo da **{resumo['veiculo']}** neste mês.")
+
+        if mais_economico and len(veiculos_validos_custo) > 1:
+            melhor = resumos_veiculos[mais_economico]
+            outro = next(r for r in veiculos_validos_custo if r['veiculo'] != mais_economico)
+            diferenca = outro['custo_km'] - melhor['custo_km']
+            if diferenca > 0:
+                st.success(
+                    f"🏆 **{mais_economico}** está com o menor custo por KM do mês: "
+                    f"**{formatar_moeda_br(melhor['custo_km'])}/km**, economia de aproximadamente "
+                    f"**{formatar_moeda_br(diferenca)}/km** em relação ao outro veículo."
+                )
+
+        for alerta in alertas_frota:
+            st.warning(alerta)
 
         df_resumo_fechamento = pd.DataFrame([
-            {"Veículo": "Strada", "KM": round(km_strada, 2), "Combustível (R$)": round(gas_strada, 2), "Manutenção (R$)": round(manut_strada, 2), "Custo total (R$)": round(gas_strada + manut_strada, 2), "Custo/KM (R$)": round(custo_km_strada, 2)},
-            {"Veículo": "L200", "KM": round(km_l200, 2), "Combustível (R$)": round(gas_l200, 2), "Manutenção (R$)": round(manut_l200, 2), "Custo total (R$)": round(gas_l200 + manut_l200, 2), "Custo/KM (R$)": round(custo_km_l200, 2)},
+            {
+                "Veículo": resumo['veiculo'],
+                "KM": round(resumo['km'], 2),
+                "Litros": round(resumo['litros'], 2),
+                "Preço médio/L (R$)": round(resumo['preco_medio_litro'], 2) if resumo['preco_medio_litro'] is not None else 0.0,
+                "Combustível (R$)": round(resumo['combustivel'], 2),
+                "Manutenção (R$)": round(resumo['manutencao'], 2),
+                "Custo total (R$)": round(resumo['custo_total'], 2),
+                "Custo/KM (R$)": round(resumo['custo_km'], 2) if resumo['custo_km'] is not None else 0.0,
+                "Abastecimentos": resumo['abastecimentos'],
+                "Manutenções": resumo['manutencoes'],
+            }
+            for resumo in resumos_veiculos.values()
         ])
+
         renderizar_exportador(
             f"Fechamento Individualizado — {mes_atual_str}",
             {
