@@ -2324,15 +2324,28 @@ if modo_url == "true":
                     obter_status_rastreio_local(df_paradas_mobile, destino_step, DATA_REF_ROTA_STR)
                 )
             blocos_acao = []
-            for acao, tarefa in step.get('actions', []):
+            for indice_acao, (acao, tarefa) in enumerate(step.get('actions', []), start=1):
                 eh_coleta = acao == "COLETAR"
                 classe_acao, icone = ("coleta", "📦") if eh_coleta else ("entrega", "📬")
                 card_id = str(tarefa.get('id', ''))
                 concluido = f"<div class='baixa'>✅ Baixa às {html_escape(str(dict_concluidos_mobile[card_id]))}</div>" if card_id in dict_concluidos_mobile else ""
+
+                materiais_acao = _separar_materiais_comprovante(tarefa.get('Materiais', ''))
+                if materiais_acao:
+                    materiais_html_acao = "".join(
+                        f"<div class='material-item'><span class='material-bullet'>•</span><span>{html_escape(str(material))}</span></div>"
+                        for material in materiais_acao
+                    )
+                else:
+                    materiais_html_acao = "<div class='material-item vazio'>Material não informado</div>"
+
+                obra_acao = html_escape(str(tarefa.get('Obra', '') or 'Obra não informada'))
+                rotulo_acao = "COLETA" if eh_coleta else "ENTREGA"
                 blocos_acao.append(
-                    f"<div class='acao {classe_acao}'><div class='acao-titulo'>{icone} {html_escape(str(acao))}</div>"
-                    f"<div class='materiais'>{html_escape(str(tarefa.get('Materiais', '')))}</div>"
-                    f"<div class='obra'>Obra: {html_escape(str(tarefa.get('Obra', '')))}</div>{concluido}</div>"
+                    f"<div class='acao {classe_acao}'>"
+                    f"<div class='acao-cabecalho'><div class='acao-tipo'>{icone} {rotulo_acao} {indice_acao}</div><div class='acao-obra'>🏗️ {obra_acao}</div></div>"
+                    f"<div class='materiais-lista'>{materiais_html_acao}</div>"
+                    f"{concluido}</div>"
                 )
             corpo_acoes = status_tempo + status_rastreio_html + ("".join(blocos_acao) if blocos_acao else "<div class='mensagem-etapa'>Nenhuma movimentação cadastrada nesta etapa.</div>")
             rotulo_lembrete = "preparação" if is_start else "parada"
@@ -2394,13 +2407,17 @@ if modo_url == "true":
             .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
             .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
             .rastreio-real { margin:-4px 0 12px; padding:9px 11px; border-radius:10px; color:#bae6fd; background:rgba(14,165,233,.10); border:1px solid rgba(56,189,248,.22); font-size:12.5px; line-height:1.45; }
-            .acao { margin-bottom:11px; padding:12px; border-radius:12px; border-left:4px solid; background:rgba(255,255,255,.035); }
-            .acao.coleta { border-color:#f59e0b; }
-            .acao.entrega { border-color:#16a34a; }
-            .acao-titulo { font-size:13px; font-weight:900; color:#f8fafc; margin-bottom:7px; }
-            .materiais { color:#e4e8f4; font-size:13px; line-height:1.45; }
-            .obra { color:#8da0b8; font-size:11.5px; font-style:italic; margin-top:7px; }
-            .baixa { color:#86efac; font-size:12px; font-weight:800; margin-top:7px; }
+            .acao { margin-bottom:10px; padding:0; border-radius:13px; border:1px solid #2b3654; overflow:hidden; background:rgba(255,255,255,.025); }
+            .acao.coleta { border-left:4px solid #f59e0b; }
+            .acao.entrega { border-left:4px solid #16a34a; }
+            .acao-cabecalho { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:10px 11px 9px; background:rgba(255,255,255,.035); border-bottom:1px solid rgba(141,160,184,.13); }
+            .acao-tipo { flex:0 0 auto; font-size:11.5px; font-weight:900; letter-spacing:.04em; color:#f8fafc; white-space:nowrap; }
+            .acao-obra { min-width:0; color:#cbd5e1; font-size:11.5px; line-height:1.35; text-align:right; font-weight:700; }
+            .materiais-lista { padding:9px 11px 10px; display:grid; gap:6px; }
+            .material-item { display:grid; grid-template-columns:10px minmax(0,1fr); gap:6px; color:#e4e8f4; font-size:12.7px; line-height:1.38; }
+            .material-bullet { color:#60a5fa; font-weight:900; }
+            .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
+            .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
             .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
             .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
@@ -4853,14 +4870,28 @@ with tab_roteiro:
                             unsafe_allow_html=True,
                         )
                     
-                    for acao, t in step['actions']:
-                        cor, icone = ("orange", "📦 COLETAR:") if acao == "COLETAR" else ("green", "📬 ENTREGAR:")
+                    for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
+                        eh_coleta_torre = acao == "COLETAR"
+                        icone_torre = "📦" if eh_coleta_torre else "📬"
+                        rotulo_torre = "COLETA" if eh_coleta_torre else "ENTREGA"
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
-                        check_ui = f"&nbsp;<span style='color: #16a34a; font-size: 0.95em; font-weight: bold;'>✅ (Baixa às {dict_concluidos_torre[card_id_torre]})</span>" if concluida else ""
-                        
-                        col_demanda, col_status = st.columns([9, 1])
-                        col_demanda.markdown(f":{cor}[**{icone}**] {t['Materiais']} *(Obra: {t['Obra']})*{check_ui}", unsafe_allow_html=True)
+                        materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
+
+                        with st.container(border=True):
+                            cab_esq, cab_dir = st.columns([1.1, 3.4])
+                            cab_esq.markdown(f"**{icone_torre} {rotulo_torre} {indice_demanda}**")
+                            cab_dir.markdown(f"🏗️ **{t.get('Obra', 'Obra não informada')}**")
+
+                            if materiais_torre:
+                                for material_torre in materiais_torre:
+                                    st.markdown(f"• {material_torre}")
+                            else:
+                                st.caption("Material não informado")
+
+                            if concluida:
+                                st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
+
                         texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                     
                     texto_whatsapp += "\n"
