@@ -1797,7 +1797,10 @@ def _passos_resumo_rota(route_steps, ponto_saida="ESCRITÓRIO", retornar_base=Tr
             continue
         chegada = step.get("dyn_chegada", step.get("chegada", ""))
         saida = step.get("dyn_saida", step.get("saida", ""))
-        horario = f"{chegada} - {saida}" if chegada and saida else chegada or saida or ""
+        if chegada and saida:
+            horario = f"Chega {chegada} • sai {saida}"
+        else:
+            horario = chegada or saida or ""
         passos.append({
             "local": local,
             "acao": _descricao_rapida_parada(step),
@@ -1994,6 +1997,114 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
 
 PLACA_DAVI = "TIF-2123"
 HORA_INICIO_ROTA_DAVI = "08:00"
+
+def ajustar_tempo_deslocamento_operacional(dist_km, duracao_api_min, horario_partida_min=None):
+    """Evita ETAs urbanos otimistas demais sem substituir a matriz viária.
+
+    A API continua sendo a fonte principal. Este piso operacional só corrige casos
+    incompatíveis com a rotina real (saída da vaga, semáforos, acesso/estacionamento
+    e tráfego urbano), principalmente em trechos curtos onde 4–5 km podem aparecer
+    como 6–8 minutos na matriz.
+    """
+    try:
+        dist = max(0.0, float(dist_km or 0.0))
+    except (TypeError, ValueError):
+        dist = 0.0
+    try:
+        api = max(0.0, float(duracao_api_min or 0.0))
+    except (TypeError, ValueError):
+        api = 0.0
+
+    if dist <= 0.10:
+        return 0.0
+
+    # Em trechos curtos de Fortaleza a velocidade média porta-a-porta é bem menor
+    # que a velocidade de circulação pura. Em vias mais longas, o piso fica mais
+    # permissivo para não penalizar corredores expressos/BR.
+    if dist <= 6.0:
+        piso = (dist / 24.0) * 60.0 + 2.5
+    elif dist <= 12.0:
+        piso = (dist / 30.0) * 60.0 + 3.0
+    else:
+        piso = (dist / 40.0) * 60.0 + 3.0
+
+    # Pequena margem adicional nos horários de pico. Não é um segundo cálculo de
+    # trânsito: apenas impede que a previsão operacional fique excessivamente justa.
+    try:
+        hm = int(round(float(horario_partida_min))) % (24 * 60)
+    except (TypeError, ValueError):
+        hm = 8 * 60
+    pico = (7 * 60 <= hm <= 9 * 60 + 30) or (16 * 60 + 30 <= hm <= 18 * 60 + 30)
+    if pico:
+        piso *= 1.06
+
+    # A matriz pode ser mais lenta que o piso; nesse caso respeitamos integralmente
+    # o trânsito retornado pela fonte viária. Arredondar para minuto inteiro deixa o
+    # roteiro mais legível e evita horários como 08:07 derivados de 6,6 minutos.
+    return float(max(1, int(math.ceil(max(api, piso)))))
+
+
+def atualizar_tempos_deslocamento_operacionais(route_steps, start_time_str="08:00"):
+    """Revalida os deslocamentos de rotas novas e já salvas.
+
+    Isso é importante porque uma rota persistida no Supabase pode ter sido calculada
+    por uma versão anterior. Guardamos o valor original em ``travel_mins_api`` e
+    aplicamos o piso com base no horário planejado de cada perna.
+    """
+    try:
+        atual = parse_time_to_mins(str(start_time_str or "08:00"))
+    except Exception:
+        atual = 8 * 60
+
+    for indice, step in enumerate(route_steps or []):
+        tipo = str(step.get("type", ""))
+        if tipo == "lunch":
+            ini = str(step.get("chegada", "") or "")
+            fim = str(step.get("saida", "") or "")
+            try:
+                ini_min = parse_time_to_mins(ini) if ini else atual
+                fim_min = parse_time_to_mins(fim) if fim else ini_min + 60
+                if fim_min <= ini_min:
+                    fim_min = ini_min + 60
+                atual = max(atual, ini_min) + max(60, fim_min - ini_min)
+            except Exception:
+                atual += 60
+            continue
+
+        dist = float(step.get("dist", 0) or 0)
+        original = step.get("travel_mins_api", step.get("travel_mins", 0))
+        try:
+            original = float(original or 0)
+        except (TypeError, ValueError):
+            original = 0.0
+        step["travel_mins_api"] = original
+
+        eh_preparacao = (
+            tipo == "stop" and indice == 0 and dist <= 0.05 and original <= 0.5
+        )
+        if eh_preparacao:
+            step["travel_mins"] = 0.0
+            try:
+                saida = str(step.get("saida", "") or "")
+                if saida:
+                    atual = max(atual, parse_time_to_mins(saida))
+            except Exception:
+                pass
+            continue
+
+        ajustado = ajustar_tempo_deslocamento_operacional(dist, original, atual)
+        step["travel_mins"] = ajustado
+        atual += ajustado
+
+        if tipo == "return":
+            continue
+        if tipo == "stop":
+            try:
+                atual += max(0.0, float(step.get("tempo_local", 0) or 0))
+            except (TypeError, ValueError):
+                pass
+
+    return route_steps
 
 def obter_hora_inicio_rota(data_rota):
     """A rota do Davi é planejada para iniciar às 08:00.
@@ -2594,6 +2705,7 @@ if modo_url == "true":
         st.error(erro_checkin_mobile)
 
     route_steps = atualizar_tempos_por_parada(route_steps, p_saida)
+    route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
     
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
@@ -3322,6 +3434,18 @@ ENDERECOS_PADRAO = [
     ("JP CONSTRUCOES", "Edson Queiroz, Fortaleza - CE")
 ]
 
+# Fornecedores conhecidos usados apenas como FALLBACK quando o banco ainda não
+# possui o local. Diferente das unidades próprias, estes endereços NÃO substituem
+# um cadastro feito manualmente pela equipe na aba Endereços.
+ENDERECOS_FORNECEDORES_FALLBACK = [
+    ("SV ELÉTRICA", "Av. Bezerra de Menezes, 420 - Farias Brito, Fortaleza - CE, 60325-000"),
+    ("SV ELETRICA", "Av. Bezerra de Menezes, 420 - Farias Brito, Fortaleza - CE, 60325-000"),
+    ("SV ELÉTRICA MATRIZ", "Av. Bezerra de Menezes, 420 - Farias Brito, Fortaleza - CE, 60325-000"),
+    ("SV ELÉTRICA CD", "R. Licurgo Montenegro, 585 - Padre Andrade, Fortaleza - CE, 60356-215"),
+    ("SV ELÉTRICA WASHINGTON SOARES", "Av. Washington Soares, 6450 - Cambeba, Fortaleza - CE, 60822-142"),
+    ("SV ELÉTRICA MARACANAÚ", "Av. Dr. Mendel Steinbruch, 6340 - Aracapé, Fortaleza - CE, 60765-242"),
+]
+
 @st.cache_resource(show_spinner=False)
 def inicializar_bd():
     """Prepara a estrutura do banco uma única vez por processo do aplicativo."""
@@ -3373,6 +3497,13 @@ def inicializar_bd():
                     s.execute(text("UPDATE locais SET endereco = :end, lat = NULL, lon = NULL WHERE apelido = :apelido"), {"end": end, "apelido": apelido})
             elif apelido not in locais_removidos:
                 s.execute(text("INSERT INTO locais (apelido, endereco) VALUES (:apelido, :end)"), {"apelido": apelido, "end": end})
+
+        # Fornecedor é diferente de unidade própria: se a equipe já cadastrou uma
+        # filial/endereço específico, preservamos o banco. O fallback só preenche
+        # um fornecedor ainda inexistente.
+        for apelido, end in ENDERECOS_FORNECEDORES_FALLBACK:
+            if apelido not in locais_existentes and apelido not in locais_removidos:
+                s.execute(text("INSERT INTO locais (apelido, endereco) VALUES (:apelido, :end) ON CONFLICT (apelido) DO NOTHING"), {"apelido": apelido, "end": end})
 
         s.execute(text("DELETE FROM locais WHERE UPPER(TRIM(apelido)) = 'DESCONHECIDO'"))
         for alias in ALIASES_LOCAL_BASE:
@@ -4138,6 +4269,52 @@ def calcular_matriz_rotas(coords, horario_partida=None):
         duracoes.append(row_t)
     return distancias, duracoes, "Estimativa geográfica de contingência"
 
+
+
+def calcular_trecho_tomtom_por_horario(coord_origem, coord_destino, horario_partida_min):
+    """Reconsulta um trecho na hora em que ele realmente será percorrido.
+
+    A matriz serve muito bem para escolher a ordem, porém ela é calculada com uma
+    única referência de horário. Depois que a sequência está definida, cada perna
+    passa a ser recalculada pela TomTom no seu horário planejado (08h, 09h, 10h...).
+    """
+    chave = carregar_chave_tomtom()
+    if not chave or not coord_origem or not coord_destino:
+        return None
+    try:
+        lat1, lon1 = float(coord_origem[0]), float(coord_origem[1])
+        lat2, lon2 = float(coord_destino[0]), float(coord_destino[1])
+        partida = datetime.combine(DATA_REF_ROTA_DATE, datetime.min.time()).replace(tzinfo=FUSO_LOCAL)
+        partida += timedelta(minutes=float(horario_partida_min or 0))
+        agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+        if DATA_REF_ROTA_DATE == AGORA_REAL.date() and partida < agora_seguro:
+            partida = agora_seguro
+
+        url = f"https://api.tomtom.com/routing/1/calculateRoute/{lat1},{lon1}:{lat2},{lon2}/json"
+        parametros = {
+            "key": chave,
+            "routeType": "fastest",
+            "traffic": "true",
+            "travelMode": "car",
+            "departAt": partida.isoformat(timespec="seconds"),
+            "computeTravelTimeFor": "all",
+            "routeRepresentation": "summaryOnly",
+            "language": "pt-BR",
+        }
+        resposta = requests.get(url, params=parametros, timeout=20)
+        resposta.raise_for_status()
+        rotas = resposta.json().get("routes", [])
+        if not rotas:
+            return None
+        resumo = rotas[0].get("summary", {}) or {}
+        dist_m = resumo.get("lengthInMeters")
+        dur_s = resumo.get("travelTimeInSeconds")
+        if dist_m is None or dur_s is None:
+            return None
+        return float(dist_m) / 1000.0, float(dur_s) / 60.0
+    except Exception:
+        return None
+
 def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
     """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
     distancia, duracao = get_dist_dur(atual, ponto)
@@ -4636,6 +4813,42 @@ def encontrar_endereco_na_descricao(descricao):
     if mo_end: return mo_end.group(1).strip()
     return None
 
+def alvo_endereco_trello(descricao, origem, destino):
+    """Decide a qual ponta da demanda pertence um endereço escrito no cartão.
+
+    A versão antiga podia salvar o MESMO `Endereço:` tanto na origem quanto no
+    destino quando ambos eram externos. Isso contaminava o banco de fornecedores e,
+    por consequência, a matriz da rota. Agora só há gravação quando o contexto é
+    suficientemente seguro.
+    """
+    texto = remover_acentos(str(descricao or "")).upper()
+    origem_n = remover_acentos(str(origem or "")).upper().strip()
+    destino_n = remover_acentos(str(destino or "")).upper().strip()
+
+    # Marcadores explícitos têm prioridade.
+    marcadores_origem = ("ENDERECO DA COLETA", "ENDERECO DO FORNECEDOR", "ENDERECO DE RETIRADA", "LOCAL DA COLETA")
+    marcadores_destino = ("ENDERECO DA ENTREGA", "ENDERECO DA OBRA", "LOCAL DA ENTREGA", "ENDERECO DO DESTINO")
+    if any(m in texto for m in marcadores_origem):
+        return "origem"
+    if any(m in texto for m in marcadores_destino):
+        return "destino"
+
+    # Se apenas uma ponta é externa, um endereço genérico do cartão normalmente
+    # pertence justamente a essa ponta; a unidade própria já tem endereço fixo.
+    origem_propria = normalizar_local(origem) in UNIDADES_PROPRIAS
+    destino_proprio = normalizar_local(destino) in UNIDADES_PROPRIAS
+    if origem_propria and not destino_proprio:
+        return "destino"
+    if destino_proprio and not origem_propria:
+        return "origem"
+
+    # Nome literal próximo ao conteúdo também permite associação segura.
+    if origem_n and origem_n in texto and ("COLET" in texto or "RETIR" in texto or "BUSCAR" in texto):
+        return "origem"
+    if destino_n and destino_n in texto and ("ENTREG" in texto or "LEVAR" in texto or "DESTINO" in texto):
+        return "destino"
+    return None
+
 def classificar_prioridade(due_str):
     if not due_str: return 1, "Sem Prazo"
     try:
@@ -4686,13 +4899,21 @@ def sincronizar_demandas(manual=False, forcar=False):
         short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
         peso, status_prazo = classificar_prioridade(c.get('due'))
         endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
-        if endereco_card:
+        alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
+        if endereco_card and alvo_endereco:
             lat, lon = buscar_coordenadas(endereco_card)
-            if lat:
-                if origem and origem not in UNIDADES_PROPRIAS and not fetch_one("SELECT lat FROM locais WHERE apelido = :apelido", {"apelido": origem}): 
-                    execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"apelido": origem, "end": endereco_card, "lat": lat, "lon": lon})
-                if destino and destino not in UNIDADES_PROPRIAS and not fetch_one("SELECT lat FROM locais WHERE apelido = :apelido", {"apelido": destino}): 
-                    execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"apelido": destino, "end": endereco_card, "lat": lat, "lon": lon})
+            if lat is not None and lon is not None:
+                local_alvo = origem if alvo_endereco == "origem" else destino
+                if local_alvo and normalizar_local(local_alvo) not in UNIDADES_PROPRIAS:
+                    # Nunca sobrescreve coordenadas já validadas no banco por causa
+                    # de um cartão do Trello. A aba Endereços permanece soberana.
+                    existente = fetch_one("SELECT lat, lon FROM locais WHERE apelido = :apelido", {"apelido": local_alvo})
+                    if not existente or existente[0] is None or existente[1] is None:
+                        execute_db(
+                            "INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) "
+                            "ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon",
+                            {"apelido": local_alvo, "end": endereco_card, "lat": lat, "lon": lon},
+                        )
         
         tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
         te_val = 10
@@ -5763,7 +5984,18 @@ with tab_roteiro:
                 horario_partida_matriz = AGORA_REAL + timedelta(minutes=1)
 
             dist_matrix, dur_matrix, fonte_matriz = calcular_matriz_rotas(coords, horario_partida_matriz)
-            def get_dist_dur(p1, p2): return (0.0, 0.0) if p1 == p2 else (dist_matrix[pontos_unicos.index(p1)][pontos_unicos.index(p2)], dur_matrix[pontos_unicos.index(p1)][pontos_unicos.index(p2)])
+
+            def get_dist_dur_bruto(p1, p2):
+                if p1 == p2:
+                    return 0.0, 0.0
+                i, j = pontos_unicos.index(p1), pontos_unicos.index(p2)
+                return float(dist_matrix[i][j]), float(dur_matrix[i][j])
+
+            # O otimizador continua usando a matriz viária, mas com um piso operacional
+            # realista para não preferir uma sequência baseada em tempos urbanos irreais.
+            def get_dist_dur(p1, p2):
+                dist, dur = get_dist_dur_bruto(p1, p2)
+                return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
             ordem_otimizada = otimizar_sequencia_rota(
                 unpicked,
@@ -5774,6 +6006,8 @@ with tab_roteiro:
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
             )
+            if "TomTom Routing" in fonte_matriz:
+                fonte_matriz = fonte_matriz + " + trechos recalculados no horário de cada etapa"
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
@@ -5802,7 +6036,15 @@ with tab_roteiro:
                 if best_point is None:
                     best_point = min(candidates, key=lambda p: pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)[0])
 
-                best_dist, best_dur = get_dist_dur(current, best_point)
+                # Para o horário exibido, reconsulta a perna na hora em que ela será
+                # realmente percorrida. Se a TomTom não responder, usa a matriz como fallback.
+                best_dist, best_dur_api = get_dist_dur_bruto(current, best_point)
+                trecho_atualizado = calcular_trecho_tomtom_por_horario(
+                    locais_dict.get(current), locais_dict.get(best_point), current_time
+                )
+                if trecho_atualizado:
+                    best_dist, best_dur_api = trecho_atualizado
+                best_dur = ajustar_tempo_deslocamento_operacional(best_dist, best_dur_api, current_time)
 
                 if 12*60 <= current_time < 13*60 and not lunch_taken:
                     route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
@@ -5848,7 +6090,7 @@ with tab_roteiro:
                         pausa_almoco_depois = True
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(dep_time), service_mins
 
-                route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "tempo_local": tempo_local_exibicao, "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local), "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
+                route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "travel_mins_api": best_dur_api, "tempo_local": tempo_local_exibicao, "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local), "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
                 current_time = dep_time
                 current = best_point
 
@@ -5864,9 +6106,15 @@ with tab_roteiro:
                     lunch_taken = True
 
             if retornar_base and current != ponto_saida:
-                d, dur = get_dist_dur(current, ponto_saida)
+                d, dur_api = get_dist_dur_bruto(current, ponto_saida)
+                trecho_retorno = calcular_trecho_tomtom_por_horario(
+                    locais_dict.get(current), locais_dict.get(ponto_saida), current_time
+                )
+                if trecho_retorno:
+                    d, dur_api = trecho_retorno
+                dur = ajustar_tempo_deslocamento_operacional(d, dur_api, current_time)
                 total_km += d
-                route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "chegada": format_time(current_time + dur), "saida": format_time(current_time + dur), "actions": []})
+                route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "travel_mins_api": dur_api, "chegada": format_time(current_time + dur), "saida": format_time(current_time + dur), "actions": []})
                 current_time += dur
 
             route_steps = past_route_steps + route_steps_new
@@ -5913,6 +6161,9 @@ with tab_roteiro:
         df_paradas = carregar_paradas_rastreadas_rota(DATA_REF_ROTA_STR, PLACA_DAVI)
 
         route_steps = atualizar_tempos_por_parada(route_steps, ponto_saida)
+        # Revalida também rotas antigas carregadas do Supabase: se um trecho de 4–5 km
+        # veio como 6–8 min, o ETA passa a usar um tempo operacional plausível.
+        route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
         col_esq, col_dir = st.columns([1.2, 0.8])
@@ -5951,9 +6202,9 @@ with tab_roteiro:
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
             if "Google Routes" in fonte_matriz_exibicao or "TomTom Routing" in fonte_matriz_exibicao:
-                st.caption(f"🚦 Otimização viária: **{fonte_matriz_exibicao}** • referência {horario_matriz_exibicao}")
+                st.caption(f"🚦 Otimização viária: **{fonte_matriz_exibicao}** • referência {horario_matriz_exibicao} • ETAs com validação operacional de trecho")
             else:
-                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • para trânsito real gratuito, configure `tomtom.api_key` nos Secrets.")
+                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional de trecho • para trânsito real gratuito, configure `tomtom.api_key` nos Secrets.")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
@@ -6220,7 +6471,7 @@ with tab_roteiro:
             "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo'),
         }])
         df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
-        st.caption("🍽️ O resumo inclui uma pausa de 1h para almoço. Se uma parada atravessar o meio-dia, o atendimento é concluído e a pausa aparece logo em seguida.")
+        st.caption("🛣️ Os horários do resumo usam distância viária + piso operacional para deslocamentos urbanos, evitando trechos otimistas demais. 🍽️ A pausa de 1h para almoço aparece como etapa própria.")
         renderizar_exportador(
             f"Roteiro do Davi - {DATA_REF_ROTA_STR}",
             {"Resumo da rota": df_resumo_sequencial},
