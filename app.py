@@ -1346,14 +1346,227 @@ def _criar_pdf_relatorio(titulo, tabelas):
     documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
     return saida.getvalue()
 
+
+def _criar_pdf_resumo_rota_tabela(titulo, df_resumo):
+    """PDF enxuto da rota: somente a sequência de paradas e o que fazer em cada uma."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, KeepTogether
+    except (ImportError, ModuleNotFoundError):
+        return _criar_pdf_textual(titulo, [("Resumo da rota", df_resumo)])
+
+    azul = colors.HexColor("#2563EB")
+    azul_escuro = colors.HexColor("#0F172A")
+    azul_claro = colors.HexColor("#EFF6FF")
+    azul_borda = colors.HexColor("#BFDBFE")
+    texto = colors.HexColor("#1E293B")
+    texto_sec = colors.HexColor("#64748B")
+    branco = colors.white
+    verde = colors.HexColor("#16A34A")
+    laranja = colors.HexColor("#F59E0B")
+    cinza = colors.HexColor("#94A3B8")
+
+    def limpar(valor):
+        return str(valor or "").replace("—", "-").replace("–", "-").replace("•", "-")
+
+    def esc(valor):
+        return html_escape(limpar(valor)).replace("\n", "<br/>")
+
+    def acao_curta(valor):
+        texto_acao = limpar(valor).strip()
+        substituicoes = [
+            (r"^COLETAR\s+materiais\s+para\s+", "COLETAR: "),
+            (r"^COLETAR\s+materiais\s*$", "COLETAR"),
+            (r"^ENTREGAR\s+materiais\s*-\s*", "ENTREGAR: "),
+            (r"^ENTREGAR\s+materiais\s*$", "ENTREGAR"),
+            (r"^PAUSA\s+DE\s+1H\s+PARA\s+ALMOÇO$", "ALMOÇO - 1h"),
+            (r"^RETORNAR\s+para\s+", "RETORNAR: "),
+        ]
+        for padrao, novo in substituicoes:
+            texto_acao = re.sub(padrao, novo, texto_acao, flags=re.IGNORECASE)
+        return texto_acao
+
+    df = df_resumo.copy() if isinstance(df_resumo, pd.DataFrame) else pd.DataFrame()
+    colunas_esperadas = ["Etapa", "Local", "O que fazer", "Horário previsto"]
+    for coluna in colunas_esperadas:
+        if coluna not in df.columns:
+            df[coluna] = ""
+    df = df[colunas_esperadas].fillna("")
+
+    estilos = getSampleStyleSheet()
+    st_titulo = ParagraphStyle(
+        "RotaResumoTitulo", parent=estilos["Title"], fontName="Helvetica-Bold",
+        fontSize=15, leading=18, textColor=branco, alignment=TA_CENTER,
+    )
+    st_sub = ParagraphStyle(
+        "RotaResumoSub", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=9.5, leading=12, textColor=azul_escuro, alignment=TA_LEFT,
+    )
+    st_seq = ParagraphStyle(
+        "RotaResumoSeq", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=8.4, leading=11, textColor=azul_escuro, alignment=TA_LEFT,
+    )
+    st_head = ParagraphStyle(
+        "RotaResumoHead", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=7.8, leading=9.2, textColor=branco, alignment=TA_CENTER,
+    )
+    st_num = ParagraphStyle(
+        "RotaResumoNum", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=9.5, leading=11, textColor=branco, alignment=TA_CENTER,
+    )
+    st_hora = ParagraphStyle(
+        "RotaResumoHora", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=8.2, leading=10, textColor=azul_escuro, alignment=TA_CENTER,
+    )
+    st_local = ParagraphStyle(
+        "RotaResumoLocal", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=8.6, leading=10.5, textColor=texto, alignment=TA_LEFT,
+    )
+    st_acao = ParagraphStyle(
+        "RotaResumoAcao", parent=estilos["Normal"], fontName="Helvetica",
+        fontSize=8.2, leading=10.5, textColor=texto, alignment=TA_LEFT,
+    )
+    st_meta = ParagraphStyle(
+        "RotaResumoMeta", parent=estilos["Normal"], fontName="Helvetica",
+        fontSize=7.2, leading=9, textColor=texto_sec, alignment=TA_LEFT,
+    )
+
+    saida = io.BytesIO()
+    documento = SimpleDocTemplate(
+        saida, pagesize=A4, rightMargin=12 * mm, leftMargin=12 * mm,
+        topMargin=18 * mm, bottomMargin=13 * mm,
+        title=limpar(titulo), author="APROAR Engenharia",
+    )
+    largura = A4[0] - 24 * mm
+
+    def cabecalho_rodape(canvas, doc):
+        w, h = A4
+        canvas.saveState()
+        canvas.setFillColor(azul_escuro)
+        canvas.rect(0, h - 9 * mm, w, 9 * mm, stroke=0, fill=1)
+        canvas.setFillColor(branco)
+        canvas.setFont("Helvetica-Bold", 8.5)
+        canvas.drawString(12 * mm, h - 5.8 * mm, "APROAR ENGENHARIA")
+        canvas.setFont("Helvetica", 7)
+        canvas.drawRightString(w - 12 * mm, h - 5.8 * mm, "Torre de Controle Logístico")
+        canvas.setStrokeColor(azul_borda)
+        canvas.line(12 * mm, 8 * mm, w - 12 * mm, 8 * mm)
+        canvas.setFillColor(texto_sec)
+        canvas.setFont("Helvetica", 6.8)
+        canvas.drawString(12 * mm, 4.5 * mm, "Resumo da rota do Davi")
+        canvas.drawRightString(w - 12 * mm, 4.5 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    titulo_limpo = limpar(titulo).upper()
+    faixa = Table([[Paragraph(esc(titulo_limpo), st_titulo)]], colWidths=[largura], rowHeights=[27])
+    faixa.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), azul),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+
+    locais = [limpar(v).strip() for v in df["Local"].tolist() if limpar(v).strip()]
+    sequencia = "  >  ".join(locais)
+
+    elementos = [
+        faixa,
+        Spacer(1, 6),
+        Paragraph("ORDEM DA ROTA", st_sub),
+        Spacer(1, 3),
+    ]
+    if sequencia:
+        caixa_seq = Table([[Paragraph(esc(sequencia), st_seq)]], colWidths=[largura])
+        caixa_seq.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), azul_claro),
+            ("BOX", (0, 0), (-1, -1), 0.6, azul_borda),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elementos.extend([caixa_seq, Spacer(1, 7)])
+
+    cabecalho = [[
+        Paragraph("#", st_head),
+        Paragraph("HORÁRIO", st_head),
+        Paragraph("LOCAL", st_head),
+        Paragraph("O QUE FAZER", st_head),
+    ]]
+    dados = list(cabecalho)
+    cores_etapa = []
+    for _, linha in df.iterrows():
+        etapa = limpar(linha.get("Etapa", ""))
+        horario = limpar(linha.get("Horário previsto", ""))
+        local = limpar(linha.get("Local", ""))
+        acao = acao_curta(linha.get("O que fazer", ""))
+        acao_norm = remover_acentos(acao).upper()
+        if acao_norm.startswith("COLETAR"):
+            cor = laranja
+        elif acao_norm.startswith("ENTREGAR"):
+            cor = verde
+        elif "ALMOCO" in acao_norm:
+            cor = cinza
+        elif acao_norm.startswith("RETORNAR"):
+            cor = azul_escuro
+        else:
+            cor = azul
+        cores_etapa.append(cor)
+        dados.append([
+            Paragraph(esc(etapa), st_num),
+            Paragraph(esc(horario), st_hora),
+            Paragraph(esc(local), st_local),
+            Paragraph(esc(acao), st_acao),
+        ])
+
+    larguras = [12 * mm, 31 * mm, 43 * mm, largura - 86 * mm]
+    tabela = Table(dados, colWidths=larguras, repeatRows=1, hAlign="LEFT")
+    estilo = [
+        ("BACKGROUND", (0, 0), (-1, 0), azul_escuro),
+        ("GRID", (0, 0), (-1, -1), 0.45, azul_borda),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]
+    for i, cor in enumerate(cores_etapa, start=1):
+        fundo = colors.HexColor("#F8FAFC") if i % 2 == 0 else branco
+        estilo.extend([
+            ("BACKGROUND", (1, i), (-1, i), fundo),
+            ("BACKGROUND", (0, i), (0, i), cor),
+        ])
+    tabela.setStyle(TableStyle(estilo))
+    elementos.append(tabela)
+    elementos.extend([
+        Spacer(1, 6),
+        Paragraph(
+            f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')}. "
+            "Este PDF mostra somente a sequência operacional da rota.",
+            st_meta,
+        ),
+    ])
+
+    documento.build(elementos, onFirstPage=cabecalho_rodape, onLaterPages=cabecalho_rodape)
+    return saida.getvalue()
+
 def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
     st.markdown("##### 📤 Exportar relatório")
     col_formato, col_download = st.columns([1, 2])
     formato = col_formato.selectbox("Formato", ["PDF", "CSV", "Excel"], key=f"formato_relatorio_{chave}")
     tabelas_dados = _normalizar_tabelas_relatorio(dados)
+    eh_roteiro = str(chave).lower() == "roteiro"
     resumo_analitico = _criar_resumo_analitico_relatorio(titulo, tabelas_dados)
-    if str(chave).lower() == "roteiro":
-        tabelas = tabelas_dados
+    if eh_roteiro:
+        # O roteiro exportado deve ser rápido de ler: somente a ordem das paradas.
+        resumo_rota = next((df for nome, df in tabelas_dados if "resumo da rota" in remover_acentos(str(nome)).lower()), None)
+        if resumo_rota is None:
+            resumo_rota = tabelas_dados[0][1] if tabelas_dados else pd.DataFrame(columns=["Etapa", "Local", "O que fazer", "Horário previsto"])
+        tabelas = [("Resumo da rota", resumo_rota)]
     else:
         tabelas = [("Resumo Analítico", resumo_analitico)] + tabelas_dados
     if formato == "CSV":
@@ -1361,7 +1574,11 @@ def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
     elif formato == "Excel":
         arquivo, extensao, mime = _criar_excel_relatorio(tabelas, titulo), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     else:
-        arquivo, extensao, mime = _criar_pdf_relatorio(titulo, tabelas), "pdf", "application/pdf"
+        if eh_roteiro:
+            arquivo = _criar_pdf_resumo_rota_tabela(titulo, tabelas[0][1])
+        else:
+            arquivo = _criar_pdf_relatorio(titulo, tabelas)
+        extensao, mime = "pdf", "application/pdf"
     col_download.download_button(
         f"⬇️ Baixar {formato}", data=arquivo,
         file_name=f"{nome_arquivo}_{AGORA_REAL.strftime('%Y-%m-%d')}.{extensao}",
@@ -6002,36 +6219,10 @@ with tab_roteiro:
             "Término previsto": format_mins_to_time(final_dyn_min),
             "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo'),
         }])
-        dados_pdf_rapido = {
-            "data": DATA_REF_ROTA_STR,
-            "ponto_saida": p_saida,
-            "veiculo": veiculo_selecionado.split('(')[0].strip(),
-            "inicio": hora_inicio_real,
-            "termino": format_mins_to_time(final_dyn_min),
-            "km": float(total_km),
-            "retornar_base": True,
-        }
-        pdf_resumo_rota = _criar_pdf_resumo_rota_operacional(route_steps, dados_pdf_rapido)
-        col_pdf_resumo, col_pdf_espaco = st.columns([1.25, 3.75])
-        with col_pdf_resumo:
-            st.download_button(
-                "🧾 Baixar resumo da rota",
-                data=pdf_resumo_rota,
-                file_name=f"resumo_rota_davi_{DATA_REF_ROTA_DATE.strftime('%Y-%m-%d')}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="baixar_pdf_resumo_rota_davi",
-                help="PDF curto: mostra somente a ordem das paradas e o que fazer em cada local.",
-            )
-
         df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
         st.caption("🍽️ O resumo inclui uma pausa de 1h para almoço. Se uma parada atravessar o meio-dia, o atendimento é concluído e a pausa aparece logo em seguida.")
         renderizar_exportador(
-            f"Roteiro do Davi — {DATA_REF_ROTA_STR}",
-            {
-                "Resumo da rota": df_resumo_sequencial,
-                "Dados gerais": df_resumo_rota,
-                "Paradas e demandas": df_relatorio_rota,
-            },
+            f"Roteiro do Davi - {DATA_REF_ROTA_STR}",
+            {"Resumo da rota": df_resumo_sequencial},
             "roteiro_do_davi", "roteiro",
         )
