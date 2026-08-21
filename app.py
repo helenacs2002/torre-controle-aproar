@@ -5441,7 +5441,6 @@ with st.sidebar:
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     if st.session_state.get("_ultima_rotina_auto"):
         st.caption(f"🔄 Trello + rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
-    st.caption("🟢 Modo de banco econômico: leituras repetidas reaproveitadas e gravação somente quando há mudança.")
     
     # Atualiza o Trello ao vivo a cada 2 minutos enquanto o app estiver aberto.
     # A leitura é forçada para não depender de um cache antigo do Supabase.
