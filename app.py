@@ -3800,33 +3800,64 @@ def _limpar_texto_extra_trello(texto):
     return "\n".join(linhas).strip()
 
 def extrair_observacoes_trello(card, acoes=None, limite=1200):
-    """Junta descrição útil do cartão e comentários humanos, sem atividades automáticas."""
-    textos = []
-    desc = _limpar_texto_extra_trello((card or {}).get("desc", ""))
-    if desc:
-        textos.append(desc)
+    """Retorna SOMENTE comentários humanos do cartão.
 
+    A descrição do cartão não entra aqui porque ela já é a fonte usada para extrair
+    origem, destino e materiais. Colocá-la novamente no alerta do Teams repetia toda
+    a lista de materiais. Atividades automáticas (ex.: mover o cartão para EM ROTA,
+    CONCLUÍDAS etc.) também não entram: na API do Trello elas não são `commentCard`.
+    """
+    textos = []
     card_id = str((card or {}).get("id", ""))
+
     for acao in acoes or []:
-        if acao.get("type") != "commentCard":
+        if str(acao.get("type", "")) != "commentCard":
             continue
         dados = acao.get("data", {}) or {}
-        if str((dados.get("card") or {}).get("id", "")) != card_id:
+        card_acao = dados.get("card") or {}
+        if card_id and str(card_acao.get("id", "")) != card_id:
             continue
+
         comentario = _limpar_texto_extra_trello(dados.get("text", ""))
         if comentario:
             textos.append(comentario)
 
+    # Evita repetir o mesmo comentário caso o JSON do Trello traga ações duplicadas.
     unicos, vistos = [], set()
     for texto in textos:
         chave = re.sub(r"\s+", " ", remover_acentos(texto).upper()).strip()
         if chave and chave not in vistos:
             vistos.add(chave)
             unicos.append(texto)
+
     resultado = "\n\n".join(unicos).strip()
     if len(resultado) > limite:
         resultado = resultado[:limite - 3].rstrip() + "..."
     return resultado
+
+
+def formatar_materiais_teams(materiais):
+    """Formata os materiais em lista vertical para o alerta do Teams."""
+    texto = str(materiais or "").replace("\r", "").strip()
+    if not texto:
+        return "- Ver Trello"
+
+    partes = re.split(r"\s*\|\s*|\n+", texto)
+    itens, vistos = [], set()
+    for parte in partes:
+        item = re.sub(r"^[\-•▪◦]+\s*", "", str(parte)).strip()
+        item = re.sub(r"\s+", " ", item)
+        if not item:
+            continue
+        chave = remover_acentos(item).upper()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        itens.append(item)
+
+    if not itens:
+        return "- Ver Trello"
+    return "\n".join(f"- {item}" for item in itens)
 
 
 def informar_entrega_manual_teams(card_id, tarefa):
@@ -3899,12 +3930,12 @@ def informar_entrega_manual_teams(card_id, tarefa):
         "✅ **Os materiais foram informados como entregues pela Torre de Controle.**\n\n"
         f"**Obra:** {short_name}\n\n"
         f"**Local:** {destino}\n\n"
-        f"**Materiais:** {materiais}\n\n"
+        f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
         f"**Data e Hora:** {agora.strftime('%d/%m/%Y às %H:%M')}\n\n"
         "**Origem do aviso:** Informado manualmente na aba Demandas Ativas."
     )
     if observacao_trello:
-        mensagem += f"\n\n**Observação do Trello:**\n{observacao_trello}"
+        mensagem += f"\n\n**Comentários do Trello:**\n{observacao_trello}"
 
     if not url_webhook:
         enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte_webhook})."
@@ -5772,11 +5803,11 @@ def loop_automacoes_background():
                     f"✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
                     f"**Obra:** {short_name}\n\n"
                     f"**Local:** {destino}\n\n"
-                    f"**Materiais:** {materiais}\n\n"
+                    f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
                     f"**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}"
                 )
                 if observacao_trello:
-                    mensagem += f"\n\n**Observação do Trello:**\n{observacao_trello}"
+                    mensagem += f"\n\n**Comentários do Trello:**\n{observacao_trello}"
 
                 if not url_webhook:
                     enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte_webhook})."
