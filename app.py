@@ -1995,66 +1995,6 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
     return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def normalizar_geometria_mapa(geometria, referencias=None):
-    """Normaliza uma geometria para o formato [lat, lon] esperado pelo Folium.
-
-    O GeoJSON do OSRM devolve [lon, lat]. Versões anteriores do app armazenaram
-    algumas dessas geometrias sem inverter os eixos; nesses casos a linha ficava
-    milhares de quilômetros fora do mapa e parecia ter desaparecido. A função
-    também recupera automaticamente rotas antigas já salvas no Supabase.
-    """
-    pontos = []
-    for ponto in geometria or []:
-        try:
-            if ponto is None or len(ponto) < 2:
-                continue
-            a, b = float(ponto[0]), float(ponto[1])
-            if math.isfinite(a) and math.isfinite(b):
-                pontos.append([a, b])
-        except (TypeError, ValueError, IndexError):
-            continue
-
-    if len(pontos) < 2:
-        return pontos
-
-    refs = []
-    for ponto in referencias or []:
-        try:
-            if ponto is None or len(ponto) < 2:
-                continue
-            lat, lon = float(ponto[0]), float(ponto[1])
-            if math.isfinite(lat) and math.isfinite(lon):
-                refs.append([lat, lon])
-        except (TypeError, ValueError, IndexError):
-            continue
-
-    if not refs:
-        return pontos
-
-    # Compara a geometria como veio e com os eixos invertidos. A primeira e a
-    # última coordenada são suficientes para reconhecer o erro do GeoJSON/OSRM.
-    def pontuacao(candidatos):
-        try:
-            return (
-                calcular_distancia_km(candidatos[0][0], candidatos[0][1], refs[0][0], refs[0][1])
-                + calcular_distancia_km(candidatos[-1][0], candidatos[-1][1], refs[-1][0], refs[-1][1])
-            )
-        except Exception:
-            return float('inf')
-
-    invertidos = [[p[1], p[0]] for p in pontos]
-    score_normal = pontuacao(pontos)
-    score_invertido = pontuacao(invertidos)
-    if score_invertido + 0.5 < score_normal:
-        pontos = invertidos
-        score_normal = score_invertido
-
-    # Uma geometria sem relação com a rota não deve ser desenhada. O mapa usa
-    # então a ligação direta entre as paradas até conseguir consultar a malha viária.
-    if score_normal > 80.0:
-        return []
-    return pontos
-
 PLACA_DAVI = "TIF-2123"
 HORA_INICIO_ROTA_DAVI = "08:00"
 
@@ -2764,35 +2704,21 @@ if modo_url == "true":
     if erro_checkin_mobile:
         st.error(erro_checkin_mobile)
 
-    # No modo ?davi=true o Streamlit executa este bloco antes de chegar às
-    # funções de planejamento declaradas mais abaixo no arquivo. Portanto, não
-    # podemos chamar atualizar_tempos_por_parada() diretamente aqui, pois ela
-    # ainda não existe neste ponto da execução e causava NameError no app móvel.
-    #
-    # A rota liberada pela Torre já vem com tempo_local calculado. Aqui apenas
-    # saneamos rotas antigas/salvas para a faixa operacional atual (15–25 min),
-    # preservando a preparação inicial da base. Quando a função completa estiver
-    # disponível (em outros fluxos), ela continua sendo usada normalmente.
-    _atualizador_paradas = globals().get("atualizar_tempos_por_parada")
-    if callable(_atualizador_paradas):
-        route_steps = _atualizador_paradas(route_steps, p_saida)
-    else:
-        for _idx_step, _step in enumerate(route_steps or []):
-            if _step.get("type") != "stop":
-                continue
-            _destino_step = str(_step.get("destino", "") or "")
-            _eh_preparacao_base = (_idx_step == 0 and _destino_step == p_saida)
-            if _eh_preparacao_base:
-                continue
-            try:
-                _tempo_salvo = float(_step.get("tempo_local", 20) or 20)
-            except (TypeError, ValueError):
-                _tempo_salvo = 20.0
-            if not math.isfinite(_tempo_salvo):
-                _tempo_salvo = 20.0
-            _step["tempo_local"] = int(round(min(max(_tempo_salvo, 15.0), 25.0)))
-            _step.setdefault("tempo_local_fonte", "estimativa salva da rota")
-
+    # No modo mobile esta função completa é definida mais abaixo no arquivo.
+    # Mantemos os tempos já salvos na rota e apenas protegemos a faixa operacional
+    # das paradas comuns, sem mexer na preparação de 30 min da base.
+    for _idx_mobile, _step_mobile in enumerate(route_steps):
+        if _step_mobile.get("type") != "stop":
+            continue
+        _eh_preparacao_mobile = (_idx_mobile == 0 and _step_mobile.get("destino") == p_saida)
+        if _eh_preparacao_mobile:
+            _step_mobile["tempo_local"] = 30
+            continue
+        try:
+            _tempo_mobile = float(_step_mobile.get("tempo_local", 20) or 20)
+        except (TypeError, ValueError):
+            _tempo_mobile = 20.0
+        _step_mobile["tempo_local"] = int(round(min(max(_tempo_mobile, 15.0), 25.0)))
     route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
     
@@ -3428,13 +3354,9 @@ if modo_url == "true":
     p_num_mapa = 1
     pos_base_mobile = apply_offset_mobile(*locais_dict[p_saida]) if p_saida in locais_dict else None
 
-    # Sempre desenha algum traçado. Também corrige automaticamente geometrias
-    # antigas do OSRM que foram salvas no formato [lon, lat].
-    geom_mobile = normalizar_geometria_mapa(geometria_rota or [], pontos_reais_mobile)
-    geom_mobile_viaria = bool(st.session_state.get('geometria_viaria', False)) and len(geom_mobile) > 2
-    if len(geom_mobile) < 2 and len(pontos_reais_mobile) > 1:
-        geom_mobile = [list(p) for p in pontos_reais_mobile]
-        geom_mobile_viaria = False
+    # Sempre desenha algum traçado: sólido quando é viário, tracejado apenas no fallback.
+    geom_mobile = geometria_rota or []
+    geom_mobile_viaria = bool(st.session_state.get('geometria_viaria', False))
     if len(geom_mobile) > 1:
         folium.PolyLine(geom_mobile, color="#FFFFFF", weight=8, opacity=0.80).add_to(m_mobile)
         folium.PolyLine(
@@ -3579,12 +3501,6 @@ def inicializar_bd():
         SQL_TABELA_CHECKINS_DAVI,
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS fonte_matriz TEXT",
         "ALTER TABLE rota_ativa ADD COLUMN IF NOT EXISTS horario_matriz TEXT",
-        # Controle de entrega ao Teams. `NULL` identifica registros antigos criados
-        # antes desta melhoria; novas baixas entram explicitamente como FALSE e são
-        # tentadas novamente até o Teams confirmar o recebimento.
-        "ALTER TABLE historico_concluidos ADD COLUMN IF NOT EXISTS teams_notificado BOOLEAN",
-        "ALTER TABLE historico_concluidos ADD COLUMN IF NOT EXISTS teams_tentativas INTEGER DEFAULT 0",
-        "ALTER TABLE historico_concluidos ADD COLUMN IF NOT EXISTS teams_ultimo_erro TEXT",
         "CREATE INDEX IF NOT EXISTS idx_historico_concluidos_data ON historico_concluidos (data_conclusao)",
         "CREATE INDEX IF NOT EXISTS idx_inicio_movimento_data ON inicio_movimento (data)",
         "CREATE INDEX IF NOT EXISTS idx_rastreio_paradas_data_placa ON rastreio_paradas (data, placa)",
@@ -3644,7 +3560,7 @@ try:
             st.session_state['geometria_rota'] = json.loads(res_rota[2])
             st.session_state['enderecos_dict'] = json.loads(res_rota[3])
             st.session_state['total_km'] = res_rota[4]
-            st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — rota viária"
+            st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — malha viária sem trânsito ao vivo"
             st.session_state['horario_matriz_rota'] = res_rota[6] or ""
             if st.session_state['route_steps']:
                 st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
@@ -3723,50 +3639,22 @@ def identificar_grupo_teams(destino, obra=""):
     return ""
 
 def obter_webhook_teams(setor, supervisor=None, obra=""):
-    """Resolve o canal da unidade e nunca perde a baixa por falta de webhook específico.
-
-    Ordem: grupo da unidade -> cadastro do supervisor -> banco -> grupo geral.
-    O grupo geral é apenas contingência; não duplica mensagens quando o canal correto existe.
-    """
     chave_unidade = identificar_grupo_teams(setor, obra)
     if chave_unidade:
         try:
             url_secret = str(st.secrets["teams_unidades"].get(chave_unidade, "")).strip()
             if url_secret: return url_secret, "Secrets — grupo da unidade"
-        except Exception:
-            pass
-
+        except: pass
     chave_supervisor = TEAMS_SECRET_KEYS.get(supervisor or setor)
     if chave_supervisor:
         try:
             url_secret = str(st.secrets["teams"].get(chave_supervisor, "")).strip()
             if url_secret: return url_secret, "Secrets — cadastro anterior"
-        except Exception:
-            pass
-
+        except: pass
     try:
         registro = fetch_one("SELECT url FROM webhooks_teams WHERE setor = :setor", {"setor": supervisor or setor})
         if registro and registro[0]: return registro[0].strip(), "Banco local"
-    except Exception:
-        pass
-
-    # Se uma unidade ainda não tiver webhook próprio, a baixa vai para o grupo geral
-    # em vez de desaparecer silenciosamente.
-    try:
-        url_geral = str(st.secrets["teams_unidades"].get("geral_logistica", "")).strip()
-        if url_geral: return url_geral, "Secrets — grupo geral (contingência)"
-    except Exception:
-        pass
-    try:
-        url_geral = str(st.secrets["teams"].get("geral_logistica", "")).strip()
-        if url_geral: return url_geral, "Secrets — grupo geral (contingência)"
-    except Exception:
-        pass
-    try:
-        registro = fetch_one("SELECT url FROM webhooks_teams WHERE setor = 'Geral / Logística'")
-        if registro and registro[0]: return registro[0].strip(), "Banco local — grupo geral (contingência)"
-    except Exception:
-        pass
+    except: pass
     return "", "Não configurado"
 
 def disparar_teams(webhook_url, titulo, mensagem):
@@ -3783,179 +3671,81 @@ def disparar_teams(webhook_url, titulo, mensagem):
         if tentativa < 2: time.sleep(1 + tentativa)
     return False, ultimo_erro or "Falha desconhecida ao enviar a mensagem."
 
-def _limpar_texto_extra_trello(texto):
-    """Remove atividade padrão do Trello e preserva somente conteúdo útil da demanda."""
-    if not texto:
-        return ""
-    linhas = []
-    for linha in str(texto).replace("\r", "").split("\n"):
-        limpa = re.sub(r"\s+", " ", linha).strip()
-        if not limpa:
-            continue
-        norm = remover_acentos(re.sub(r"[*_`]", "", limpa)).upper()
-        # Ex.: **Fulano** adicionou este cartão a EM ROTA [20 de ago...](link)
-        if "ADICIONOU ESTE CARTAO A" in norm and "EM ROTA" in norm:
-            continue
-        linhas.append(limpa)
-    return "\n".join(linhas).strip()
 
-def extrair_observacoes_trello(card, acoes=None, limite=1200):
-    """Retorna SOMENTE comentários humanos do cartão.
+def _comentarios_humanos_trello(card_id, acoes):
+    """Retorna somente comentários escritos por pessoas no cartão.
 
-    A descrição do cartão não entra aqui porque ela já é a fonte usada para extrair
-    origem, destino e materiais. Colocá-la novamente no alerta do Teams repetia toda
-    a lista de materiais. Atividades automáticas (ex.: mover o cartão para EM ROTA,
-    CONCLUÍDAS etc.) também não entram: na API do Trello elas não são `commentCard`.
+    Atividades automáticas do Trello (mover de lista, adicionar ao quadro,
+    alterar prazo etc.) não entram no alerta do Teams.
     """
-    textos = []
-    card_id = str((card or {}).get("id", ""))
-
-    for acao in acoes or []:
-        if str(acao.get("type", "")) != "commentCard":
+    comentarios = []
+    vistos = set()
+    ordenadas = sorted(acoes or [], key=lambda a: str(a.get("date", "")))
+    for acao in ordenadas:
+        if acao.get("type") != "commentCard":
             continue
-        dados = acao.get("data", {}) or {}
-        card_acao = dados.get("card") or {}
-        if card_id and str(card_acao.get("id", "")) != card_id:
+        dados = acao.get("data") or {}
+        if str((dados.get("card") or {}).get("id", "")) != str(card_id):
             continue
-
-        comentario = _limpar_texto_extra_trello(dados.get("text", ""))
-        if comentario:
-            textos.append(comentario)
-
-    # Evita repetir o mesmo comentário caso o JSON do Trello traga ações duplicadas.
-    unicos, vistos = [], set()
-    for texto in textos:
-        chave = re.sub(r"\s+", " ", remover_acentos(texto).upper()).strip()
-        if chave and chave not in vistos:
-            vistos.add(chave)
-            unicos.append(texto)
-
-    resultado = "\n\n".join(unicos).strip()
-    if len(resultado) > limite:
-        resultado = resultado[:limite - 3].rstrip() + "..."
-    return resultado
-
-
-def formatar_materiais_teams(materiais):
-    """Formata os materiais em lista vertical para o alerta do Teams."""
-    texto = str(materiais or "").replace("\r", "").strip()
-    if not texto:
-        return "- Ver Trello"
-
-    partes = re.split(r"\s*\|\s*|\n+", texto)
-    itens, vistos = [], set()
-    for parte in partes:
-        item = re.sub(r"^[\-•▪◦]+\s*", "", str(parte)).strip()
-        item = re.sub(r"\s+", " ", item)
-        if not item:
+        texto_comentario = re.sub(r"\s+", " ", str(dados.get("text", "") or "")).strip()
+        if not texto_comentario:
             continue
-        chave = remover_acentos(item).upper()
+        chave = remover_acentos(texto_comentario).lower()
         if chave in vistos:
             continue
         vistos.add(chave)
-        itens.append(item)
-
-    if not itens:
-        return "- Ver Trello"
-    return "\n".join(f"- {item}" for item in itens)
+        comentarios.append(texto_comentario)
+    return comentarios[-8:]
 
 
-def informar_entrega_manual_teams(card_id, tarefa):
-    """Fallback manual: registra a entrega e dispara o mesmo alerta do Teams.
+def _materiais_em_linhas_teams(materiais):
+    partes = []
+    for trecho in re.split(r"\s*\|\s*|[\r\n]+", str(materiais or "")):
+        item = re.sub(r"\s+", " ", trecho).strip(" -•\t")
+        if item:
+            partes.append(item)
+    if not partes:
+        return "- Não informado"
+    return "\n".join(f"- {item}" for item in partes)
 
-    A automação do Trello continua sendo o caminho principal. Este método só deve
-    ser usado quando a baixa automática não sinalizar. Não move o cartão no Trello;
-    apenas registra a entrega no histórico interno e informa o Teams imediatamente.
-    """
-    card_id = str(card_id or "").strip()
-    tarefa = tarefa or {}
-    if not card_id:
-        return False, "Demanda sem identificador do Trello."
 
-    agora = datetime.now(FUSO_LOCAL)
-    data_str = agora.strftime("%d/%m/%Y")
-    hora_str = agora.strftime("%H:%M")
+def _montar_alerta_entrega_teams(card_id, short_name, destino, materiais, momento, acoes):
+    mensagem = (
+        "✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
+        f"**Obra:** {short_name}\n\n"
+        f"**Local:** {destino}\n\n"
+        f"**Materiais:**\n{_materiais_em_linhas_teams(materiais)}\n\n"
+        f"**Data e Hora:** {momento.strftime('%d/%m/%Y às %H:%M')}"
+    )
+    comentarios = _comentarios_humanos_trello(card_id, acoes)
+    if comentarios:
+        mensagem += "\n\n**Comentários do Trello:**\n" + "\n".join(f"- {c}" for c in comentarios)
+    return mensagem
 
-    # Usa o cartão real para preservar nome, descrição e comentários sempre que possível.
-    card = None
-    acoes = []
-    try:
-        dados_trello = obter_dados_trello(forcar=True) or {}
-        card = next((c for c in dados_trello.get("cards", []) if str(c.get("id", "")) == card_id), None)
-        acoes = dados_trello.get("actions", []) or []
-    except Exception:
-        card = None
-        acoes = []
 
-    if card:
-        short_name, origem, destino, materiais = extrair_dados_completos(
-            card.get("desc", ""), card.get("name", "")
-        )
-        observacao_trello = extrair_observacoes_trello(card, acoes)
-    else:
-        short_name = str(tarefa.get("Obra", "") or "")
-        origem = str(tarefa.get("Origem", "") or "")
-        destino = str(tarefa.get("Destino", "") or "")
-        materiais = str(tarefa.get("Materiais", "") or "")
-        observacao_trello = ""
-
-    # Se o parser do Trello vier incompleto, reaproveita os dados da rota.
-    short_name = short_name or str(tarefa.get("Obra", "") or "")
-    origem = origem or str(tarefa.get("Origem", "") or "")
-    destino = destino or str(tarefa.get("Destino", "") or "")
-    materiais = materiais or str(tarefa.get("Materiais", "") or "")
-    supervisor = str(tarefa.get("Supervisor", "") or SUPERVISORES_MAP.get(destino, "Sede / Logística"))
-
-    # Registra a baixa interna antes do envio. Assim o roteiro/app também reconhece
-    # a entrega informada manualmente, mesmo se o webhook estiver temporariamente fora.
+def _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento):
     execute_db(
-        "INSERT INTO historico_concluidos "
-        "(id, obra, origem, destino, materiais, data_conclusao, hora_conclusao, teams_notificado, teams_tentativas, teams_ultimo_erro) "
-        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora, FALSE, 0, NULL) "
-        "ON CONFLICT (id) DO UPDATE SET obra=EXCLUDED.obra, origem=EXCLUDED.origem, destino=EXCLUDED.destino, "
-        "materiais=EXCLUDED.materiais, data_conclusao=EXCLUDED.data_conclusao, hora_conclusao=EXCLUDED.hora_conclusao",
+        "INSERT INTO historico_concluidos (id, obra, origem, destino, materiais, data_conclusao, hora_conclusao) "
+        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora) "
+        "ON CONFLICT (id) DO UPDATE SET obra=EXCLUDED.obra, origem=EXCLUDED.origem, "
+        "destino=EXCLUDED.destino, materiais=EXCLUDED.materiais, "
+        "data_conclusao=EXCLUDED.data_conclusao, hora_conclusao=EXCLUDED.hora_conclusao",
         {
-            "id": card_id,
-            "obra": short_name,
-            "origem": origem,
-            "destino": destino,
-            "mat": materiais,
-            "data": data_str,
-            "hora": hora_str,
+            "id": str(card_id), "obra": short_name, "origem": origem, "destino": destino,
+            "mat": materiais, "data": momento.strftime("%d/%m/%Y"), "hora": momento.strftime("%H:%M"),
         },
     )
 
-    url_webhook, fonte_webhook = obter_webhook_teams(destino, supervisor=supervisor, obra=short_name)
-    mensagem = (
-        "✅ **Os materiais foram informados como entregues pela Torre de Controle.**\n\n"
-        f"**Obra:** {short_name}\n\n"
-        f"**Local:** {destino}\n\n"
-        f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
-        f"**Data e Hora:** {agora.strftime('%d/%m/%Y às %H:%M')}\n\n"
-        "**Origem do aviso:** Informado manualmente na aba Demandas Ativas."
-    )
-    if observacao_trello:
-        mensagem += f"\n\n**Comentários do Trello:**\n{observacao_trello}"
 
+def _enviar_alerta_entrega_teams(card_id, short_name, origem, destino, materiais, momento, acoes):
+    url_webhook, origem_webhook = obter_webhook_teams(
+        destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name
+    )
     if not url_webhook:
-        enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte_webhook})."
-    else:
-        enviado, detalhe = disparar_teams(url_webhook, f"✅ Entrega concluída — {destino}", mensagem)
-
-    if enviado:
-        execute_db(
-            "UPDATE historico_concluidos SET teams_notificado=TRUE, "
-            "teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=NULL WHERE id=:id",
-            {"id": card_id},
-        )
-        return True, "Entrega registrada e alerta enviado ao Teams."
-
-    execute_db(
-        "UPDATE historico_concluidos SET teams_notificado=FALSE, "
-        "teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=:erro WHERE id=:id",
-        {"id": card_id, "erro": str(detalhe)[:500]},
-    )
-    return False, f"Entrega registrada, mas o Teams não confirmou o alerta: {detalhe}"
+        return False, f"Webhook do Teams não configurado ({origem_webhook})."
+    titulo = f"✅ Entrega concluída — {destino}"
+    mensagem = _montar_alerta_entrega_teams(card_id, short_name, destino, materiais, momento, acoes)
+    return disparar_teams(url_webhook, titulo, mensagem)
 
 def is_in_ceara(lat, lon): return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
@@ -4411,283 +4201,6 @@ def carregar_chave_tomtom():
             pass
     return ""
 
-def carregar_token_mapbox():
-    """Lê o access token da Mapbox sem expô-lo no código."""
-    caminhos = [
-        ("mapbox", "access_token"),
-        ("mapbox", "api_key"),
-        ("mapbox", "token"),
-    ]
-    for secao, campo in caminhos:
-        try:
-            token = str(st.secrets[secao][campo]).strip()
-            if token:
-                return token
-        except Exception:
-            pass
-    for campo in ("MAPBOX_ACCESS_TOKEN", "mapbox_access_token", "MAPBOX_TOKEN", "mapbox_token"):
-        try:
-            token = str(st.secrets[campo]).strip()
-            if token:
-                return token
-        except Exception:
-            pass
-    return ""
-
-
-def _registrar_diagnostico_mapbox(ok, mensagem, detalhes=""):
-    """Guarda diagnóstico operacional da Mapbox sem registrar o token."""
-    try:
-        st.session_state['_mapbox_diag'] = {
-            'ok': bool(ok),
-            'mensagem': str(mensagem or '').strip(),
-            'detalhes': str(detalhes or '').strip()[:700],
-            'quando': datetime.now(FUSO_LOCAL).strftime('%H:%M:%S'),
-        }
-    except Exception:
-        pass
-
-
-def _erro_mapbox_resposta(resposta):
-    """Extrai erro útil da Mapbox sem incluir URL nem access token."""
-    codigo_http = getattr(resposta, 'status_code', '')
-    mensagem = ''
-    codigo_api = ''
-    try:
-        dados = resposta.json()
-        if isinstance(dados, dict):
-            codigo_api = str(dados.get('code') or '').strip()
-            mensagem = str(dados.get('message') or dados.get('error') or '').strip()
-    except Exception:
-        try:
-            mensagem = str(resposta.text or '')[:300].strip()
-        except Exception:
-            mensagem = ''
-    partes = [f"HTTP {codigo_http}" if codigo_http else "Falha HTTP"]
-    if codigo_api:
-        partes.append(codigo_api)
-    if mensagem:
-        partes.append(mensagem)
-    return " - ".join(partes)
-
-
-def _partida_mapbox(horario_partida=None):
-    """Normaliza a partida para um instante aceito pelas APIs da Mapbox."""
-    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
-    partida = horario_partida if horario_partida else agora_seguro
-    try:
-        if partida.tzinfo is None:
-            partida = partida.replace(tzinfo=FUSO_LOCAL)
-    except Exception:
-        partida = agora_seguro
-    if partida < agora_seguro:
-        partida = agora_seguro
-    return partida
-
-
-def _param_depart_at_mapbox(partida):
-    return partida.isoformat(timespec="minutes")
-
-
-def calcular_matriz_mapbox_trafego(coords, horario_partida=None):
-    """Matriz Mapbox com trânsito; OSRM entra apenas em células sem rota.
-
-    O perfil driving-traffic aceita até 10 coordenadas por requisição. Para rotas
-    maiores, a matriz N x N é montada em blocos 5 x 5 usando sources/destinations.
-    Isso preserva nosso próprio otimizador e usa a Mapbox apenas como fonte viária.
-    """
-    token = carregar_token_mapbox()
-    quantidade = len(coords)
-    if not token:
-        _registrar_diagnostico_mapbox(False, 'Access token da Mapbox não encontrado nos Secrets.')
-        return None
-    if quantidade < 2:
-        return None
-    # Evita exceder 30 req/min do driving-traffic em matrizes excepcionalmente grandes.
-    if quantidade > 25:
-        _registrar_diagnostico_mapbox(False, f'Rota com {quantidade} pontos: matriz de trânsito foi mantida no OSRM para não exceder o limite operacional da Mapbox.')
-        return None
-
-    partida = _partida_mapbox(horario_partida)
-    depart_at = _param_depart_at_mapbox(partida)
-    distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
-    duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
-    chamadas = 0
-    usou_depart_at = True
-
-    def requisitar(indices_origem, indices_destino, usar_depart_at=True):
-        # Duplicar uma mesma coordenada entre origem/destino é válido e simplifica
-        # a indexação dos blocos mantendo o limite máximo de 10 coordenadas.
-        coords_req = [coords[i] for i in indices_origem] + [coords[j] for j in indices_destino]
-        coords_str = ';'.join(f"{float(lon):.7f},{float(lat):.7f}" for lat, lon in coords_req)
-        sources = ';'.join(str(i) for i in range(len(indices_origem)))
-        desloc = len(indices_origem)
-        destinations = ';'.join(str(desloc + j) for j in range(len(indices_destino)))
-        params = {
-            'access_token': token,
-            'annotations': 'distance,duration',
-            'sources': sources,
-            'destinations': destinations,
-        }
-        if usar_depart_at:
-            params['depart_at'] = depart_at
-        resposta = requests.get(
-            f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving-traffic/{coords_str}",
-            params=params,
-            timeout=25,
-        )
-        # depart_at da Matrix é beta e pode não estar habilitado na conta.
-        if resposta.status_code == 422 and usar_depart_at:
-            return requisitar(indices_origem, indices_destino, usar_depart_at=False)
-        if not resposta.ok:
-            raise RuntimeError(_erro_mapbox_resposta(resposta))
-        dados = resposta.json()
-        if dados.get('code') != 'Ok':
-            raise RuntimeError(f"Mapbox {dados.get('code')}: {dados.get('message', 'matriz sem resposta válida')}")
-        return dados, usar_depart_at
-
-    try:
-        if quantidade <= 10:
-            # Uma única chamada simétrica é mais eficiente e consome N² elementos.
-            coords_str = ';'.join(f"{float(lon):.7f},{float(lat):.7f}" for lat, lon in coords)
-            params = {'access_token': token, 'annotations': 'distance,duration', 'depart_at': depart_at}
-            resposta = requests.get(
-                f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving-traffic/{coords_str}",
-                params=params,
-                timeout=25,
-            )
-            if resposta.status_code == 422:
-                params.pop('depart_at', None)
-                usou_depart_at = False
-                resposta = requests.get(
-                    f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving-traffic/{coords_str}",
-                    params=params,
-                    timeout=25,
-                )
-            chamadas = 1
-            if not resposta.ok:
-                raise RuntimeError(_erro_mapbox_resposta(resposta))
-            dados = resposta.json()
-            if dados.get('code') != 'Ok':
-                raise RuntimeError(f"Mapbox {dados.get('code')}: {dados.get('message', 'matriz sem resposta válida')}")
-            ds = dados.get('distances') or []
-            ts = dados.get('durations') or []
-            for i in range(quantidade):
-                for j in range(quantidade):
-                    if i < len(ds) and j < len(ds[i]) and ds[i][j] is not None:
-                        distancias[i][j] = float(ds[i][j]) / 1000.0
-                    if i < len(ts) and j < len(ts[i]) and ts[i][j] is not None:
-                        duracoes[i][j] = float(ts[i][j]) / 60.0
-        else:
-            bloco = 5
-
-            def particionar_indices(total, maximo=5):
-                grupos = [list(range(i, min(i + maximo, total))) for i in range(0, total, maximo)]
-                # A Matrix não aceita resultado 1x1. Se sobrar apenas um índice no
-                # último grupo, traz um índice do grupo anterior (5+1 vira 4+2).
-                if len(grupos) > 1 and len(grupos[-1]) == 1:
-                    grupos[-1].insert(0, grupos[-2].pop())
-                return grupos
-
-            grupos = particionar_indices(quantidade, bloco)
-            blocos = [(origens, destinos) for origens in grupos for destinos in grupos]
-
-            # Até 25 pontos => no máximo 25 requisições, dentro do limite nominal
-            # de 30 req/min do perfil driving-traffic.
-            for origens, destinos in blocos:
-                dados, bloco_usou_depart_at = requisitar(origens, destinos, usar_depart_at=usou_depart_at)
-                chamadas += 1
-                usou_depart_at = usou_depart_at and bloco_usou_depart_at
-                ds = dados.get('distances') or []
-                ts = dados.get('durations') or []
-                for oi_local, oi_global in enumerate(origens):
-                    for dj_local, dj_global in enumerate(destinos):
-                        if oi_local < len(ds) and dj_local < len(ds[oi_local]) and ds[oi_local][dj_local] is not None:
-                            distancias[oi_global][dj_global] = float(ds[oi_local][dj_local]) / 1000.0
-                        if oi_local < len(ts) and dj_local < len(ts[oi_local]) and ts[oi_local][dj_local] is not None:
-                            duracoes[oi_global][dj_global] = float(ts[oi_local][dj_local]) / 60.0
-
-        for i in range(quantidade):
-            distancias[i][i], duracoes[i][i] = 0.0, 0.0
-
-        faltantes = [
-            (i, j) for i in range(quantidade) for j in range(quantidade)
-            if distancias[i][j] is None or duracoes[i][j] is None
-        ]
-        if faltantes:
-            matriz_osrm = _calcular_matriz_osrm(coords)
-            if matriz_osrm:
-                dist_osrm, dur_osrm = matriz_osrm
-                for i, j in faltantes:
-                    if distancias[i][j] is None:
-                        distancias[i][j] = dist_osrm[i][j]
-                    if duracoes[i][j] is None:
-                        duracoes[i][j] = dur_osrm[i][j]
-
-        restantes = sum(
-            1 for i in range(quantidade) for j in range(quantidade)
-            if distancias[i][j] is None or duracoes[i][j] is None
-        )
-        if restantes:
-            _registrar_diagnostico_mapbox(False, 'Mapbox respondeu, mas a matriz ficou incompleta.', f'{restantes} trecho(s) sem rota.')
-            return None
-
-        try:
-            st.session_state['_mapbox_matriz_hibrida'] = len(faltantes)
-            st.session_state['_mapbox_matriz_chamadas'] = chamadas
-            st.session_state['_mapbox_depart_at'] = bool(usou_depart_at)
-        except Exception:
-            pass
-        detalhe_tempo = 'trânsito no horário planejado' if usou_depart_at else 'trânsito atual (depart_at da Matrix indisponível na conta)'
-        if faltantes:
-            _registrar_diagnostico_mapbox(True, f'Mapbox ativa • {detalhe_tempo} • {len(faltantes)} trecho(s) completado(s) pelo OSRM.')
-        else:
-            _registrar_diagnostico_mapbox(True, f'Mapbox Matrix ativa • {detalhe_tempo}.')
-        return distancias, duracoes
-    except Exception as erro:
-        _registrar_diagnostico_mapbox(False, 'Mapbox Matrix falhou; OSRM assumiu a rota.', str(erro)[:600])
-        return None
-
-
-def calcular_trecho_mapbox_por_horario(coord_origem, coord_destino, horario_partida_min):
-    """Recalcula cada perna pela Mapbox no horário real planejado daquela etapa."""
-    token = carregar_token_mapbox()
-    if not token or not coord_origem or not coord_destino:
-        return None
-    try:
-        lat1, lon1 = map(float, coord_origem)
-        lat2, lon2 = map(float, coord_destino)
-        partida = datetime.combine(DATA_REF_ROTA_DATE, datetime.min.time()).replace(tzinfo=FUSO_LOCAL)
-        partida += timedelta(minutes=float(horario_partida_min or 0))
-        partida = _partida_mapbox(partida)
-        coords_str = f"{lon1:.7f},{lat1:.7f};{lon2:.7f},{lat2:.7f}"
-        params = {
-            'access_token': token,
-            'overview': 'false',
-            'steps': 'false',
-            'depart_at': _param_depart_at_mapbox(partida),
-        }
-        resposta = requests.get(
-            f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{coords_str}",
-            params=params,
-            timeout=20,
-        )
-        if not resposta.ok:
-            return None
-        dados = resposta.json()
-        rotas = dados.get('routes') or []
-        if dados.get('code') != 'Ok' or not rotas:
-            return None
-        rota = rotas[0]
-        dist_m = rota.get('distance')
-        dur_s = rota.get('duration')
-        if dist_m is None or dur_s is None:
-            return None
-        return float(dist_m) / 1000.0, float(dur_s) / 60.0
-    except Exception:
-        return None
-
-
 def _duracao_google_minutos(valor):
     try:
         return float(str(valor).rstrip("s")) / 60.0
@@ -4780,196 +4293,82 @@ def calcular_matriz_google_trafego(coords, horario_partida):
     except Exception:
         return None
 
-def _registrar_diagnostico_tomtom(ok, mensagem, detalhes=""):
-    """Guarda um diagnóstico curto sem jamais expor a chave da API."""
+def calcular_matriz_tomtom_trafego(coords, horario_partida):
+    """Matriz de distâncias e tempos com trânsito ao vivo no plano gratuito TomTom."""
+    chave = carregar_chave_tomtom()
+    quantidade = len(coords)
+    if not chave or quantidade < 2:
+        return None
+
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    partida_rfc3339 = partida.isoformat(timespec="seconds")
+
+    pontos = [
+        {"point": {"latitude": float(lat), "longitude": float(lon)}}
+        for lat, lon in coords
+    ]
+    payload = {
+        "origins": pontos,
+        "destinations": pontos,
+        "options": {
+            "departAt": partida_rfc3339,
+            "routeType": "fastest",
+            "traffic": "live",
+            "travelMode": "car",
+        },
+    }
+
     try:
-        st.session_state['_tomtom_diag'] = {
-            'ok': bool(ok),
-            'mensagem': str(mensagem or '').strip(),
-            'detalhes': str(detalhes or '').strip()[:700],
-            'quando': datetime.now(FUSO_LOCAL).strftime('%H:%M:%S'),
-        }
+        resposta = requests.post(
+            "https://api.tomtom.com/routing/matrix/2",
+            params={"key": chave},
+            headers={"Content-Type": "application/json", "Accept-Encoding": "gzip"},
+            json=payload,
+            timeout=35,
+        )
+        resposta.raise_for_status()
+        dados = resposta.json().get("data", [])
+        distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+        duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
+
+        for celula in dados:
+            resumo = celula.get("routeSummary") or {}
+            origem = int(celula.get("originIndex", -1))
+            destino = int(celula.get("destinationIndex", -1))
+            distancia_m = resumo.get("lengthInMeters")
+            duracao_s = resumo.get("travelTimeInSeconds")
+            if 0 <= origem < quantidade and 0 <= destino < quantidade and distancia_m is not None and duracao_s is not None:
+                distancias[origem][destino] = float(distancia_m) / 1000.0
+                duracoes[origem][destino] = float(duracao_s) / 60.0
+
+        for i in range(quantidade):
+            distancias[i][i], duracoes[i][i] = 0.0, 0.0
+        if any(valor is None for linha in distancias for valor in linha):
+            return None
+        if any(valor is None for linha in duracoes for valor in linha):
+            return None
+        return distancias, duracoes
     except Exception:
-        pass
+        return None
 
-
-def _erro_tomtom_resposta(resposta):
-    """Extrai uma mensagem útil de erro da TomTom sem incluir URL/chave."""
-    codigo = getattr(resposta, 'status_code', '')
-    mensagem = ''
-    try:
-        dados = resposta.json()
-        erro = dados.get('detailedError') or dados.get('error') or {}
-        if isinstance(erro, dict):
-            partes = [erro.get('code'), erro.get('message')]
-            mensagem = ' - '.join(str(p) for p in partes if p)
-        if not mensagem and isinstance(dados, dict):
-            mensagem = str(dados.get('message') or dados.get('errorText') or '')
-    except Exception:
-        try:
-            mensagem = str(resposta.text or '')[:300]
-        except Exception:
-            mensagem = ''
-    base = f"HTTP {codigo}" if codigo else "Falha HTTP"
-    return f"{base}: {mensagem}" if mensagem else base
-
-
-def _calcular_matriz_osrm(coords):
-    """Matriz viária principal da rota, usando o servidor público do OSRM."""
+def calcular_matriz_rotas(coords, horario_partida=None):
+    """Matriz viária estável via OSRM; não depende de API paga."""
     try:
         coords_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
         url = f"https://router.project-osrm.org/table/v1/driving/{coords_str}?annotations=distance,duration"
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
         with urllib.request.urlopen(req, timeout=12) as response:
             res = json.loads(response.read())
-        if res.get('code') != 'Ok':
-            return None
-        distancias = [[(float(v) / 1000.0) if v is not None else None for v in row] for row in res.get('distances', [])]
-        duracoes = [[(float(v) / 60.0) if v is not None else None for v in row] for row in res.get('durations', [])]
-        if len(distancias) != len(coords) or len(duracoes) != len(coords):
-            return None
-        return distancias, duracoes
+            if res.get('code') == 'Ok':
+                distancias = [[dist / 1000.0 for dist in row] for row in res['distances']]
+                duracoes = [[dur / 60.0 for dur in row] for row in res['durations']]
+                return distancias, duracoes, "OSRM — rota viária"
     except Exception:
-        return None
+        pass
 
-
-def calcular_matriz_tomtom_trafego(coords, horario_partida):
-    """Matriz TomTom com trânsito, em blocos de até 100 células.
-
-    A Matrix Routing v2 síncrona aceita no máximo 100 rotas por requisição. A versão
-    anterior enviava N x N de uma vez; acima de 10 pontos isso podia fazer a TomTom
-    rejeitar a chamada e o app caía silenciosamente para o OSRM. Agora as origens são
-    divididas em blocos e falhas isoladas de map matching não descartam a matriz toda.
-    """
-    chave = carregar_chave_tomtom()
-    quantidade = len(coords)
-    if not chave:
-        _registrar_diagnostico_tomtom(False, 'Chave TomTom não encontrada nos Secrets.')
-        return None
-    if quantidade < 2:
-        return None
-    if quantidade > 100:
-        _registrar_diagnostico_tomtom(False, f'Matriz com {quantidade} pontos excede o limite síncrono de 100 destinos.')
-        return None
-
-    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
-    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
-    partida_rfc3339 = partida.isoformat(timespec='seconds')
-
-    todos_pontos = [
-        {'point': {'latitude': float(lat), 'longitude': float(lon)}}
-        for lat, lon in coords
-    ]
-    distancias = [[None for _ in range(quantidade)] for _ in range(quantidade)]
-    duracoes = [[None for _ in range(quantidade)] for _ in range(quantidade)]
-
-    # A documentação da Matrix v2 limita a matriz síncrona a 100 células por chamada.
-    origens_por_bloco = max(1, 100 // quantidade)
-    falhas_api = []
-
-    try:
-        for inicio in range(0, quantidade, origens_por_bloco):
-            indices_origem = list(range(inicio, min(inicio + origens_por_bloco, quantidade)))
-            payload = {
-                'origins': [todos_pontos[i] for i in indices_origem],
-                'destinations': todos_pontos,
-                'options': {
-                    'departAt': partida_rfc3339,
-                    'routeType': 'fastest',
-                    'traffic': 'live',
-                    'travelMode': 'car',
-                },
-            }
-            resposta = requests.post(
-                'https://api.tomtom.com/routing/matrix/2',
-                params={'key': chave},
-                headers={'Content-Type': 'application/json', 'Accept-Encoding': 'gzip'},
-                json=payload,
-                timeout=35,
-            )
-            if not resposta.ok:
-                detalhe = _erro_tomtom_resposta(resposta)
-                _registrar_diagnostico_tomtom(False, 'Matrix Routing v2 recusou a requisição.', detalhe)
-                return None
-
-            corpo = resposta.json()
-            estatisticas = corpo.get('statistics') or {}
-            if estatisticas.get('failures'):
-                for item in estatisticas.get('failureDetails') or []:
-                    falhas_api.append(f"{item.get('code', 'ERRO')} x{item.get('count', 1)}")
-
-            for celula in corpo.get('data', []):
-                origem_local = int(celula.get('originIndex', -1))
-                destino = int(celula.get('destinationIndex', -1))
-                if not (0 <= origem_local < len(indices_origem) and 0 <= destino < quantidade):
-                    continue
-                origem = indices_origem[origem_local]
-                resumo = celula.get('routeSummary') or {}
-                distancia_m = resumo.get('lengthInMeters')
-                duracao_s = resumo.get('travelTimeInSeconds')
-                if distancia_m is not None and duracao_s is not None:
-                    distancias[origem][destino] = float(distancia_m) / 1000.0
-                    duracoes[origem][destino] = float(duracao_s) / 60.0
-
-        for i in range(quantidade):
-            distancias[i][i], duracoes[i][i] = 0.0, 0.0
-
-        faltantes = [
-            (i, j) for i in range(quantidade) for j in range(quantidade)
-            if distancias[i][j] is None or duracoes[i][j] is None
-        ]
-
-        # Uma única célula com MAP_MATCHING_FAILURE não deve jogar fora todo o trânsito
-        # da TomTom. Completa somente os trechos problemáticos usando a malha OSRM.
-        if faltantes:
-            matriz_osrm = _calcular_matriz_osrm(coords)
-            if matriz_osrm:
-                dist_osrm, dur_osrm = matriz_osrm
-                for i, j in faltantes:
-                    if distancias[i][j] is None:
-                        distancias[i][j] = dist_osrm[i][j]
-                    if duracoes[i][j] is None:
-                        duracoes[i][j] = dur_osrm[i][j]
-
-        ainda_faltantes = sum(
-            1 for i in range(quantidade) for j in range(quantidade)
-            if distancias[i][j] is None or duracoes[i][j] is None
-        )
-        if ainda_faltantes:
-            detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else f'{ainda_faltantes} trecho(s) sem resposta'
-            _registrar_diagnostico_tomtom(False, 'TomTom respondeu, mas a matriz ficou incompleta.', detalhe)
-            return None
-
-        qtd_fallback = len(faltantes)
-        try:
-            st.session_state['_tomtom_matriz_hibrida'] = qtd_fallback
-        except Exception:
-            pass
-        if qtd_fallback:
-            detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else ''
-            _registrar_diagnostico_tomtom(True, f'TomTom ativa; {qtd_fallback} trecho(s) isolado(s) completado(s) por contingência OSRM.', detalhe)
-        else:
-            _registrar_diagnostico_tomtom(True, 'TomTom Matrix Routing v2 ativa e respondendo normalmente.')
-        return distancias, duracoes
-    except requests.RequestException as erro:
-        _registrar_diagnostico_tomtom(False, 'Falha de conexão com a TomTom.', f'{type(erro).__name__}: {erro}')
-        return None
-    except Exception as erro:
-        _registrar_diagnostico_tomtom(False, 'Erro ao processar a resposta da TomTom.', f'{type(erro).__name__}: {erro}')
-        return None
-
-def calcular_matriz_rotas(coords, horario_partida=None):
-    """Calcula a matriz viária usando apenas OSRM.
-
-    O OSRM é a fonte principal e gratuita. Os tempos recebidos ainda passam pela
-    validação operacional do aplicativo, que evita ETAs urbanos otimistas demais.
-    Nenhuma API paga é consultada por esta função.
-    """
-    matriz_osrm = _calcular_matriz_osrm(coords)
-    if matriz_osrm:
-        return matriz_osrm[0], matriz_osrm[1], 'OSRM — rota viária'
-
-    # Contingência final caso o servidor público do OSRM esteja indisponível.
+    # Contingência geográfica: mantém o app operacional mesmo se o servidor
+    # público do OSRM estiver temporariamente indisponível.
     distancias, duracoes = [], []
     for i in range(len(coords)):
         row_d, row_t = [], []
@@ -4983,9 +4382,13 @@ def calcular_matriz_rotas(coords, horario_partida=None):
             row_t.append((km / VELOCIDADE_MEDIA_KMH) * 60)
         distancias.append(row_d)
         duracoes.append(row_t)
-    return distancias, duracoes, 'Estimativa geográfica de contingência'
+    return distancias, duracoes, "Estimativa geográfica de contingência"
 
 
+
+def calcular_trecho_tomtom_por_horario(coord_origem, coord_destino, horario_partida_min):
+    """Compatibilidade: roteirização estável não consulta API paga por trecho."""
+    return None
 
 def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
     """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
@@ -5063,7 +4466,7 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
 
     return score, distancia, duracao
 
-def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, precarregados_ids=None):
+def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, precarregadas_ids=None):
     """Busca em feixe para o problema de coleta e entrega com precedência.
 
     Avalia sequências completas, agrupa ações no mesmo endereço e pondera
@@ -5071,14 +4474,6 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     """
     if not tarefas:
         return []
-
-    # Demandas cuja origem é o ponto de saída já foram carregadas durante a
-    # preparação 07:30-08:00. Em um recálculo elas NÃO podem obrigar o motorista
-    # a voltar ao escritório apenas para repetir uma coleta que já aconteceu.
-    precarregados_ids = {str(x) for x in (precarregados_ids or set())}
-
-    def tarefa_precarregada(tarefa):
-        return str(tarefa.get("id", "")) in precarregados_ids
 
     def numero_seguro(valor, padrao):
         try:
@@ -5088,11 +4483,16 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             return padrao
 
     total_tarefas = len(tarefas)
+    precarregadas_ids = {str(v) for v in (precarregadas_ids or set())}
+
+    def _esta_precarregada(tarefa):
+        return str(tarefa.get("id", "")) in precarregadas_ids
+
     if total_tarefas > 24:
         # Contingência para dias excepcionalmente grandes: mantém as mesmas
         # regras logísticas sem deixar o aplicativo preso em busca combinatória.
-        pendentes = [t for t in tarefas if not tarefa_precarregada(t)]
-        no_carro = [t for t in tarefas if tarefa_precarregada(t)]
+        pendentes = [t for t in tarefas if not _esta_precarregada(t)]
+        no_carro = [t for t in tarefas if _esta_precarregada(t)]
         atual = ponto_inicial
         ordem = []
         for _ in range(total_tarefas * 2 + 5):
@@ -5115,9 +4515,9 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     tempos_entrega = [numero_seguro(t.get('Tempo_Entrega', 10), 10.0) for t in tarefas]
     mascara_total = (1 << total_tarefas) - 1
     mascara_precarregadas = 0
-    for indice, tarefa in enumerate(tarefas):
-        if tarefa_precarregada(tarefa):
-            mascara_precarregadas |= 1 << indice
+    for _i_pre, _t_pre in enumerate(tarefas):
+        if _esta_precarregada(_t_pre):
+            mascara_precarregadas |= 1 << _i_pre
 
     tarefas_por_origem = {}
     tarefas_por_destino = {}
@@ -5301,8 +4701,8 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
 
     # Se a busca atingir o limite de tempo, conclui de forma determinística
     # com o motor guloso seguro, sem travar a geração da rota.
-    pendentes = list(tarefas)
-    no_carro = []
+    pendentes = [t for t in tarefas if not _esta_precarregada(t)]
+    no_carro = [t for t in tarefas if _esta_precarregada(t)]
     atual = ponto_inicial
     ordem = []
     for _ in range(total_tarefas * 2 + 5):
@@ -5381,108 +4781,69 @@ def buscar_geometria_google_trafego(coords_limpas, horario_partida=None):
     except Exception:
         return None
 
-def buscar_geometria_mapbox_trafego(coords_limpas, horario_partida=None):
-    """Traçado completo pelas ruas usando Mapbox driving-traffic.
-
-    Directions aceita até 25 coordenadas por chamada. Rotas maiores são quebradas
-    em blocos sobrepostos, sem perder a continuidade visual do percurso.
-    """
-    token = carregar_token_mapbox()
-    if not token or len(coords_limpas) < 2:
+def buscar_geometria_tomtom_trafego(coords_limpas, horario_partida=None):
+    """Desenha o percurso viário na ordem já otimizada, considerando trânsito TomTom."""
+    chave = carregar_chave_tomtom()
+    if not chave or len(coords_limpas) < 2 or len(coords_limpas) > 152:
         return None
 
-    partida = _partida_mapbox(horario_partida)
-    pontos_finais = []
-    inicio = 0
+    agora_seguro = datetime.now(FUSO_LOCAL) + timedelta(minutes=1)
+    partida = horario_partida if horario_partida and horario_partida > agora_seguro else agora_seguro
+    locais = ":".join(f"{float(lat)},{float(lon)}" for lat, lon in coords_limpas)
+    url = f"https://api.tomtom.com/routing/1/calculateRoute/{locais}/json"
+    parametros = {
+        "key": chave,
+        "routeType": "fastest",
+        "traffic": "true",
+        "travelMode": "car",
+        "departAt": partida.isoformat(timespec="seconds"),
+        "routeRepresentation": "polyline",
+        "computeTravelTimeFor": "all",
+        "language": "pt-BR",
+    }
     try:
-        while inicio < len(coords_limpas) - 1:
-            fim = min(inicio + 25, len(coords_limpas))
-            trecho = coords_limpas[inicio:fim]
-            coords_str = ';'.join(f"{float(lon):.7f},{float(lat):.7f}" for lat, lon in trecho)
-            params = {
-                'access_token': token,
-                'geometries': 'geojson',
-                'overview': 'full',
-                'steps': 'false',
-                'depart_at': _param_depart_at_mapbox(partida),
-            }
-            resposta = requests.get(
-                f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{coords_str}",
-                params=params,
-                timeout=30,
-            )
-            if not resposta.ok:
-                try:
-                    st.session_state['_mapbox_geom_diag'] = _erro_mapbox_resposta(resposta)
-                except Exception:
-                    pass
-                return None
-            dados = resposta.json()
-            rotas = dados.get('routes') or []
-            if dados.get('code') != 'Ok' or not rotas:
-                try:
-                    st.session_state['_mapbox_geom_diag'] = f"{dados.get('code', 'Erro')}: {dados.get('message', 'sem rota')}"
-                except Exception:
-                    pass
-                return None
-            rota = rotas[0]
-            geom = ((rota.get('geometry') or {}).get('coordinates') or [])
-            # GeoJSON Mapbox = [lon, lat]; Folium = [lat, lon].
-            pontos_trecho = [[float(lat), float(lon)] for lon, lat in geom]
-            for ponto in pontos_trecho:
-                if not pontos_finais or ponto != pontos_finais[-1]:
-                    pontos_finais.append(ponto)
-            try:
-                partida += timedelta(seconds=float(rota.get('duration') or 0))
-            except Exception:
-                pass
-            if fim >= len(coords_limpas):
-                break
-            inicio = fim - 1  # repete o último waypoint para ligar os blocos
-
-        if len(pontos_finais) > 1:
-            try:
-                st.session_state['_mapbox_geom_diag'] = 'Mapbox Directions ativa.'
-            except Exception:
-                pass
-            return pontos_finais
+        resposta = requests.get(url, params=parametros, timeout=35)
+        resposta.raise_for_status()
+        rotas = resposta.json().get("routes", [])
+        if not rotas:
+            return None
+        pontos = []
+        for perna in rotas[0].get("legs", []):
+            for ponto in perna.get("points", []):
+                coordenada = [float(ponto["latitude"]), float(ponto["longitude"])]
+                if not pontos or coordenada != pontos[-1]:
+                    pontos.append(coordenada)
+        return pontos if len(pontos) > 1 else None
+    except Exception:
         return None
-    except Exception as erro:
-        try:
-            st.session_state['_mapbox_geom_diag'] = f'{type(erro).__name__}: {erro}'[:500]
-        except Exception:
-            pass
-        return None
-
 
 def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
-    """Obtém o traçado pelas ruas via OSRM e entrega [lat, lon] para o Folium."""
     coords_limpas = []
     for coord in coords_ordenadas:
-        if not coords_limpas or coord != coords_limpas[-1]:
-            coords_limpas.append(coord)
+        par = [float(coord[0]), float(coord[1])]
+        if not coords_limpas or par != coords_limpas[-1]:
+            coords_limpas.append(par)
     if len(coords_limpas) < 2:
-        return [[float(lat), float(lon)] for lat, lon in coords_limpas], False
+        return coords_limpas, False
 
     try:
-        coords_str = ';'.join(f"{float(lon)},{float(lat)}" for lat, lon in coords_limpas)
+        coords_str = ";".join(f"{lon},{lat}" for lat, lon in coords_limpas)
         url = f"https://router.project-osrm.org/route/v1/driving/{coords_str}?overview=full&geometries=geojson&steps=false"
         req = urllib.request.Request(url, headers={'User-Agent': 'AproarLogisticsWeb/1.0'})
-        with urllib.request.urlopen(req, timeout=18) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             res = json.loads(response.read())
-        if res.get('code') == 'Ok' and res.get('routes'):
-            coords_geojson = res['routes'][0].get('geometry', {}).get('coordinates', [])
+        if res.get("code") == "Ok" and res.get("routes"):
+            coords_osrm = res["routes"][0]["geometry"]["coordinates"]
             # GeoJSON/OSRM = [longitude, latitude]; Folium = [latitude, longitude].
-            geometria_osrm = [[float(lat), float(lon)] for lon, lat in coords_geojson]
-            if len(geometria_osrm) > 1:
-                return geometria_osrm, True
+            geometria = [[float(lat), float(lon)] for lon, lat in coords_osrm]
+            if len(geometria) > 1:
+                return geometria, True
     except Exception:
         pass
 
-    # Se o OSRM estiver temporariamente indisponível, o mapa ainda mostra a sequência
-    # das paradas em linha reta em vez de ficar totalmente sem traçado.
-    return [[float(lat), float(lon)] for lat, lon in coords_limpas], False
-
+    # Nunca deixa o mapa sem linha: na contingência liga as posições reais
+    # das paradas. O mapa diferencia esse fallback com traço pontilhado.
+    return coords_limpas, False
 
 
 def extrair_dados_completos(texto, card_name):
@@ -5748,14 +5109,8 @@ def loop_automacoes_background():
             cards = data.get('cards', [])
             acoes = data.get('actions', [])
             
-            registros_hist = fetch_all(
-                "SELECT id, teams_notificado, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data",
-                {"data": DATA_HOJE_REAL_STR},
-            )
-            historico_hoje = {
-                str(r[0]): {"teams_notificado": r[1], "hora": r[2]}
-                for r in registros_hist
-            }
+            ids_ja_registrados = {str(r[0]) for r in fetch_all("SELECT id FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_HOJE_REAL_STR})}
+            enviados_sessao = st.session_state.setdefault("_teams_entregas_enviadas", set())
 
             novas_entregas = 0
             for c in cards:
@@ -5768,80 +5123,25 @@ def loop_automacoes_background():
                 if not momento_conclusao or momento_conclusao.strftime("%d/%m/%Y") != DATA_HOJE_REAL_STR:
                     continue
 
-                card_id = str(c['id'])
                 short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
-                hora_str = momento_conclusao.strftime("%H:%M")
-                registro_existente = historico_hoje.get(card_id)
+                card_id = str(c['id'])
 
-                # A baixa é registrada imediatamente para atualizar roteiro/app, mesmo se
-                # o Teams estiver temporariamente fora. A notificação fica pendente e será
-                # tentada novamente nos próximos ciclos até receber HTTP 2xx.
-                if registro_existente is None:
-                    execute_db(
-                        "INSERT INTO historico_concluidos "
-                        "(id, obra, origem, destino, materiais, data_conclusao, hora_conclusao, teams_notificado, teams_tentativas, teams_ultimo_erro) "
-                        "VALUES (:id, :obra, :origem, :destino, :mat, :data, :hora, FALSE, 0, NULL) "
-                        "ON CONFLICT (id) DO UPDATE SET obra=EXCLUDED.obra, origem=EXCLUDED.origem, destino=EXCLUDED.destino, "
-                        "materiais=EXCLUDED.materiais, data_conclusao=EXCLUDED.data_conclusao, hora_conclusao=EXCLUDED.hora_conclusao",
-                        {"id": c['id'], "obra": short_name, "origem": origem, "destino": destino, "mat": materiais, "data": DATA_HOJE_REAL_STR, "hora": hora_str},
-                    )
-                    historico_hoje[card_id] = {"teams_notificado": False, "hora": hora_str}
-                    registro_existente = historico_hoje[card_id]
+                # A baixa física é registrada independentemente do Teams.
+                if card_id not in ids_ja_registrados:
+                    _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento_conclusao)
+                    ids_ja_registrados.add(card_id)
                     novas_entregas += 1
-                else:
-                    # Mantém os dados do histórico coerentes caso o cartão tenha sido
-                    # ajustado no Trello antes da baixa.
-                    execute_db(
-                        "UPDATE historico_concluidos SET obra=:obra, origem=:origem, destino=:destino, materiais=:mat, hora_conclusao=:hora WHERE id=:id",
-                        {"id": c['id'], "obra": short_name, "origem": origem, "destino": destino, "mat": materiais, "hora": hora_str},
+
+                # O automático continua prioritário e roda no mesmo ciclo de 2 min.
+                # Se o Teams falhar, tenta de novo nos próximos ciclos enquanto a
+                # conclusão ainda estiver dentro da janela operacional já usada antes.
+                idade_min = (agora_loop - momento_conclusao).total_seconds() / 60.0
+                if -1 <= idade_min <= 5 and card_id not in enviados_sessao:
+                    enviado, _detalhe = _enviar_alerta_entrega_teams(
+                        card_id, short_name, origem, destino, materiais, momento_conclusao, acoes
                     )
-
-                status_teams = registro_existente.get("teams_notificado")
-                minutos_desde_baixa = max(0.0, (agora_loop - momento_conclusao).total_seconds() / 60.0)
-
-                # Mantém a automação no mesmo ritmo operacional do Trello: 2 minutos.
-                # NULL = registro legado; só tenta recuperar se a baixa ocorreu nos últimos
-                # 2 minutos. FALSE = notificação nova pendente; ela é tentada novamente
-                # a cada ciclo de 2 minutos até o Teams confirmar o recebimento.
-                deve_notificar = (status_teams is False) or (status_teams is None and minutos_desde_baixa <= 2)
-                if not deve_notificar:
-                    continue
-
-                url_webhook, fonte_webhook = obter_webhook_teams(
-                    destino, supervisor=SUPERVISORES_MAP.get(destino, "Sede / Logística"), obra=short_name
-                )
-                observacao_trello = extrair_observacoes_trello(c, acoes)
-                mensagem = (
-                    f"✅ **Os materiais foram entregues na obra e a demanda tomou baixa no Trello.**\n\n"
-                    f"**Obra:** {short_name}\n\n"
-                    f"**Local:** {destino}\n\n"
-                    f"**Materiais:**\n{formatar_materiais_teams(materiais)}\n\n"
-                    f"**Data e Hora:** {momento_conclusao.strftime('%d/%m/%Y às %H:%M')}"
-                )
-                if observacao_trello:
-                    mensagem += f"\n\n**Comentários do Trello:**\n{observacao_trello}"
-
-                if not url_webhook:
-                    enviado, detalhe = False, f"Webhook do Teams não configurado ({fonte_webhook})."
-                else:
-                    enviado, detalhe = disparar_teams(
-                        url_webhook, f"✅ Entrega concluída — {destino}", mensagem
-                    )
-
-                if enviado:
-                    execute_db(
-                        "UPDATE historico_concluidos SET teams_notificado=TRUE, teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=NULL WHERE id=:id",
-                        {"id": c['id']},
-                    )
-                    historico_hoje[card_id]["teams_notificado"] = True
-                    st.session_state.pop("_teams_ultimo_erro", None)
-                else:
-                    execute_db(
-                        "UPDATE historico_concluidos SET teams_notificado=FALSE, teams_tentativas=COALESCE(teams_tentativas,0)+1, teams_ultimo_erro=:erro WHERE id=:id",
-                        {"id": c['id'], "erro": str(detalhe)[:500]},
-                    )
-                    historico_hoje[card_id]["teams_notificado"] = False
-                    st.session_state["_teams_ultimo_erro"] = f"{short_name}: {detalhe}"
+                    if enviado:
+                        enviados_sessao.add(card_id)
 
             if novas_entregas > 0:
                 st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
@@ -6175,64 +5475,51 @@ with tab_demandas:
     st.caption("⏱️ Os tempos de coleta/entrega representam a complexidade de cada demanda. Quando várias demandas acontecem no mesmo endereço, o sistema calcula uma única permanência no local — não soma 10/20 minutos completos para cada cartão.")
     st.divider()
     st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
-    st.caption("A baixa do Trello continua sendo automática a cada 2 minutos. O botão **Informar entrega** é apenas uma contingência caso o alerta automático não apareça no Teams.")
+    st.caption("Acompanhe em tempo real as entregas da rota gerada.")
 
-    df_entregues_hoje = get_df(
-        "SELECT id, hora_conclusao, teams_notificado, teams_ultimo_erro FROM historico_concluidos WHERE data_conclusao = :data",
-        {"data": DATA_REF_ROTA_STR},
-    )
+    df_entregues_hoje = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
     dict_concluidos_monitor = dict(zip(df_entregues_hoje['id'].astype(str), df_entregues_hoje['hora_conclusao']))
-    status_teams_monitor = {
-        str(r['id']): {
-            "notificado": r.get('teams_notificado'),
-            "erro": r.get('teams_ultimo_erro', ''),
-        }
-        for _, r in df_entregues_hoje.iterrows()
-    } if not df_entregues_hoje.empty else {}
     demandas_na_rota = {str(t.get('id', '')): t for step in st.session_state.get('route_steps', []) for acao, t in step.get('actions', [])}
-
-    feedback_manual = st.session_state.pop("_feedback_informar_entrega", None)
-    if feedback_manual:
-        ok_feedback, texto_feedback = feedback_manual
-        (st.success if ok_feedback else st.warning)(texto_feedback)
 
     if not demandas_na_rota: st.info("Gere uma rota na aba 'Roteiro do Davi' para monitorar o status das entregas aqui.")
     else:
         for card_id, row in demandas_na_rota.items():
-            c1, c_status, c_manual = st.columns([3.4, 2.15, 1.55])
+            c1, c_status, c_manual = st.columns([3.2, 1.8, 1.45])
             c1.markdown(f"📦 **{row.get('Obra', '')} — {row.get('Destino', '')}** (Resp: {row.get('Supervisor', 'Sede')}) <br><span style='font-size:12px; color:gray;'>{row.get('Materiais', '')}</span>", unsafe_allow_html=True)
-
-            info_teams = status_teams_monitor.get(card_id, {})
-            teams_ok = info_teams.get("notificado") is True
             if card_id in dict_concluidos_monitor:
                 c_status.success(f"✅ **Entregue às {dict_concluidos_monitor[card_id]}**")
-                if teams_ok:
-                    c_status.caption("📣 Teams avisado")
-                elif info_teams.get("notificado") is False:
-                    c_status.caption("⚠️ Teams pendente")
             else:
                 c_status.warning("⏳ Pendente / No Carro")
 
-            # Se o Teams já confirmou, evita duplicidade. Caso contrário, o botão fica
-            # disponível tanto para uma entrega ainda sem baixa automática quanto para
-            # uma baixa cuja notificação falhou.
-            if c_manual.button(
-                "📣 Informar entrega",
-                key=f"informar_entrega_manual_{card_id}",
-                use_container_width=True,
-                disabled=teams_ok,
-                help=(
-                    "O Teams já confirmou este alerta." if teams_ok
-                    else "Contingência manual. A automação do Trello continua prioritária e roda a cada 2 minutos."
-                ),
-            ):
+            ja_enviado_sessao = card_id in st.session_state.setdefault("_teams_entregas_enviadas", set())
+            texto_manual = "✅ Teams avisado" if ja_enviado_sessao else "📣 Informar entrega"
+            if c_manual.button(texto_manual, key=f"informar_entrega_{card_id}", disabled=ja_enviado_sessao, use_container_width=True):
+                momento_manual = datetime.now(FUSO_LOCAL)
                 try:
-                    enviado, detalhe = informar_entrega_manual_teams(card_id, row)
-                    st.session_state["_feedback_informar_entrega"] = (enviado, detalhe)
-                except Exception as erro_manual:
-                    st.session_state["_feedback_informar_entrega"] = (False, f"Não foi possível informar a entrega: {erro_manual}")
-                st.rerun()
+                    dados_trello_manual = obter_dados_trello(forcar=True) or {}
+                    cards_manual = dados_trello_manual.get('cards', []) or []
+                    acoes_manual = dados_trello_manual.get('actions', []) or []
+                    card_manual = next((c for c in cards_manual if str(c.get('id', '')) == str(card_id)), None)
+                    if card_manual:
+                        short_name, origem, destino, materiais = extrair_dados_completos(card_manual.get('desc', ''), card_manual.get('name', ''))
+                    else:
+                        short_name = str(row.get('Obra', ''))
+                        origem = str(row.get('Origem', ''))
+                        destino = str(row.get('Destino', ''))
+                        materiais = str(row.get('Materiais', ''))
 
+                    _registrar_entrega_historico(card_id, short_name, origem, destino, materiais, momento_manual)
+                    enviado, detalhe = _enviar_alerta_entrega_teams(
+                        card_id, short_name, origem, destino, materiais, momento_manual, acoes_manual
+                    )
+                    if enviado:
+                        st.session_state["_teams_entregas_enviadas"].add(card_id)
+                        st.success("✅ Entrega informada e Teams avisado.")
+                    else:
+                        st.warning(f"⚠️ Entrega registrada, mas o Teams não confirmou o envio: {detalhe}")
+                    st.rerun()
+                except Exception as erro_manual:
+                    st.error(f"Não foi possível informar a entrega agora: {erro_manual}")
             st.write("---")
 
     df_relatorio_demandas = st.session_state.demandas.copy()
@@ -6749,10 +6036,7 @@ with tab_roteiro:
             df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
-
-    # A rota pode ser recalculada sem apagar as baixas já registradas.
-    # As etapas concluídas são reaproveitadas logo abaixo a partir de historico_concluidos.
-    txt_botao = "🔄 Recalcular / Atualizar Rota" if rota_ativa_hoje else "🚀 Calcular Rota Otimizada"
+    txt_botao = "🔄 Recalcular / Atualizar Rota" if rota_ativa_hoje else "🚀 Calcular Rota Otimizada / Atualizar Rota"
 
     recalculo_automatico = bool(st.session_state.pop("_recalcular_rota_automatico", False))
     recalculo_manual = st.button(txt_botao, type="primary", disabled=df_ativos.empty)
@@ -6768,62 +6052,76 @@ with tab_roteiro:
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
-            todos_registros_rota = df_ativos.to_dict('records')
-            tarefas_preparacao_base = [
-                t for t in todos_registros_rota
-                if canonicalizar_ponto_rota(t.get('Origem', '')) == canonicalizar_ponto_rota(ponto_saida)
-            ]
-            
+            tarefas_preparacao_por_id = {}
+
             current_time_tsp = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
             current_point = ponto_saida
 
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-            if rota_salva and len(dict_concluidos_torre) > 0:
-                old_steps = json.loads(rota_salva[0])
-                for step in old_steps:
-                    if step.get('type') == 'stop':
-                        # Qualquer parada no ponto de saída contendo SOMENTE coletas
-                        # pertence à preparação da manhã. Isso também limpa rotas antigas
-                        # que haviam criado "PARADA: ESCRITÓRIO" depois das 08:00.
-                        acoes_step = step.get('actions', []) or []
-                        coleta_somente_na_base = (
-                            canonicalizar_ponto_rota(step.get('destino', '')) == canonicalizar_ponto_rota(ponto_saida)
-                            and bool(acoes_step)
-                            and all(str(a).upper() == 'COLETAR' for a, _ in acoes_step)
-                        )
-                        if coleta_somente_na_base:
-                            continue
+            old_steps = []
+            if rota_salva:
+                try:
+                    old_steps = json.loads(rota_salva[0]) or []
+                except Exception:
+                    old_steps = []
 
-                        c_acts = [(a, t) for a, t in acoes_step if str(t.get('id','')) in dict_concluidos_torre]
-                        if c_acts:
-                            new_s = step.copy()
-                            new_s['actions'] = c_acts
-                            past_route_steps.append(new_s)
-                
-                if past_route_steps:
-                    current_point = past_route_steps[-1]['destino']
-                    try:
-                        h, m = map(int, past_route_steps[-1]['saida'].split(':'))
-                        current_time_tsp = h * 60 + m
-                    except: pass
-            
-            tarefas_pendentes = [t for t in todos_registros_rota if str(t['id']) not in dict_concluidos_torre]
+            # Recupera a preparação já existente e também migra qualquer parada
+            # indevida no ESCRITÓRIO composta somente por coletas para a preparação.
+            for step in old_steps:
+                if step.get('type') != 'stop':
+                    continue
+                destino_step = canonicalizar_ponto_rota(step.get('destino', ''))
+                acoes_step = step.get('actions', []) or []
+                if destino_step == ponto_saida:
+                    for acao, tarefa in acoes_step:
+                        if acao == 'COLETAR' and tarefa.get('id'):
+                            tarefas_preparacao_por_id[str(tarefa.get('id'))] = tarefa
+                    # Uma parada da base formada apenas por coleta não deve voltar
+                    # para o roteiro operacional após a saída das 08h.
+                    if acoes_step and all(acao == 'COLETAR' for acao, _ in acoes_step):
+                        continue
 
-            # O que tem origem na base já foi colocado no carro na preparação.
-            # Mantemos essas tarefas como carga pendente de ENTREGA, mas retiramos
-            # a origem ESCRITÓRIO da fila de futuras paradas.
-            tarefas_precarregadas = [
-                t for t in tarefas_pendentes
-                if canonicalizar_ponto_rota(t.get('Origem', '')) == canonicalizar_ponto_rota(ponto_saida)
-            ]
-            ids_precarregados = {str(t.get('id', '')) for t in tarefas_precarregadas}
-            unpicked = [t for t in tarefas_pendentes if str(t.get('id', '')) not in ids_precarregados]
+                # Mantém no histórico visual somente ações já concluídas.
+                c_acts = [(a, t) for a, t in acoes_step if str(t.get('id','')) in dict_concluidos_torre]
+                if c_acts:
+                    new_s = step.copy()
+                    new_s['actions'] = c_acts
+                    past_route_steps.append(new_s)
+
+            if past_route_steps:
+                current_point = past_route_steps[-1]['destino']
+                try:
+                    h, m = map(int, past_route_steps[-1]['saida'].split(':'))
+                    current_time_tsp = h * 60 + m
+                except Exception:
+                    pass
+
+            registros_ativos = df_ativos.to_dict('records')
+            for tarefa in registros_ativos:
+                if canonicalizar_ponto_rota(tarefa.get('Origem', '')) == ponto_saida and tarefa.get('id'):
+                    tarefas_preparacao_por_id[str(tarefa.get('id'))] = tarefa
+
+            pendentes = [t for t in registros_ativos if str(t.get('id', '')) not in dict_concluidos_torre]
+            carrying_inicial = [t for t in pendentes if canonicalizar_ponto_rota(t.get('Origem', '')) == ponto_saida]
+            unpicked = [t for t in pendentes if canonicalizar_ponto_rota(t.get('Origem', '')) != ponto_saida]
+            ids_precarregados = {str(t.get('id', '')) for t in carrying_inicial}
+
+            # A preparação é sempre uma única etapa 07:30–08:00 contendo tudo o
+            # que sai do escritório, inclusive itens que já foram entregues depois.
+            preparation_step = None
+            if tarefas_preparacao_por_id:
+                hora_saida_base = parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR))
+                preparation_step = {
+                    "type": "stop", "destino": ponto_saida, "dist": 0.0, "travel_mins": 0.0,
+                    "tempo_local": 30, "tempo_local_fonte": "preparação fixa da base",
+                    "chegada": format_time(hora_saida_base - 30), "saida": format_time(hora_saida_base),
+                    "actions": [("COLETAR", t) for t in tarefas_preparacao_por_id.values()],
+                }
 
             pontos_brutos = (
-                [ponto_saida]
-                + [s['destino'] for s in past_route_steps]
-                + [t['Origem'] for t in tarefas_pendentes]
-                + [t['Destino'] for t in tarefas_pendentes]
+                [ponto_saida] + [s['destino'] for s in past_route_steps]
+                + [t['Origem'] for t in unpicked] + [t['Destino'] for t in unpicked]
+                + [t['Destino'] for t in carrying_inicial]
             )
             pontos_necessarios = {canonicalizar_ponto_rota(p) for p in pontos_brutos if canonicalizar_ponto_rota(p) not in {"", "DESCONHECIDO", "NAN", "NONE"}}
             
@@ -6879,7 +6177,7 @@ with tab_roteiro:
                 dist, dur = get_dist_dur_bruto(p1, p2)
                 return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
-            tarefas_otimizacao = list(unpicked) + list(tarefas_precarregadas)
+            tarefas_otimizacao = unpicked + carrying_inicial
             ordem_otimizada = otimizar_sequencia_rota(
                 tarefas_otimizacao,
                 current_point,
@@ -6888,14 +6186,14 @@ with tab_roteiro:
                 current_time_tsp,
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
-                precarregados_ids=ids_precarregados,
+                precarregadas_ids=ids_precarregados,
             )
+            if "TomTom Routing" in fonte_matriz:
+                fonte_matriz = fonte_matriz + " + trechos recalculados no horário de cada etapa"
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
-            # As coletas da base começam no veículo; portanto seus DESTINOS ficam
-            # disponíveis imediatamente e o escritório não volta a ser candidato.
-            carrying = list(tarefas_precarregadas)
+            carrying = list(carrying_inicial)
             current = current_point
             route_steps_new = []
             total_km = sum(p_step.get('dist', 0.0) for p_step in past_route_steps)
@@ -6920,9 +6218,14 @@ with tab_roteiro:
                 if best_point is None:
                     best_point = min(candidates, key=lambda p: pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)[0])
 
-                # O trecho vem da matriz OSRM. A validação operacional aplica apenas
-                # um piso realista para deslocamentos urbanos, sem depender de API paga.
+                # Para o horário exibido, reconsulta a perna na hora em que ela será
+                # realmente percorrida. Se a TomTom não responder, usa a matriz como fallback.
                 best_dist, best_dur_api = get_dist_dur_bruto(current, best_point)
+                trecho_atualizado = calcular_trecho_tomtom_por_horario(
+                    locais_dict.get(current), locais_dict.get(best_point), current_time
+                )
+                if trecho_atualizado:
+                    best_dist, best_dur_api = trecho_atualizado
                 best_dur = ajustar_tempo_deslocamento_operacional(best_dist, best_dur_api, current_time)
 
                 if 12*60 <= current_time < 13*60 and not lunch_taken:
@@ -6986,39 +6289,22 @@ with tab_roteiro:
 
             if retornar_base and current != ponto_saida:
                 d, dur_api = get_dist_dur_bruto(current, ponto_saida)
+                trecho_retorno = calcular_trecho_tomtom_por_horario(
+                    locais_dict.get(current), locais_dict.get(ponto_saida), current_time
+                )
+                if trecho_retorno:
+                    d, dur_api = trecho_retorno
                 dur = ajustar_tempo_deslocamento_operacional(d, dur_api, current_time)
                 total_km += d
                 route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "travel_mins_api": dur_api, "chegada": format_time(current_time + dur), "saida": format_time(current_time + dur), "actions": []})
                 current_time += dur
 
-            # A preparação é sempre reconstruída como a primeira etapa e reúne
-            # TODAS as demandas cuja origem é o ponto de saída, concluídas ou não.
-            # Assim o painel continua mostrando o que foi carregado 07:30-08:00.
-            preparacao_step = None
-            if tarefas_preparacao_base:
-                preparacao_step = {
-                    "type": "stop",
-                    "destino": ponto_saida,
-                    "dist": 0.0,
-                    "travel_mins": 0.0,
-                    "travel_mins_api": 0.0,
-                    "tempo_local": 30,
-                    "tempo_local_fonte": "preparação fixa da base",
-                    "chegada": format_time(parse_time_to_mins(obter_hora_inicio_rota(DATA_REF_ROTA_STR)) - 30),
-                    "saida": obter_hora_inicio_rota(DATA_REF_ROTA_STR),
-                    "actions": [("COLETAR", t) for t in tarefas_preparacao_base],
-                }
-
-            route_steps = ([preparacao_step] if preparacao_step else []) + past_route_steps + route_steps_new
+            route_steps = ([preparation_step] if preparation_step else []) + past_route_steps + route_steps_new
 
             coords_ordenadas_rota = [locais_dict[ponto_saida]]
             for step in route_steps:
                 if step.get("destino") in locais_dict: coords_ordenadas_rota.append(locais_dict[step.get("destino")])
             geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordenadas_rota, horario_partida_matriz)
-            geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordenadas_rota)
-            if len(geometria_rota) < 2 and len(coords_ordenadas_rota) > 1:
-                geometria_rota = [list(map(float, p)) for p in coords_ordenadas_rota]
-                geometria_viaria = False
             
             st.session_state['rota_gerada'] = True
             st.session_state['route_steps'] = route_steps
@@ -7095,10 +6381,9 @@ with tab_roteiro:
                 </style>
             """, unsafe_allow_html=True)
 
-            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
+            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
-            referencia_txt = f" • referência {horario_matriz_exibicao}" if horario_matriz_exibicao else ""
-            st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}**{referencia_txt} • ETAs com validação operacional de trecho")
+            st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}** • ETAs com validação operacional de trecho")
 
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
@@ -7367,19 +6652,8 @@ with tab_roteiro:
                 locais_dict[s['destino']] for s in route_steps
                 if s.get('destino') in locais_dict and s.get('type') != 'lunch'
             ])
-            # Repara geometrias antigas gravadas com eixos invertidos pelo OSRM.
-            geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
             if len(geometria_rota) < 2:
                 geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
-                geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
-            if len(geometria_rota) < 2 and len(coords_ordem_real) > 1:
-                geometria_rota = [list(map(float, p)) for p in coords_ordem_real]
-                geometria_viaria = False
-
-            # Mantém a versão reparada em memória; ao recalcular a rota ela também
-            # será gravada corretamente no banco.
-            st.session_state['geometria_rota'] = geometria_rota
-            st.session_state['geometria_viaria'] = geometria_viaria
 
             if len(geometria_rota) > 1:
                 # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
@@ -7429,8 +6703,7 @@ with tab_roteiro:
                 ).add_to(m)
 
             st_folium(m, width=450, height=550, returned_objects=[])
-            legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
-            st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = trajeto da rota. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
@@ -7441,7 +6714,7 @@ with tab_roteiro:
             "Distância planejada (km)": round(float(total_km), 2),
             "Início": hora_inicio_real,
             "Término previsto": format_mins_to_time(final_dyn_min),
-            "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária'),
+            "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — malha viária sem trânsito ao vivo'),
         }])
         df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
         st.caption("🛣️ Os horários do resumo usam distância viária + piso operacional para deslocamentos urbanos, evitando trechos otimistas demais. 🍽️ A pausa de 1h para almoço aparece como etapa própria.")
