@@ -1387,11 +1387,86 @@ def renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave):
         else:
             st.dataframe(quilometragem, use_container_width=True, hide_index=True)
 
+
+def _expandir_almoco_explicito_para_relatorio(route_steps):
+    """Deixa a pausa de almoço visível nos relatórios, inclusive em rotas antigas.
+
+    Versões anteriores podiam somar 60 minutos ao horário de saída de uma parada
+    quando o atendimento atravessava o meio-dia, sem criar um step de almoço.
+    Aqui transformamos esse intervalo oculto em uma etapa explícita apenas para
+    exibição/exportação, sem alterar demandas, distâncias ou status.
+    """
+    passos_origem = list(route_steps or [])
+    if not passos_origem:
+        return []
+
+    # Rotas novas já trazem o almoço como etapa própria; não mexe nelas.
+    if any(str(s.get("type", "")) == "lunch" for s in passos_origem):
+        return passos_origem
+
+    resultado = []
+    almoco_inserido = False
+    for step in passos_origem:
+        copia = dict(step)
+        if str(copia.get("type", "")) != "stop" or almoco_inserido:
+            resultado.append(copia)
+            continue
+
+        chegada_txt = str(copia.get("dyn_chegada", copia.get("chegada", "")) or "")
+        saida_txt = str(copia.get("dyn_saida", copia.get("saida", "")) or "")
+        try:
+            chegada_min = parse_time_to_mins(chegada_txt)
+            saida_min = parse_time_to_mins(saida_txt)
+            if saida_min < chegada_min:
+                saida_min += 24 * 60
+            tempo_local = max(0, int(round(float(copia.get("tempo_local", 0) or 0))))
+        except Exception:
+            resultado.append(copia)
+            continue
+
+        # Sinal típico da lógica antiga: duração exibida = serviço + ~60 min,
+        # com chegada antes do meio-dia e saída já depois das 13h.
+        extra = (saida_min - chegada_min) - tempo_local
+        almoco_oculto = (
+            chegada_min < 12 * 60
+            and saida_min >= 13 * 60
+            and tempo_local > 0
+            and extra >= 50
+        )
+        if not almoco_oculto:
+            resultado.append(copia)
+            continue
+
+        fim_servico = chegada_min + tempo_local
+        inicio_almoco = fim_servico
+        fim_almoco = min(saida_min, inicio_almoco + 60)
+        if fim_almoco - inicio_almoco < 45:
+            resultado.append(copia)
+            continue
+
+        # Corrige apenas o horário exibido da parada; a pausa vira uma linha própria.
+        fim_servico_txt = format_mins_to_time(fim_servico)
+        if copia.get("dyn_saida") not in (None, ""):
+            copia["dyn_saida"] = fim_servico_txt
+        copia["saida"] = fim_servico_txt
+        resultado.append(copia)
+        resultado.append({
+            "type": "lunch",
+            "chegada": format_mins_to_time(inicio_almoco),
+            "saida": format_mins_to_time(fim_almoco),
+            "dyn_chegada": format_mins_to_time(inicio_almoco),
+            "dyn_saida": format_mins_to_time(fim_almoco),
+            "virtual_relatorio": True,
+        })
+        almoco_inserido = True
+
+    return resultado
+
 def montar_relatorio_rota(route_steps, concluidos):
     linhas, numero_parada = [], 0
-    for step in route_steps:
+    for step in _expandir_almoco_explicito_para_relatorio(route_steps):
         if step.get("type") == "lunch":
-            linhas.append({"Parada": "Almoço", "Local": "Pausa", "Chegada": step.get("dyn_chegada", step.get("chegada", "")), "Saída": step.get("dyn_saida", step.get("saida", "")), "Ação": "PAUSA"})
+            linhas.append({"Parada": "Almoço", "Local": "PAUSA PARA ALMOÇO", "Chegada": step.get("dyn_chegada", step.get("chegada", "")), "Saída": step.get("dyn_saida", step.get("saida", "")), "Ação": "PAUSA"})
             continue
         if step.get("type") == "return":
             linhas.append({"Parada": "Retorno", "Local": step.get("destino", ""), "Chegada": step.get("dyn_chegada", step.get("chegada", "")), "Saída": step.get("dyn_saida", step.get("saida", "")), "Ação": "RETORNO", "Distância (km)": step.get("dist", 0)})
@@ -1475,14 +1550,14 @@ def _passos_resumo_rota(route_steps, ponto_saida="ESCRITÓRIO", retornar_base=Tr
     ponto_saida = str(ponto_saida or "ESCRITÓRIO").strip() or "ESCRITÓRIO"
     tem_retorno = False
 
-    for step in route_steps or []:
+    for step in _expandir_almoco_explicito_para_relatorio(route_steps):
         tipo = step.get("type")
         if tipo == "lunch":
             chegada = step.get("dyn_chegada", step.get("chegada", "12:00"))
             saida = step.get("dyn_saida", step.get("saida", "13:00"))
             passos.append({
                 "local": "ALMOÇO",
-                "acao": "PAUSA PARA ALMOÇO",
+                "acao": "PAUSA DE 1H PARA ALMOÇO",
                 "horario": f"{chegada} - {saida}" if chegada or saida else "",
                 "tipo": "pausa",
             })
@@ -1736,10 +1811,23 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
 
     for indice_step, step in enumerate(route_steps):
         if step['type'] == 'lunch':
-            step['dyn_chegada'] = "12:00"
-            step['dyn_saida'] = "13:00"
+            chegada_planejada = str(step.get('chegada', '12:00') or '12:00')
+            saida_planejada = str(step.get('saida', '13:00') or '13:00')
+            try:
+                ini_planejado = parse_time_to_mins(chegada_planejada)
+                fim_planejado = parse_time_to_mins(saida_planejada)
+                if fim_planejado <= ini_planejado:
+                    fim_planejado = ini_planejado + 60
+                duracao_almoco = max(60, fim_planejado - ini_planejado)
+            except Exception:
+                ini_planejado, duracao_almoco = 12 * 60, 60
+
+            inicio_almoco = max(current_min, ini_planejado)
+            fim_almoco = inicio_almoco + duracao_almoco
+            step['dyn_chegada'] = format_mins_to_time(inicio_almoco)
+            step['dyn_saida'] = format_mins_to_time(fim_almoco)
             step['is_concluded'] = False
-            current_min = max(current_min, 13 * 60)
+            current_min = fim_almoco
             continue
 
         if step['type'] == 'return':
@@ -1806,7 +1894,14 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
 
         service = step.get('tempo_local', 0)
         dep_min = arr_min + service
-        if arr_min <= 12 * 60 and dep_min > 12 * 60:
+        proximo_e_almoco = (
+            indice_step + 1 < len(route_steps)
+            and route_steps[indice_step + 1].get('type') == 'lunch'
+        )
+        # Compatibilidade com rotas antigas: se não houver uma etapa explícita de
+        # almoço, mantém a hora de pausa embutida no ETA. Rotas novas exibem a pausa
+        # como etapa própria e, portanto, não somam 60 min aqui.
+        if arr_min <= 12 * 60 and dep_min > 12 * 60 and not proximo_e_almoco:
             dep_min = max(dep_min + 60, 13 * 60)
 
         step['dyn_chegada'] = format_mins_to_time(arr_min)
@@ -5521,21 +5616,35 @@ with tab_roteiro:
 
                 is_start_load = (best_point == ponto_saida and current_time == current_time_tsp and not any(a[0] == "ENTREGAR" for a in actions_here) and len(past_route_steps) == 0)
                 
+                pausa_almoco_depois = False
                 if is_start_load:
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time_tsp - 30), format_time(current_time_tsp), 30
                     service_mins = 0
                     dep_time = current_time_tsp
                 else:
                     dep_time = current_time + service_mins
-                    if current_time <= 12*60 and dep_time > 12*60 and not lunch_taken:
-                        dep_time = max(dep_time + 60, 13 * 60)
-                        lunch_taken = True
-                        
+                    # Se o atendimento atravessar o meio-dia, termina a atividade
+                    # atual e registra a pausa de 1h como uma etapa separada. Isso
+                    # mantém o mesmo término da rota que a lógica antiga, mas deixa
+                    # o almoço visível no roteiro, no app e nos PDFs.
+                    if current_time < 12 * 60 <= dep_time and not lunch_taken:
+                        pausa_almoco_depois = True
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(dep_time), service_mins
 
                 route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "tempo_local": tempo_local_exibicao, "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local), "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
                 current_time = dep_time
                 current = best_point
+
+                if pausa_almoco_depois:
+                    inicio_almoco = current_time
+                    fim_almoco = inicio_almoco + 60
+                    route_steps_new.append({
+                        "type": "lunch",
+                        "chegada": format_time(inicio_almoco),
+                        "saida": format_time(fim_almoco),
+                    })
+                    current_time = fim_almoco
+                    lunch_taken = True
 
             if retornar_base and current != ponto_saida:
                 d, dur = get_dist_dur(current, ponto_saida)
@@ -5916,6 +6025,7 @@ with tab_roteiro:
             )
 
         df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
+        st.caption("🍽️ O resumo inclui uma pausa de 1h para almoço. Se uma parada atravessar o meio-dia, o atendimento é concluído e a pausa aparece logo em seguida.")
         renderizar_exportador(
             f"Roteiro do Davi — {DATA_REF_ROTA_STR}",
             {
