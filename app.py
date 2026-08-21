@@ -4321,11 +4321,31 @@ with tab_frota:
                 if eh_mais_economico:
                     st.success("🏆 Menor custo por KM da frota neste mês")
 
-                # Somente os três números mais importantes usam cards grandes.
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Custo total", formatar_moeda_br(resumo['custo_total']))
-                m2.metric("KM", f"{formatar_numero_br(resumo['km'])} km")
-                m3.metric("Custo/KM", formatar_moeda_br(custo_km) if custo_km is not None else "—")
+                # Evita st.metric aqui: em meia tela o componente corta valores com "...".
+                # Os indicadores são exibidos em duas colunas com texto normal, que quebra linha
+                # quando necessário e nunca esconde o valor.
+                st.markdown("**Indicadores principais**")
+
+                m1, m2 = st.columns(2)
+                with m1:
+                    with st.container(border=True):
+                        st.caption("💳 Custo total")
+                        st.markdown(f"### {formatar_moeda_br(resumo['custo_total'])}")
+                with m2:
+                    with st.container(border=True):
+                        st.caption("🛣️ KM no mês")
+                        st.markdown(f"### {formatar_numero_br(resumo['km'])} km")
+
+                m3, m4 = st.columns(2)
+                with m3:
+                    with st.container(border=True):
+                        st.caption("📉 Custo por KM")
+                        valor_custo_km = formatar_moeda_br(custo_km) if custo_km is not None else "—"
+                        st.markdown(f"### {valor_custo_km}")
+                with m4:
+                    with st.container(border=True):
+                        st.caption("📊 Participação no custo da frota")
+                        st.markdown(f"### {participacao * 100:.1f}%" if custo_total_frota > 0 else "### —")
 
                 # Demais informações ficam compactas para caber tudo na tela.
                 st.markdown("**Resumo do veículo**")
@@ -4343,8 +4363,10 @@ with tab_frota:
                 st.caption(f"🧾 {abastec_txt}  •  🛠️ {manut_txt}")
 
                 if custo_total_frota > 0:
-                    st.caption(f"Participação no custo total da frota: {participacao * 100:.1f}%")
-                    st.progress(min(max(participacao, 0.0), 1.0))
+                    st.progress(
+                        min(max(participacao, 0.0), 1.0),
+                        text=f"{participacao * 100:.1f}% do custo total da frota",
+                    )
 
                 gastos = resumo['gastos_df'].copy()
                 quilometragem = resumo['km_df'].copy()
