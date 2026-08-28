@@ -1565,35 +1565,81 @@ def _criar_pdf_resumo_rota_tabela(titulo, df_resumo):
     return saida.getvalue()
 
 def _conteudo_exportador(titulo, dados, nome_arquivo, chave):
+    """Exibe o exportador sem gerar PDF/Excel durante o carregamento da página.
+
+    Antes, cada rerun montava todos os arquivos de todos os módulos, mesmo sem o
+    usuário pedir download. Em Streamlit isso pesa porque o conteúdo das abas é
+    executado no mesmo ciclo. Agora o arquivo só é construído ao clicar em
+    "Preparar arquivo".
+    """
     st.markdown("##### 📤 Exportar relatório")
-    col_formato, col_download = st.columns([1, 2])
+    col_formato, col_acao = st.columns([1, 2])
     formato = col_formato.selectbox("Formato", ["PDF", "CSV", "Excel"], key=f"formato_relatorio_{chave}")
-    tabelas_dados = _normalizar_tabelas_relatorio(dados)
-    eh_roteiro = str(chave).lower() == "roteiro"
-    resumo_analitico = _criar_resumo_analitico_relatorio(titulo, tabelas_dados)
-    if eh_roteiro:
-        # O roteiro exportado deve ser rápido de ler: somente a ordem das paradas.
-        resumo_rota = next((df for nome, df in tabelas_dados if "resumo da rota" in remover_acentos(str(nome)).lower()), None)
-        if resumo_rota is None:
-            resumo_rota = tabelas_dados[0][1] if tabelas_dados else pd.DataFrame(columns=["Etapa", "Local", "O que fazer", "Horário previsto"])
-        tabelas = [("Resumo da rota", resumo_rota)]
-    else:
-        tabelas = [("Resumo Analítico", resumo_analitico)] + tabelas_dados
-    if formato == "CSV":
-        arquivo, extensao, mime = _criar_csv_relatorio(tabelas), "csv", "text/csv"
-    elif formato == "Excel":
-        arquivo, extensao, mime = _criar_excel_relatorio(tabelas, titulo), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    else:
-        if eh_roteiro:
-            arquivo = _criar_pdf_resumo_rota_tabela(titulo, tabelas[0][1])
-        else:
-            arquivo = _criar_pdf_relatorio(titulo, tabelas)
-        extensao, mime = "pdf", "application/pdf"
-    col_download.download_button(
-        f"⬇️ Baixar {formato}", data=arquivo,
-        file_name=f"{nome_arquivo}_{AGORA_REAL.strftime('%Y-%m-%d')}.{extensao}",
-        mime=mime, use_container_width=True, key=f"baixar_relatorio_{chave}_{formato}",
+
+    arquivo_key = f"_arquivo_relatorio_{chave}"
+    meta_key = f"_meta_relatorio_{chave}"
+    meta_atual = st.session_state.get(meta_key, {}) or {}
+
+    # Mudar o formato invalida somente o arquivo preparado, sem recalcular nada.
+    if meta_atual.get("formato") and meta_atual.get("formato") != formato:
+        st.session_state.pop(arquivo_key, None)
+        st.session_state.pop(meta_key, None)
+        meta_atual = {}
+
+    preparar = col_acao.button(
+        f"⚙️ Preparar {formato}",
+        key=f"preparar_relatorio_{chave}_{formato}",
+        use_container_width=True,
+        help="O arquivo só é gerado quando você clicar aqui, deixando a plataforma mais rápida.",
     )
+
+    if preparar:
+        with st.spinner(f"Gerando {formato}..."):
+            tabelas_dados = _normalizar_tabelas_relatorio(dados)
+            eh_roteiro = str(chave).lower() == "roteiro"
+            resumo_analitico = _criar_resumo_analitico_relatorio(titulo, tabelas_dados)
+            if eh_roteiro:
+                resumo_rota = next((df for nome, df in tabelas_dados if "resumo da rota" in remover_acentos(str(nome)).lower()), None)
+                if resumo_rota is None:
+                    resumo_rota = tabelas_dados[0][1] if tabelas_dados else pd.DataFrame(columns=["Etapa", "Local", "O que fazer", "Horário previsto"])
+                tabelas = [("Resumo da rota", resumo_rota)]
+            else:
+                tabelas = [("Resumo Analítico", resumo_analitico)] + tabelas_dados
+
+            if formato == "CSV":
+                arquivo, extensao, mime = _criar_csv_relatorio(tabelas), "csv", "text/csv"
+            elif formato == "Excel":
+                arquivo, extensao, mime = _criar_excel_relatorio(tabelas, titulo), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else:
+                if eh_roteiro:
+                    arquivo = _criar_pdf_resumo_rota_tabela(titulo, tabelas[0][1])
+                else:
+                    arquivo = _criar_pdf_relatorio(titulo, tabelas)
+                extensao, mime = "pdf", "application/pdf"
+
+            st.session_state[arquivo_key] = arquivo
+            st.session_state[meta_key] = {
+                "formato": formato,
+                "extensao": extensao,
+                "mime": mime,
+                "gerado_em": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
+            }
+            meta_atual = st.session_state[meta_key]
+
+    arquivo_pronto = st.session_state.get(arquivo_key)
+    meta_atual = st.session_state.get(meta_key, {}) or {}
+    if arquivo_pronto and meta_atual.get("formato") == formato:
+        st.caption(f"Arquivo preparado às {meta_atual.get('gerado_em', '')}. Gere novamente se os dados tiverem mudado.")
+        st.download_button(
+            f"⬇️ Baixar {formato}",
+            data=arquivo_pronto,
+            file_name=f"{nome_arquivo}_{AGORA_REAL.strftime('%Y-%m-%d')}.{meta_atual.get('extensao', 'dat')}",
+            mime=meta_atual.get("mime", "application/octet-stream"),
+            use_container_width=True,
+            key=f"baixar_relatorio_{chave}_{formato}",
+        )
+    else:
+        st.caption("O arquivo ainda não foi gerado. Clique em **Preparar PDF/CSV/Excel** somente quando precisar exportar.")
 
 @fragmento_independente
 def renderizar_exportador(titulo, dados, nome_arquivo, chave):
@@ -3757,8 +3803,9 @@ except:
 # =====================================================================
 INTERVALO_TRELLO_SEGUNDOS = 2 * 60
 
+@st.cache_data(ttl=20, show_spinner=False)
 def ler_cache_trello_supabase():
-    """Lê a cópia mantida pelo Cron, inclusive quando o Streamlit esteve dormindo."""
+    """Lê a cópia mantida pelo Cron sem consultar o banco a cada rerun do Streamlit."""
     try:
         registro = fetch_one("SELECT dados FROM trello_cache WHERE id = 1")
         if not registro or registro[0] is None:
@@ -3783,6 +3830,10 @@ def salvar_cache_trello_supabase(dados):
         """,
         {"dados": json.dumps(dados, ensure_ascii=False)},
     )
+    try:
+        ler_cache_trello_supabase.clear()
+    except Exception:
+        pass
 
 def obter_dados_trello(forcar=False):
     if not forcar:
@@ -6764,7 +6815,9 @@ with st.sidebar:
     # Depois da sincronização, um rerun completo dispara o recálculo automático da rota.
     if "ultima_sincronizacao" not in st.session_state:
         st.session_state.ultima_sincronizacao = 0
-        if sincronizar_demandas(forcar=True):
+        # Primeiro carregamento usa a cópia do Supabase. O quadro completo só é
+        # consultado pelo ciclo de 2 minutos ou pelo botão de sincronização manual.
+        if sincronizar_demandas(forcar=False):
             st.session_state["_recalcular_rota_automatico"] = True
     
     if hasattr(st, "fragment"):
@@ -7531,6 +7584,7 @@ with tab_roteiro:
                 if _pontuacao_rotulo_obra(_rotulo) >= _pontuacao_rotulo_obra(_destino.get(_id_card, "")):
                     _destino[_id_card] = _rotulo
 
+        _dados_rotulos_cache = {}
         try:
             _dados_rotulos_cache = obter_dados_trello() or {}
             _mesclar_rotulos(_mapa_rotulos_trello, construir_mapa_rotulos_obras_trello(_dados_rotulos_cache))
@@ -7549,9 +7603,11 @@ with tab_roteiro:
                 if _id_rotulo and _pontuacao_rotulo_obra(_obra_rotulo) < 1000:
                     _ids_sem_numero_obra.add(_id_rotulo)
 
-        if _ids_sem_numero_obra:
+        if _ids_sem_numero_obra and _dados_rotulos_cache:
             try:
-                _dados_rotulos_frescos = obter_dados_trello(forcar=True) or {}
+                # Não baixa o quadro inteiro de novo durante a renderização.
+                # A sincronização automática/manual já renova este cache.
+                _dados_rotulos_frescos = _dados_rotulos_cache
                 _mapa_fresco = construir_mapa_rotulos_obras_trello(_dados_rotulos_frescos)
                 _mesclar_rotulos(_mapa_rotulos_trello, _mapa_fresco)
 
