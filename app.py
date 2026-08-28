@@ -7121,7 +7121,19 @@ with st.sidebar:
     @fragmento_independente
     def controles_planejamento_rota():
         st.divider()
-        st.radio("🚗 Tipo de custeio da rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"], key="cfg_veiculo_rota")
+        # Migração da opção antiga: ela representava carro próprio, então passa a usar
+        # automaticamente a nova tarifa correta de R$ 2,50/km.
+        if st.session_state.get("cfg_veiculo_rota") == "Carro Próprio/Frete (R$ 1,50/km)":
+            st.session_state["cfg_veiculo_rota"] = "Carro Próprio/Frete (R$ 2,50/km)"
+        st.radio(
+            "🚗 Tipo de custeio da rota",
+            [
+                "Frota da Empresa (Calcula Gasolina)",
+                "Moto Própria/Frete (R$ 1,50/km)",
+                "Carro Próprio/Frete (R$ 2,50/km)",
+            ],
+            key="cfg_veiculo_rota",
+        )
         st.divider()
         st.selectbox("🏁 Ponto de saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"], key="cfg_ponto_saida")
         estrategia_atual = st.selectbox("🎯 Estratégia da rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"], key="cfg_estrategia_rota")
@@ -7131,6 +7143,16 @@ with st.sidebar:
     controles_planejamento_rota()
 
 veiculo_selecionado = st.session_state.get("cfg_veiculo_rota", "Frota da Empresa (Calcula Gasolina)")
+
+# Tarifas de ressarcimento/frete para veículo próprio. Mantidas separadas da análise
+# de custo da frota da empresa, que continua usando combustível/manutenção reais.
+if "Moto Própria/Frete" in veiculo_selecionado:
+    valor_km_veiculo_proprio = 1.50
+elif "Carro Próprio/Frete" in veiculo_selecionado:
+    valor_km_veiculo_proprio = 2.50
+else:
+    valor_km_veiculo_proprio = None
+
 ponto_saida = st.session_state.get("cfg_ponto_saida", "ESCRITÓRIO")
 estrategia = st.session_state.get("cfg_estrategia_rota", "⚖️ Equilibrada")
 retornar_base = st.session_state.get("cfg_retornar_base", True)
@@ -8879,6 +8901,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
 
             st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
+            if valor_km_veiculo_proprio is not None:
+                custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
+                tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
+                custo_estimado_txt = f"R$ {custo_estimado_veiculo_proprio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+                valor_km_txt = f"R$ {valor_km_veiculo_proprio:.2f}/km".replace('.', ',')
+                st.info(
+                    f"💰 **Custeio estimado — {tipo_veiculo_proprio}:** "
+                    f"{custo_estimado_txt} (**{valor_km_txt}**)."
+                )
 
             if len(route_steps) > 1:
                 waypts_addr = []
@@ -9086,6 +9117,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             "Data": DATA_REF_ROTA_STR,
             "Ponto de saída": p_saida,
             "Veículo": veiculo_selecionado.split('(')[0].strip(),
+            "Valor por km (R$)": round(valor_km_veiculo_proprio, 2) if valor_km_veiculo_proprio is not None else None,
+            "Custeio estimado da rota (R$)": round(float(total_km) * valor_km_veiculo_proprio, 2) if valor_km_veiculo_proprio is not None else None,
             "Estratégia": estrategia,
             "Distância planejada (km)": round(float(total_km), 2),
             "Início": hora_inicio_real,
