@@ -4172,21 +4172,79 @@ def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
     return resultado
 
 
-def atualizar_rotulos_obras_route_steps(route_steps, df_demandas):
-    """Atualiza o rótulo resumido da obra em rotas antigas já salvas.
+def _pontuacao_rotulo_obra(rotulo):
+    """Prioriza o rótulo que contém o identificador real da obra.
 
-    Depois de melhorar a leitura do título do Trello, uma rota que já estava no
-    Supabase ainda podia carregar o rótulo antigo (ex.: apenas ``HORIZONTE``).
-    Pelo ID do cartão, substituímos somente o campo ``Obra`` pelo valor atual da
-    sincronização, sem alterar origem, destino, baixa ou ordem da rota.
+    Ex.: ``086 - UNIFOR`` deve sempre prevalecer sobre ``UNIFOR``. O número
+    permanece como texto para conservar zeros à esquerda.
     """
-    if not route_steps or df_demandas is None or df_demandas.empty or "id" not in df_demandas.columns:
+    texto = str(rotulo or "").strip()
+    if not texto:
+        return -1
+    tem_codigo = bool(re.search(r'(?i)(?:^|\s)(?:APR[A-Z0-9._-]*\d[A-Z0-9._-]*|\d+(?:\.\d+)?)(?:\s|$|\s*-)', texto))
+    tem_unidade = bool(identificar_unidade_empresa(texto, permitir_contexto=True))
+    return (1000 if tem_codigo else 0) + (100 if tem_unidade else 0) + min(len(texto), 80)
+
+
+def construir_mapa_rotulos_obras_trello(dados_trello=None):
+    """Lê o título de TODOS os cartões do quadro, inclusive os concluídos.
+
+    A lista de demandas ativas não contém cartões já movidos para CONCLUÍDAS.
+    Por isso o roteiro não pode depender apenas de ``st.session_state.demandas``
+    para recuperar o número da obra. O ID do cartão é a chave estável entre o
+    Trello, a rota salva e o histórico.
+    """
+    dados = dados_trello if isinstance(dados_trello, dict) else (obter_dados_trello() or {})
+    mapa = {}
+    for card in dados.get("cards", []) or []:
+        if card.get("closed"):
+            continue
+        card_id = str(card.get("id", "") or "").strip()
+        if not card_id:
+            continue
+        try:
+            rotulo, _origem, _destino, _materiais = extrair_dados_completos(
+                card.get("desc", ""), card.get("name", "")
+            )
+        except Exception:
+            rotulo = ""
+        rotulo = str(rotulo or "").strip()
+        if rotulo:
+            anterior = mapa.get(card_id, "")
+            if _pontuacao_rotulo_obra(rotulo) >= _pontuacao_rotulo_obra(anterior):
+                mapa[card_id] = rotulo
+    return mapa
+
+
+def atualizar_rotulos_obras_route_steps(route_steps, df_demandas=None, mapa_trello=None):
+    """Atualiza o rótulo resumido da obra em rotas novas e antigas.
+
+    Usa duas fontes pelo ID do cartão:
+    1. demandas ativas da sincronização atual;
+    2. títulos brutos do Trello, incluindo cartões em CONCLUÍDAS.
+
+    A fonte mais informativa prevalece. Assim uma tarefa antiga salva como
+    ``UNIFOR`` volta a aparecer como ``086 - UNIFOR`` mesmo depois da baixa.
+    """
+    if not route_steps:
         return route_steps
-    mapa = {
-        str(linha.get("id", "") or ""): str(linha.get("Obra", "") or "").strip()
-        for _, linha in df_demandas.iterrows()
-        if str(linha.get("id", "") or "").strip()
-    }
+
+    mapa = {}
+    if df_demandas is not None and not df_demandas.empty and "id" in df_demandas.columns:
+        for _, linha in df_demandas.iterrows():
+            tarefa_id = str(linha.get("id", "") or "").strip()
+            rotulo = str(linha.get("Obra", "") or "").strip()
+            if tarefa_id and rotulo:
+                mapa[tarefa_id] = rotulo
+
+    for tarefa_id, rotulo in (mapa_trello or {}).items():
+        tarefa_id = str(tarefa_id or "").strip()
+        rotulo = str(rotulo or "").strip()
+        if not tarefa_id or not rotulo:
+            continue
+        if _pontuacao_rotulo_obra(rotulo) >= _pontuacao_rotulo_obra(mapa.get(tarefa_id, "")):
+            mapa[tarefa_id] = rotulo
+
     if not mapa:
         return route_steps
 
@@ -4196,10 +4254,11 @@ def atualizar_rotulos_obras_route_steps(route_steps, df_demandas):
         novas_acoes = []
         for acao, tarefa in step.get("actions", []) or []:
             nova_tarefa = dict(tarefa)
-            tarefa_id = str(nova_tarefa.get("id", "") or "")
-            rotulo_atual = mapa.get(tarefa_id, "")
-            if rotulo_atual:
-                nova_tarefa["Obra"] = rotulo_atual
+            tarefa_id = str(nova_tarefa.get("id", "") or "").strip()
+            rotulo_novo = mapa.get(tarefa_id, "")
+            rotulo_antigo = str(nova_tarefa.get("Obra", "") or "").strip()
+            if rotulo_novo and _pontuacao_rotulo_obra(rotulo_novo) >= _pontuacao_rotulo_obra(rotulo_antigo):
+                nova_tarefa["Obra"] = rotulo_novo
             novas_acoes.append((acao, nova_tarefa))
         if "actions" in step:
             novo_step["actions"] = novas_acoes
@@ -6284,6 +6343,15 @@ def sincronizar_demandas(manual=False, forcar=False):
         
     trello_lists = {l['id']: l['name'] for l in data.get('lists', []) if not l.get('closed')}
     demandas_extraidas = []
+
+    # Mantém um mapa de ID -> "número da obra - unidade" de TODO o quadro.
+    # Isso é necessário porque, ao mover um cartão para CONCLUÍDAS, ele deixa
+    # de entrar em ``demandas_extraidas``, mas ainda precisa manter o rótulo
+    # correto no roteiro (ex.: 086 - UNIFOR).
+    try:
+        st.session_state["rotulos_obras_trello"] = construir_mapa_rotulos_obras_trello(data)
+    except Exception:
+        st.session_state.setdefault("rotulos_obras_trello", {})
     
     for c in data.get('cards', []):
         if c.get('closed') or lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()): continue
@@ -7424,10 +7492,21 @@ with tab_roteiro:
     # Atualiza imediatamente nomes antigos da rota com a leitura mais recente do
     # título do Trello. Isso corrige, por exemplo, uma rota salva como "HORIZONTE"
     # quando a sincronização atual já reconhece "2506 - HORIZONTE".
-    if st.session_state.get('route_steps') and not df_ativos.empty:
+    if st.session_state.get('route_steps'):
         _rota_rotulos_antes = json.dumps(st.session_state.get('route_steps') or [], ensure_ascii=False, sort_keys=True, default=str)
+        # O mapa bruto do Trello inclui também cartões já concluídos. Se a sessão
+        # ainda não o tiver (por exemplo, após reiniciar o Streamlit), reconstruímos
+        # a partir do cache do quadro antes de atualizar os passos.
+        _mapa_rotulos_trello = st.session_state.get("rotulos_obras_trello", {}) or {}
+        if not _mapa_rotulos_trello:
+            try:
+                _mapa_rotulos_trello = construir_mapa_rotulos_obras_trello()
+                st.session_state["rotulos_obras_trello"] = _mapa_rotulos_trello
+            except Exception:
+                _mapa_rotulos_trello = {}
+
         _rota_rotulos_atualizada = atualizar_rotulos_obras_route_steps(
-            st.session_state.get('route_steps') or [], df_ativos
+            st.session_state.get('route_steps') or [], df_ativos, _mapa_rotulos_trello
         )
         _rota_rotulos_depois = json.dumps(_rota_rotulos_atualizada, ensure_ascii=False, sort_keys=True, default=str)
         st.session_state['route_steps'] = _rota_rotulos_atualizada
