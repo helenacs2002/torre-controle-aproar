@@ -6,6 +6,7 @@ import time
 import base64
 import io
 import textwrap
+import tempfile
 import zipfile
 import urllib.request
 import urllib.parse
@@ -4171,6 +4172,41 @@ def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
     return resultado
 
 
+def atualizar_rotulos_obras_route_steps(route_steps, df_demandas):
+    """Atualiza o rótulo resumido da obra em rotas antigas já salvas.
+
+    Depois de melhorar a leitura do título do Trello, uma rota que já estava no
+    Supabase ainda podia carregar o rótulo antigo (ex.: apenas ``HORIZONTE``).
+    Pelo ID do cartão, substituímos somente o campo ``Obra`` pelo valor atual da
+    sincronização, sem alterar origem, destino, baixa ou ordem da rota.
+    """
+    if not route_steps or df_demandas is None or df_demandas.empty or "id" not in df_demandas.columns:
+        return route_steps
+    mapa = {
+        str(linha.get("id", "") or ""): str(linha.get("Obra", "") or "").strip()
+        for _, linha in df_demandas.iterrows()
+        if str(linha.get("id", "") or "").strip()
+    }
+    if not mapa:
+        return route_steps
+
+    resultado = []
+    for step in route_steps:
+        novo_step = dict(step)
+        novas_acoes = []
+        for acao, tarefa in step.get("actions", []) or []:
+            nova_tarefa = dict(tarefa)
+            tarefa_id = str(nova_tarefa.get("id", "") or "")
+            rotulo_atual = mapa.get(tarefa_id, "")
+            if rotulo_atual:
+                nova_tarefa["Obra"] = rotulo_atual
+            novas_acoes.append((acao, nova_tarefa))
+        if "actions" in step:
+            novo_step["actions"] = novas_acoes
+        resultado.append(novo_step)
+    return resultado
+
+
 def aplicar_ordem_manual_route_steps(route_steps, ajustes):
     """Reaplica a ordem dos cartões dentro de cada parada após recalcular."""
     if not route_steps or not isinstance(ajustes, dict):
@@ -4382,7 +4418,7 @@ def registrar_movimento_manual_rota(data_rota, route_steps, demanda_id, acao, de
 
 
 def construir_editor_arrastavel_rota(route_steps, ponto_saida, ajustes):
-    """Monta um editor HTML5 para arrastar ações entre as paradas."""
+    """Prepara os dados do editor arrastável e envia o drop diretamente ao Python."""
     ponto_saida = canonicalizar_ponto_rota(ponto_saida)
     ajustes_acoes = (ajustes or {}).get("acoes", {}) or {}
     secoes = []
@@ -4394,7 +4430,29 @@ def construir_editor_arrastavel_rota(route_steps, ponto_saida, ajustes):
          and canonicalizar_ponto_rota(s.get("destino", "")) == ponto_saida),
         None,
     )
-    secoes.append(("PREPARAÇÃO", ponto_saida, list((prep_step or {}).get("actions", []) or [])))
+
+    def preparar_cards(acoes):
+        cards = []
+        for acao, tarefa in acoes or []:
+            did = str(tarefa.get("id", "") or "").strip()
+            acao_txt = str(acao or "").upper().strip()
+            if not did or acao_txt not in {"COLETAR", "ENTREGAR"}:
+                continue
+            chave = f"{did}|{acao_txt}"
+            cards.append({
+                "id": did,
+                "acao": acao_txt,
+                "obra": str(tarefa.get("Obra", "Demanda") or "Demanda"),
+                "materiais": str(tarefa.get("Materiais", "") or ""),
+                "manual": chave in ajustes_acoes,
+            })
+        return cards
+
+    secoes.append({
+        "rotulo": "PREPARAÇÃO",
+        "local": ponto_saida,
+        "cards": preparar_cards(list((prep_step or {}).get("actions", []) or [])),
+    })
     vistos.add(ponto_saida)
 
     numero = 1
@@ -4404,65 +4462,44 @@ def construir_editor_arrastavel_rota(route_steps, ponto_saida, ajustes):
         local = canonicalizar_ponto_rota(step.get("destino", ""))
         if not local or local in vistos:
             continue
-        secoes.append((f"PARADA {numero}", local, list(step.get("actions", []) or [])))
+        secoes.append({
+            "rotulo": f"PARADA {numero}",
+            "local": local,
+            "cards": preparar_cards(list(step.get("actions", []) or [])),
+        })
         vistos.add(local)
         numero += 1
 
-    blocos = []
-    for rotulo, local, acoes in secoes:
-        cards = []
-        for acao, tarefa in acoes:
-            did = str(tarefa.get("id", "") or "")
-            if not did:
-                continue
-            acao_txt = str(acao).upper()
-            chave = f"{did}|{acao_txt}"
-            manual = chave in ajustes_acoes
-            obra = html_escape(str(tarefa.get("Obra", "Demanda") or "Demanda"))
-            mats = html_escape(str(tarefa.get("Materiais", "") or ""))
-            classe = "coleta" if acao_txt == "COLETAR" else "entrega"
-            etiqueta = "📦 COLETA" if acao_txt == "COLETAR" else "📬 ENTREGA"
-            selo_manual = '<span class="manual">manual</span>' if manual else ''
-            cards.append(
-                f'<div class="demanda {classe}" draggable="true" data-id="{html_escape(did)}" data-acao="{acao_txt}">'
-                f'<div class="top"><span class="handle">⠿</span><b>{etiqueta}</b>{selo_manual}</div>'
-                f'<div class="obra">{obra}</div><div class="mat">{mats}</div></div>'
-            )
-        cards_html = "".join(cards) if cards else '<div class="vazio">Solte uma demanda aqui</div>'
-        blocos.append(
-            f'<section class="secao"><div class="secao-head"><b>{html_escape(rotulo)}</b>'
-            f'<span>{html_escape(local)}</span></div><div class="zona" data-destino="{html_escape(local)}">'
-            f'{cards_html}</div></section>'
-        )
+    quantidade_cards = sum(len(secao["cards"]) for secao in secoes)
+    altura = min(720, max(240, 105 + len(secoes) * 118 + quantidade_cards * 54))
+    return {"secoes": secoes}, altura
 
-    html = """<!doctype html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box} body{margin:0;background:#070913;color:#e5e7eb;font-family:Inter,Arial,sans-serif}
-.aviso{font-size:12px;color:#94a3b8;margin:0 0 10px}.secao{border:1px solid #263452;background:#0b1020;border-radius:12px;margin:0 0 10px;overflow:hidden}
-.secao-head{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:#11182d;border-bottom:1px solid #263452;font-size:13px}.secao-head span{color:#9fb1ca;font-weight:700}
-.zona{min-height:62px;padding:8px}.zona.over{outline:2px dashed #60a5fa;outline-offset:-4px;background:#0f1c37}.demanda{padding:9px 10px;margin:5px 0;border-radius:9px;border:1px solid #334155;background:#10182b;cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.18)}
-.demanda.dragging{opacity:.35}.demanda.coleta{border-left:5px solid #f59e0b}.demanda.entrega{border-left:5px solid #22c55e}.top{display:flex;align-items:center;gap:7px;font-size:12px}.handle{font-size:18px;color:#93c5fd}.manual{margin-left:auto;background:#1d4ed8;color:#dbeafe;padding:2px 6px;border-radius:999px;font-size:10px}
-.obra{font-size:12.5px;font-weight:800;margin-top:3px;color:#f1f5f9}.mat{font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vazio{font-size:11px;color:#64748b;text-align:center;padding:12px;border:1px dashed #334155;border-radius:8px}
-</style></head><body><div class="aviso">Arraste pelo ⠿. Solte dentro de outra parada para mudar o local dessa ação; solte acima/abaixo para mudar a ordem. O Trello não é alterado.</div>""" + "".join(blocos) + """
-<script>
-let arrastado=null;
-document.querySelectorAll('.demanda').forEach(card=>{
-  card.addEventListener('dragstart',e=>{arrastado=card;card.classList.add('dragging');e.dataTransfer.effectAllowed='move';});
-  card.addEventListener('dragend',()=>{card.classList.remove('dragging');document.querySelectorAll('.zona').forEach(z=>z.classList.remove('over'));});
-});
-document.querySelectorAll('.zona').forEach(zona=>{
-  zona.addEventListener('dragover',e=>{e.preventDefault();zona.classList.add('over');e.dataTransfer.dropEffect='move';});
-  zona.addEventListener('dragleave',e=>{if(!zona.contains(e.relatedTarget))zona.classList.remove('over');});
-  zona.addEventListener('drop',e=>{
-    e.preventDefault();zona.classList.remove('over');if(!arrastado)return;
-    const outros=[...zona.querySelectorAll('.demanda:not(.dragging)')];let indice=outros.length;
-    for(let i=0;i<outros.length;i++){const r=outros[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){indice=i;break;}}
-    const p=new URLSearchParams();p.set('mr_demanda',arrastado.dataset.id);p.set('mr_acao',arrastado.dataset.acao);p.set('mr_destino',zona.dataset.destino);p.set('mr_ordem',String(indice));
-    try{window.top.location.href=window.top.location.pathname+'?'+p.toString();}catch(err){window.parent.location.href='?'+p.toString();}
-  });
-});
-</script></body></html>"""
-    altura = min(720, max(220, 96 + len(secoes) * 118 + sum(len(a) for _, _, a in secoes) * 54))
-    return html, altura
+
+_COMPONENTE_DRAG_ROTA = None
+
+
+def _obter_componente_drag_rota():
+    """Usa Custom Components para o iframe devolver o drop ao Streamlit."""
+    global _COMPONENTE_DRAG_ROTA
+    if _COMPONENTE_DRAG_ROTA is not None:
+        return _COMPONENTE_DRAG_ROTA
+
+    pasta = os.path.join(tempfile.gettempdir(), "aproar_dragdrop_rota_component")
+    os.makedirs(pasta, exist_ok=True)
+    index_path = os.path.join(pasta, "index.html")
+    frontend = '<!doctype html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n*{box-sizing:border-box}\nhtml,body{margin:0;padding:0;background:#070913;color:#e5e7eb;font-family:Inter,Arial,sans-serif}\n#app{padding:0}\n.aviso{font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.45}\n.secao{border:1px solid #263452;background:#0b1020;border-radius:12px;margin:0 0 10px;overflow:hidden}\n.secao-head{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:#11182d;border-bottom:1px solid #263452;font-size:13px}\n.secao-head span{color:#9fb1ca;font-weight:700}\n.zona{min-height:62px;padding:8px;transition:.12s ease}\n.zona.over{outline:2px dashed #60a5fa;outline-offset:-4px;background:#0f1c37}\n.demanda{padding:9px 10px;margin:5px 0;border-radius:9px;border:1px solid #334155;background:#10182b;cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.18);user-select:none}\n.demanda:active{cursor:grabbing}\n.demanda.dragging{opacity:.28}\n.demanda.coleta{border-left:5px solid #f59e0b}\n.demanda.entrega{border-left:5px solid #22c55e}\n.top{display:flex;align-items:center;gap:7px;font-size:12px}\n.handle{font-size:18px;color:#93c5fd;line-height:1}\n.manual{margin-left:auto;background:#1d4ed8;color:#dbeafe;padding:2px 6px;border-radius:999px;font-size:10px}\n.obra{font-size:12.5px;font-weight:800;margin-top:3px;color:#f1f5f9}\n.mat{font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.vazio{font-size:11px;color:#64748b;text-align:center;padding:12px;border:1px dashed #334155;border-radius:8px}\n</style>\n</head>\n<body><div id="app"></div>\n<script>\nconst app=document.getElementById(\'app\');\nlet arrastado=null;\nlet argsAtuais={};\nfunction post(type, extra={}){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type:type},extra),\'*\');}\nfunction ready(){post(\'streamlit:componentReady\',{apiVersion:1});}\nfunction setValue(value){post(\'streamlit:setComponentValue\',{value:value,dataType:\'json\'});}\nfunction setHeight(){\n  const desejada=Number(argsAtuais.requested_height||0);\n  const real=Math.max(220,document.documentElement.scrollHeight+6);\n  post(\'streamlit:setFrameHeight\',{height:desejada>0?Math.min(Math.max(real,220),desejada):real});\n}\nfunction el(tag, cls, texto){const n=document.createElement(tag);if(cls)n.className=cls;if(texto!==undefined&&texto!==null)n.textContent=String(texto);return n;}\nfunction habilitarCard(card){\n  card.addEventListener(\'dragstart\',e=>{arrastado=card;card.classList.add(\'dragging\');e.dataTransfer.effectAllowed=\'move\';try{e.dataTransfer.setData(\'text/plain\',card.dataset.id||\'demanda\');}catch(_){}});\n  card.addEventListener(\'dragend\',()=>{card.classList.remove(\'dragging\');document.querySelectorAll(\'.zona\').forEach(z=>z.classList.remove(\'over\'));arrastado=null;});\n}\nfunction habilitarZona(zona){\n  zona.addEventListener(\'dragenter\',e=>{e.preventDefault();zona.classList.add(\'over\');});\n  zona.addEventListener(\'dragover\',e=>{e.preventDefault();zona.classList.add(\'over\');e.dataTransfer.dropEffect=\'move\';});\n  zona.addEventListener(\'dragleave\',e=>{if(!zona.contains(e.relatedTarget))zona.classList.remove(\'over\');});\n  zona.addEventListener(\'drop\',e=>{\n    e.preventDefault();e.stopPropagation();zona.classList.remove(\'over\');if(!arrastado)return;\n    const outros=[...zona.querySelectorAll(\'.demanda\')].filter(x=>x!==arrastado);let indice=outros.length;\n    for(let i=0;i<outros.length;i++){const r=outros[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){indice=i;break;}}\n    zona.querySelectorAll(\'.vazio\').forEach(v=>v.remove());\n    if(indice<outros.length)zona.insertBefore(arrastado,outros[indice]);else zona.appendChild(arrastado);\n    setValue({nonce:String(Date.now())+\'-\'+Math.random().toString(36).slice(2),demanda_id:arrastado.dataset.id||\'\',acao:arrastado.dataset.acao||\'\',destino:zona.dataset.destino||\'\',ordem:indice});\n    setTimeout(setHeight,20);\n  });\n}\nfunction render(args){\n  argsAtuais=args||{};app.replaceChildren();\n  app.appendChild(el(\'div\',\'aviso\',\'Arraste pelo ⠿. Solte dentro de outra parada para mudar o local da ação; solte acima ou abaixo para mudar a ordem. O Trello não é alterado.\'));\n  const secoes=((argsAtuais.payload||{}).secoes)||[];\n  secoes.forEach(sec=>{\n    const section=el(\'section\',\'secao\');const head=el(\'div\',\'secao-head\');head.appendChild(el(\'b\',\'\',sec.rotulo||\'\'));head.appendChild(el(\'span\',\'\',sec.local||\'\'));section.appendChild(head);\n    const zona=el(\'div\',\'zona\');zona.dataset.destino=sec.local||\'\';const cards=sec.cards||[];\n    if(!cards.length)zona.appendChild(el(\'div\',\'vazio\',\'Solte uma demanda aqui\'));\n    cards.forEach(c=>{const card=el(\'div\',\'demanda \'+(c.acao===\'COLETAR\'?\'coleta\':\'entrega\'));card.draggable=true;card.dataset.id=c.id||\'\';card.dataset.acao=c.acao||\'\';const top=el(\'div\',\'top\');top.appendChild(el(\'span\',\'handle\',\'⠿\'));top.appendChild(el(\'b\',\'\',c.acao===\'COLETAR\'?\'📦 COLETA\':\'📬 ENTREGA\'));if(c.manual)top.appendChild(el(\'span\',\'manual\',\'manual\'));card.appendChild(top);card.appendChild(el(\'div\',\'obra\',c.obra||\'Demanda\'));card.appendChild(el(\'div\',\'mat\',c.materiais||\'\'));habilitarCard(card);zona.appendChild(card);});\n    habilitarZona(zona);section.appendChild(zona);app.appendChild(section);\n  });\n  setTimeout(setHeight,0);\n}\nwindow.addEventListener(\'message\',e=>{const d=e.data||{};if(d.type===\'streamlit:render\')render(d.args||{});});\nready();\n</script></body></html>\n'
+    with open(index_path, "w", encoding="utf-8") as arquivo:
+        arquivo.write(frontend)
+
+    _COMPONENTE_DRAG_ROTA = st.components.v1.declare_component(
+        "aproar_dragdrop_rota", path=pasta
+    )
+    return _COMPONENTE_DRAG_ROTA
+
+
+def renderizar_editor_arrastavel_rota(payload, altura, key):
+    componente = _obter_componente_drag_rota()
+    return componente(payload=payload, requested_height=int(altura), key=key, default=None)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -5985,7 +6022,15 @@ def extrair_dados_completos(texto, card_name):
     )
     if not num_match:
         num_match = re.match(
-            r'(?i)^\s*[-:#]?\s*(APR[A-Z0-9]+|\d+(?:\.\d+)?)\b',
+            r'(?i)^\s*[-:#]?\s*(APR[A-Z0-9._-]+|\d+(?:\.\d+)?)\b',
+            titulo,
+        )
+    if not num_match:
+        # Há cartões em que a unidade/descrição vem antes do número da obra.
+        # Como o identificador sempre está no título, buscamos o primeiro código
+        # numérico/APR restante, sem limitar a quantidade de dígitos.
+        num_match = re.search(
+            r'(?i)(?<![A-Z0-9])(APR[A-Z0-9._-]*\d[A-Z0-9._-]*|\d+(?:\.\d+)?)(?![A-Z0-9])',
             titulo,
         )
     num = num_match.group(1).upper() if num_match else ""
@@ -7293,6 +7338,25 @@ with tab_roteiro:
             st.warning(f"⚠️ Estas demandas estão sem origem ou destino legível no Trello e ficaram fora da rota: **{', '.join(df_ativos[origem_invalida | destino_invalido]['Obra'].astype(str).tolist())}**.")
             df_ativos = df_ativos[~(origem_invalida | destino_invalido)].copy()
 
+    # Atualiza imediatamente nomes antigos da rota com a leitura mais recente do
+    # título do Trello. Isso corrige, por exemplo, uma rota salva como "HORIZONTE"
+    # quando a sincronização atual já reconhece "2506 - HORIZONTE".
+    if st.session_state.get('route_steps') and not df_ativos.empty:
+        _rota_rotulos_antes = json.dumps(st.session_state.get('route_steps') or [], ensure_ascii=False, sort_keys=True, default=str)
+        _rota_rotulos_atualizada = atualizar_rotulos_obras_route_steps(
+            st.session_state.get('route_steps') or [], df_ativos
+        )
+        _rota_rotulos_depois = json.dumps(_rota_rotulos_atualizada, ensure_ascii=False, sort_keys=True, default=str)
+        st.session_state['route_steps'] = _rota_rotulos_atualizada
+        if _rota_rotulos_depois != _rota_rotulos_antes and st.session_state.get('data_rota') == DATA_REF_ROTA_STR:
+            try:
+                execute_db(
+                    "UPDATE rota_ativa SET json_route=:route WHERE id=1 AND data_rota=:data",
+                    {"route": json.dumps(_rota_rotulos_atualizada, ensure_ascii=False), "data": DATA_REF_ROTA_STR},
+                )
+            except Exception:
+                pass
+
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
 
     # Recebe um movimento do editor arrastável e o transforma em regra persistente.
@@ -7964,10 +8028,32 @@ with tab_roteiro:
                     "Arraste uma COLETA ou ENTREGA para cima ou para baixo, ou solte-a dentro de outra parada. "
                     "O ajuste fica salvo no Supabase e continua valendo quando o Trello atualizar a rota."
                 )
-                _html_editor, _altura_editor = construir_editor_arrastavel_rota(
+                _payload_editor, _altura_editor = construir_editor_arrastavel_rota(
                     route_steps, p_saida, carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
                 )
-                st.components.v1.html(_html_editor, height=_altura_editor, scrolling=True)
+                _evento_drag = renderizar_editor_arrastavel_rota(
+                    _payload_editor, _altura_editor, key=f"editor_drag_rota_{DATA_REF_ROTA_STR}"
+                )
+                if isinstance(_evento_drag, dict) and _evento_drag.get("nonce"):
+                    _nonce_drag = str(_evento_drag.get("nonce"))
+                    if _nonce_drag != st.session_state.get("_ultimo_evento_drag_rota"):
+                        st.session_state["_ultimo_evento_drag_rota"] = _nonce_drag
+                        try:
+                            _movimento_drag_ok = registrar_movimento_manual_rota(
+                                DATA_REF_ROTA_STR, route_steps,
+                                _evento_drag.get("demanda_id", ""),
+                                _evento_drag.get("acao", ""),
+                                _evento_drag.get("destino", ""),
+                                int(_evento_drag.get("ordem", 0) or 0), p_saida,
+                            )
+                            if _movimento_drag_ok:
+                                st.session_state["_recalcular_rota_automatico"] = True
+                                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. A rota foi recalculada mantendo seu ajuste manual."
+                                st.rerun()
+                            else:
+                                st.warning("Não foi possível aplicar esse movimento. Atualize a rota e tente novamente.")
+                        except Exception as _erro_drag_rota:
+                            st.warning(f"Não foi possível mover essa demanda agora: {_erro_drag_rota}")
                 if st.button("♻️ Limpar ajustes manuais e voltar ao automático", key="limpar_ajustes_rota_manual"):
                     limpar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
                     st.session_state["_recalcular_rota_automatico"] = True
