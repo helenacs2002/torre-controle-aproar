@@ -2397,7 +2397,7 @@ def html_status_rastreio_local(status):
 def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     if not hora_atual_str:
         return
-    cor_previsao = "#16a34a" if final_dyn_min <= (17 * 60) else "#f59e0b" if final_dyn_min <= (17 * 60 + 30) else "#ef4444"
+    cor_previsao = "#16a34a" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "#f59e0b" if final_dyn_min <= (LIMITE_EXPEDIENTE_DAVI_MIN + 30) else "#ef4444"
     rota_futura = DATA_REF_ROTA_DATE > AGORA_REAL.date()
     rotulo_referencia = "📅 Rota planejada:" if rota_futura else "🕒 Horário atual:"
     valor_referencia = DATA_REF_ROTA_STR if rota_futura else hora_atual_str
@@ -3495,10 +3495,75 @@ RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor"]
-UNIDADES_PROPRIAS = ["FIEC", "CENTRO", "MARACANAÚ", "SEBRAE", "UNIFOR", "PARANGABA", "HORIZONTE", "MUSEU", "BARRA", "ESCRITÓRIO", "CASA DA INDÚSTRIA"]
+
+# Expediente operacional do Davi: nenhuma NOVA etapa pode ser planejada para
+# ultrapassar este limite. Conclusões reais já registradas depois das 17h são
+# preservadas no histórico, mas não liberam novas paradas após o expediente.
+LIMITE_EXPEDIENTE_DAVI_MIN = 17 * 60
+
+# Nomes canônicos das unidades atendidas pela empresa. FIEC/CASA DA INDÚSTRIA
+# permanecem por compatibilidade com cadastros antigos já existentes no sistema.
+UNIDADES_PROPRIAS = [
+    "UNIFOR", "CENTRO", "MUSEU", "BARRA DO CEARÁ", "MARACANAÚ", "COLISEU",
+    "HORIZONTE", "SEBRAE", "PARANGABA", "ESCRITÓRIO", "ESCRITÓRIO PROVISÓRIO",
+    "SÃO GONÇALO DO AMARANTE", "FIEC", "CASA DA INDÚSTRIA",
+]
+
+# O Trello costuma misturar a instituição (FIEC/SENAI/SESI/IEL) com o nome da
+# unidade. Todos os aliases abaixo convergem para um único ponto físico/canônico.
+ALIASES_UNIDADES_EMPRESA = {
+    "UNIFOR": ("UNIFOR",),
+    "CENTRO": ("CENTRO", "SENAI CENTRO", "SESI CENTRO", "IEL CENTRO", "FIEC CENTRO", "ESCOLA CENTRO", "NR SAÚDE", "NR SAUDE"),
+    "MUSEU": ("MUSEU", "SESI MUSEU", "SENAI MUSEU"),
+    "BARRA DO CEARÁ": ("BARRA DO CEARÁ", "BARRA DO CEARA", "SENAI BARRA", "SESI BARRA", "IEL BARRA", "FIEC BARRA", "SENAI BARRA DO CEARÁ", "SESI BARRA DO CEARÁ", "BARRA"),
+    "MARACANAÚ": ("MARACANAÚ", "MARACANAU", "SESI ALBANO FRANCO", "SESI CLUBE DA PARCERIA", "SENAI ISTEMM", "SENAI CETAFR"),
+    "COLISEU": ("COLISEU", "EDIFÍCIO COLISEU", "EDIFICIO COLISEU", "APARTAMENTO COLISEU", "CONDOMÍNIO COLISEU", "CONDOMINIO COLISEU"),
+    "HORIZONTE": ("HORIZONTE", "SESI HORIZONTE", "SENAI HORIZONTE"),
+    "SEBRAE": ("SEBRAE",),
+    "PARANGABA": ("PARANGABA", "SESI PARANGABA", "SENAI PARANGABA"),
+    "ESCRITÓRIO PROVISÓRIO": ("ESCRITÓRIO PROVISÓRIO", "ESCRITORIO PROVISORIO", "ESCRITÓRIO PROVISORIO", "ESCRITORIO PROVISÓRIO"),
+    "ESCRITÓRIO": ("ESCRITÓRIO", "ESCRITORIO", "ALMOXARIFADO"),
+    "SÃO GONÇALO DO AMARANTE": ("SÃO GONÇALO DO AMARANTE", "SAO GONCALO DO AMARANTE", "SÃO GONÇALO", "SAO GONCALO", "SGA"),
+    "FIEC": ("FIEC",),
+    "CASA DA INDÚSTRIA": ("CASA DA INDÚSTRIA", "CASA DA INDUSTRIA"),
+}
+
+
+def _chave_busca_unidade(valor):
+    texto = remover_acentos(str(valor or "")).upper()
+    return re.sub(r"[^A-Z0-9]+", " ", texto).strip()
+
+
+def identificar_unidade_empresa(valor, permitir_contexto=False):
+    """Reconhece a unidade mesmo quando o Trello usa SENAI/SESI/FIEC/IEL ou abreviações.
+
+    Em nomes de ponto físico exigimos correspondência exata para não confundir,
+    por exemplo, um fornecedor localizado no bairro Centro com a obra CENTRO.
+    No TÍTULO do cartão, ``permitir_contexto=True`` permite encontrar a unidade
+    dentro de textos maiores como "OBRA 086 - REFORMA FACHADA - UNIFOR".
+    """
+    chave = _chave_busca_unidade(valor)
+    if not chave:
+        return ""
+
+    # Aliases longos primeiro: evita que ESCRITÓRIO seja escolhido antes de
+    # ESCRITÓRIO PROVISÓRIO e que BARRA vença BARRA DO CEARÁ.
+    candidatos = []
+    for oficial, aliases in ALIASES_UNIDADES_EMPRESA.items():
+        for alias in aliases:
+            alias_chave = _chave_busca_unidade(alias)
+            candidatos.append((len(alias_chave), alias_chave, oficial))
+
+    for _tam, alias_chave, oficial in sorted(candidatos, reverse=True):
+        if chave == alias_chave:
+            return oficial
+        if permitir_contexto and re.search(rf"(?<![A-Z0-9]){re.escape(alias_chave)}(?![A-Z0-9])", chave):
+            return oficial
+    return ""
+
 
 SUPERVISORES_MAP = {
-    "BARRA": "Luis Eduardo Rodrigues", "SESI BARRA DO CEARÁ": "Luis Eduardo Rodrigues", "SENAI BARRA DO CEARÁ": "Luis Eduardo Rodrigues",
+    "BARRA DO CEARÁ": "Luis Eduardo Rodrigues", "BARRA": "Luis Eduardo Rodrigues", "SESI BARRA DO CEARÁ": "Luis Eduardo Rodrigues", "SENAI BARRA DO CEARÁ": "Luis Eduardo Rodrigues",
     "CENTRO": "Victor Bezerra", "SENAI CENTRO": "Victor Bezerra", "ESCOLA CENTRO": "Victor Bezerra", "NR SAÚDE": "Victor Bezerra", "MUSEU": "Victor Bezerra", "SESI MUSEU": "Victor Bezerra",
     "CASA DA INDÚSTRIA": "Gustavo Souza", "FIEC": "Gustavo Souza",
     "MARACANAÚ": "Neto Porto", "SESI ALBANO FRANCO": "Neto Porto", "SESI CLUBE DA PARCERIA": "Neto Porto", "SENAI ISTEMM": "Neto Porto", "SENAI CETAFR": "Neto Porto",
@@ -3520,6 +3585,7 @@ ENDERECOS_PADRAO = [
     ("NR SAÚDE", "R. Padre Ibiapina, 1280 - Jacarecanga, Fortaleza - CE"), 
     ("SESI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"), 
     ("SENAI BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"), 
+    ("BARRA DO CEARÁ", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
     ("BARRA", "Rua Florencio de Alencar, 900 - Barra do Ceará, Fortaleza - CE"),
     ("SESI ALBANO FRANCO", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), 
     ("SESI CLUBE DA PARCERIA", "Av. Sen. Virgílio Távora, 1395 - Distrito Industrial I, Maracanaú - CE"), 
@@ -3994,6 +4060,12 @@ def canonicalizar_ponto_rota(nome):
     texto = re.sub(r"[\\*_`]+", "", texto).strip(" :-\t\r\n")
     texto = re.sub(r'^(?:O|A|OS|AS)\s+', '', texto)
 
+    # Primeiro tenta reconhecer uma unidade própria. Assim, por exemplo,
+    # "SENAI BARRA", "SESI BARRA DO CEARÁ" e "BARRA" viram o mesmo ponto.
+    unidade_identificada = identificar_unidade_empresa(texto)
+    if unidade_identificada:
+        return unidade_identificada
+
     # Corrige artefatos de frases corridas do Trello. Exemplo real:
     # "COLETAR NO ESCRITÓRIO E ENTREGAR O CENTRO" não pode virar o local
     # "ESCRITÓRIO E ENTREGAR O CENTRO". A partir do segundo verbo logístico,
@@ -4003,6 +4075,10 @@ def canonicalizar_ponto_rota(nome):
         texto,
         maxsplit=1,
     )[0].strip(" :-\t\r\n")
+
+    unidade_identificada = identificar_unidade_empresa(texto)
+    if unidade_identificada:
+        return unidade_identificada
     
     texto_limpo = remover_acentos(texto)
     for sin, oficial in DICIONARIO_SINONIMOS.items():
@@ -5589,6 +5665,17 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 tempo_servico = estimar_tempo_parada(ponto, tarefas_entrega_parada, tarefas_coleta_parada)
                 _, nova_hora = avancar_relogio(estado["hora"], duracao, tempo_servico)
 
+                # 17h é limite rígido de planejamento. Uma nova parada só entra
+                # na busca se o atendimento couber no expediente e, quando houver
+                # retorno à base, ainda existir tempo para voltar antes das 17h.
+                if nova_hora > LIMITE_EXPEDIENTE_DAVI_MIN:
+                    continue
+                if retornar_base and ponto_base and ponto != ponto_base:
+                    _dist_volta, _dur_volta = get_dist_dur(ponto, ponto_base)
+                    _chegada_base, _fim_base = avancar_relogio(nova_hora, _dur_volta, 0)
+                    if _fim_base > LIMITE_EXPEDIENTE_DAVI_MIN:
+                        continue
+
                 if "Menor Distância" in estrategia:
                     incremento = distancia * 3.2 + duracao * 0.35
                 else:
@@ -5625,10 +5712,6 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                     incremento += carga_apos * (duracao + tempo_servico) * 0.55
                 elif "Equilibrada" in estrategia:
                     incremento += carga_apos * (duracao + tempo_servico) * 0.05
-
-                extra_antes = max(0.0, estado["hora"] - 17 * 60)
-                extra_depois = max(0.0, nova_hora - 17 * 60)
-                incremento += (extra_depois - extra_antes) * 18.0
 
                 novo_estado = {
                     "atual": ponto,
@@ -5669,6 +5752,18 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             return custo
         melhor = min(concluidos, key=custo_final)
         return list(melhor["ordem"])
+
+    # Se nem todas as demandas couberem até 17h, devolve a melhor sequência
+    # PARCIAL possível. Priorizamos quantidade entregue e evitamos terminar o
+    # planejamento com materiais apenas coletados e ainda sem entrega.
+    if estados:
+        def chave_parcial(estado):
+            entregues_qtd = int(estado["entregues"]).bit_count()
+            carregadas_sem_entrega = int(estado["coletadas"] & ~estado["entregues"]).bit_count()
+            return (-entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
+        melhor_parcial = min(estados, key=chave_parcial)
+        if melhor_parcial.get("ordem"):
+            return list(melhor_parcial["ordem"])
 
     # Se a busca atingir o limite de tempo, conclui de forma determinística
     # com o motor guloso seguro, sem travar a geração da rota.
@@ -5857,55 +5952,92 @@ def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
 
 
 def extrair_dados_completos(texto, card_name):
-    num_match = re.search(r'\b(\d{4}(?:\.\d+)?|APR[A-Z0-9]+)\b', card_name, re.IGNORECASE)
+    titulo = str(card_name or "")
+
+    # O título do Trello sempre carrega o número da obra. Priorizamos a forma
+    # "OBRA 086" (inclusive com 2/3 dígitos e zero à esquerda) e mantemos
+    # compatibilidade com códigos APR e os identificadores antigos de 4 dígitos.
+    num_match = re.search(
+        r'(?i)\bOBRA\s*[-:#]?\s*(APR[A-Z0-9]+|\d{2,4}(?:\.\d+)?)\b',
+        titulo,
+    )
+    if not num_match:
+        num_match = re.search(r'\b(APR[A-Z0-9]+|\d{3,4}(?:\.\d+)?)\b', titulo, re.IGNORECASE)
     num = num_match.group(1).upper() if num_match else ""
-    
-    unidade = ""
-    for u in UNIDADES_PROPRIAS:
-        if normalizar_local(u) in normalizar_local(card_name):
-            unidade = normalizar_local(u)
-            break
-            
-    short_name = f"{num} - {unidade}" if (num and unidade) else num if num else unidade if unidade else card_name[:25] + "..."
+
+    # Ex.: "OBRA 086 - REFORMA FACHADA - BLOCO H - UNIFOR" -> "086 - UNIFOR".
+    unidade = identificar_unidade_empresa(titulo, permitir_contexto=True)
 
     origem, destino = "", ""
     materiais = "Ver Trello"
-    
+
     if texto:
         texto_limpo = re.sub(r'[*_`]+', '', texto).strip()
-        
+
         if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
             if unidade:
                 origem = unidade
                 destino = "ESCRITÓRIO"
             materiais = texto_limpo
         else:
-            mo = re.search(r'(?i)(?:coletar|pegar|retirar|buscar|coleta)\s+(?:no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.\-]+)', texto_limpo)
+            # COLETAR EM/NA/NO, PEGAR, RETIRAR e BUSCAR identificam a ORIGEM.
+            mo = re.search(
+                r'(?i)(?:coletar|pegar|retirar|buscar|coleta)\s+(?:(?:em|no|na|nos|nas|do|da|dos|das|o|a|ao|à|aos|às)\s+)?([^\:\n\.\-]+)',
+                texto_limpo,
+            )
             if mo:
                 origem_bruta = mo.group(1)
-                # Em frase corrida, o regex antigo engolia também "e entregar ...".
-                # Cortamos no próximo verbo antes de normalizar o nome do local.
                 origem_bruta = re.split(
                     r'(?i)\s+(?:e\s+)?(?:levar|entreg(?:ar|a)|devolver|encaminhar|transportar|deixar|entrega)\b',
                     origem_bruta,
                     maxsplit=1,
                 )[0].strip()
-                origem = normalizar_local(origem_bruta)
+                origem = canonicalizar_ponto_rota(origem_bruta)
 
-            md = re.search(r'(?i)(?:levar|entreg(?:ar|a)|devolver|encaminhar|transportar|deixar|entrega)\s+(?:para|no|na|em|o|a|ao|à|aos|às)?\s*([^\:\n\.]+)', texto_limpo)
-            if md: destino = normalizar_local(md.group(1))
-            
+            # LEVAR PARA / ENTREGAR PARA, EM, NO, NA... identificam o DESTINO.
+            md = re.search(
+                r'(?i)(?:levar|entreg(?:ar|a)|devolver|encaminhar|transportar|deixar|entrega)\s+(?:(?:para|em|no|na|nos|nas|ao|à|aos|às|o|a)\s+)?([^\:\n\.]+)',
+                texto_limpo,
+            )
+            if md:
+                destino = canonicalizar_ponto_rota(md.group(1))
+
             if mo and md:
                 start_idx = mo.end()
                 end_idx = md.start()
                 if start_idx < end_idx:
                     mat_text = texto_limpo[start_idx:end_idx].strip()
-                    linhas_limpas = [l.strip().lstrip('-').strip() for l in mat_text.split('\n') if len(l.strip()) >= 2 and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para']]
-                    if linhas_limpas: materiais = " | ".join(linhas_limpas)
+                    linhas_limpas = [
+                        l.strip().lstrip('-').strip()
+                        for l in mat_text.split('\n')
+                        if len(l.strip()) >= 2
+                        and l.lower() not in ['e', 'e:', 'e -', 'e,', 'para', 'levar para']
+                    ]
+                    if linhas_limpas:
+                        materiais = " | ".join(linhas_limpas)
 
-    if not destino and unidade: destino = unidade
-    if not origem and destino: origem = "ESCRITÓRIO"
+    # Se o texto não trouxe a unidade mas o destino/origem é uma unidade conhecida,
+    # ela também pode completar o nome resumido da obra.
+    if not unidade:
+        unidade = identificar_unidade_empresa(destino) or identificar_unidade_empresa(origem)
 
+    if not destino and unidade:
+        destino = unidade
+    if not origem and destino:
+        origem = "ESCRITÓRIO"
+
+    origem = canonicalizar_ponto_rota(origem)
+    destino = canonicalizar_ponto_rota(destino)
+
+    short_name = (
+        f"{num} - {unidade}" if (num and unidade)
+        else num if num
+        else unidade if unidade
+        else titulo[:25] + "..."
+    )
+
+    # Regra operacional mantida a pedido da equipe: materiais destinados ao
+    # SEBRAE ficam no escritório para o Soares.
     if "SEBRAE" in destino or "SEBRAE" in short_name:
         if destino and destino not in ["ESCRITÓRIO"]:
             destino = "ESCRITÓRIO"
@@ -5943,8 +6075,8 @@ def alvo_endereco_trello(descricao, origem, destino):
 
     # Se apenas uma ponta é externa, um endereço genérico do cartão normalmente
     # pertence justamente a essa ponta; a unidade própria já tem endereço fixo.
-    origem_propria = normalizar_local(origem) in UNIDADES_PROPRIAS
-    destino_proprio = normalizar_local(destino) in UNIDADES_PROPRIAS
+    origem_propria = canonicalizar_ponto_rota(origem) in UNIDADES_PROPRIAS
+    destino_proprio = canonicalizar_ponto_rota(destino) in UNIDADES_PROPRIAS
     if origem_propria and not destino_proprio:
         return "destino"
     if destino_proprio and not origem_propria:
@@ -6023,7 +6155,7 @@ def sincronizar_demandas(manual=False, forcar=False):
                             {"apelido": local_alvo, "end": endereco_card, "lat": lat, "lon": lon},
                         )
         
-        tc_val = 20 if origem not in UNIDADES_PROPRIAS else 10
+        tc_val = 20 if canonicalizar_ponto_rota(origem) not in UNIDADES_PROPRIAS else 10
         te_val = 10
         if not st.session_state.demandas.empty and c['id'] in st.session_state.demandas['id'].values:
             linha_antiga = st.session_state.demandas[st.session_state.demandas['id'] == c['id']].iloc[0]
@@ -7313,11 +7445,28 @@ with tab_roteiro:
                 if operacionais_passadas:
                     ultima_operacional = operacionais_passadas[-1]
                     current_point = ultima_operacional['destino']
-                    try:
-                        h, m = map(int, str(ultima_operacional['saida']).split(':'))
-                        current_time_tsp = h * 60 + m
-                    except Exception:
-                        pass
+
+                    # Para uma parada já concluída, o relógio do recálculo parte da
+                    # conclusão REAL do Trello/histórico, não do horário planejado.
+                    # Isso é essencial perto das 17h: se Davi concluiu às 17:08,
+                    # preservamos essa conclusão e nenhuma nova parada é criada.
+                    conclusoes_reais_ultima = []
+                    for _acao_real, _tarefa_real in ultima_operacional.get('actions', []) or []:
+                        _id_real = str(_tarefa_real.get('id', ''))
+                        _hora_real = dict_concluidos_torre.get(_id_real)
+                        if _hora_real:
+                            try:
+                                conclusoes_reais_ultima.append(parse_time_to_mins(str(_hora_real)))
+                            except Exception:
+                                pass
+                    if conclusoes_reais_ultima:
+                        current_time_tsp = max(conclusoes_reais_ultima)
+                    else:
+                        try:
+                            h, m = map(int, str(ultima_operacional['saida']).split(':'))
+                            current_time_tsp = h * 60 + m
+                        except Exception:
+                            pass
                 else:
                     current_point = ponto_saida
                     current_time_tsp = max(current_time_tsp, parse_time_to_mins(HORA_PREPARACAO_FIM))
@@ -7347,8 +7496,16 @@ with tab_roteiro:
             for p in pontos_necessarios:
                 alvo = p
                 if alvo not in locais_db:
+                    # Primeiro compara pela mesma inteligência de aliases usada no
+                    # Trello. Assim um endereço salvo como "CONDOMÍNIO COLISEU" pode
+                    # atender o ponto canônico "COLISEU", por exemplo.
+                    encontrado = next(
+                        (loc for loc in locais_db.keys() if canonicalizar_ponto_rota(loc) == p),
+                        None,
+                    )
                     p_sem_acento = remover_acentos(p)
-                    encontrado = next((loc for loc in locais_db.keys() if remover_acentos(loc) == p_sem_acento), None)
+                    if not encontrado:
+                        encontrado = next((loc for loc in locais_db.keys() if remover_acentos(loc) == p_sem_acento), None)
                     if not encontrado:
                         matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.8)
                         if matches: encontrado = matches[0]
@@ -7415,33 +7572,97 @@ with tab_roteiro:
             current_time = current_time_tsp
             lunch_taken = any(s.get('type') == 'lunch' for s in past_route_steps)
 
+            def _registrar_adiadas(tarefas):
+                existentes = {str(t.get('id', '')) for t in st.session_state['demandas_adiadas']}
+                for tarefa in tarefas:
+                    tarefa_id = str(tarefa.get('id', ''))
+                    if tarefa_id and tarefa_id not in existentes:
+                        st.session_state['demandas_adiadas'].append(tarefa)
+                        existentes.add(tarefa_id)
+
+            def _avaliar_candidato_expediente(ponto):
+                """Simula a próxima parada e reserva o retorno à base até 17h."""
+                dist, dur_api = get_dist_dur_bruto(current, ponto)
+                dur = ajustar_tempo_deslocamento_operacional(dist, dur_api, current_time)
+                arr = current_time + dur
+                pausa_consumida = lunch_taken
+
+                if current_time <= 12 * 60 and arr > 12 * 60 and not pausa_consumida:
+                    arr = max(arr + 60, 13 * 60)
+                    pausa_consumida = True
+                if 12 * 60 <= arr < 13 * 60 and not pausa_consumida:
+                    arr = 13 * 60
+                    pausa_consumida = True
+
+                entregas = [t for t in carrying if t['Destino'] == ponto]
+                coletas = [t for t in unpicked if t['Origem'] == ponto]
+                if not entregas and not coletas:
+                    return None
+
+                servico = estimar_tempo_parada(ponto, entregas, coletas)
+                fim = arr + servico
+                if arr < 12 * 60 <= fim and not pausa_consumida:
+                    fim += 60
+                    pausa_consumida = True
+
+                if fim > LIMITE_EXPEDIENTE_DAVI_MIN:
+                    return None
+
+                if retornar_base and ponto != ponto_saida:
+                    d_volta, dur_volta_api = get_dist_dur_bruto(ponto, ponto_saida)
+                    dur_volta = ajustar_tempo_deslocamento_operacional(d_volta, dur_volta_api, fim)
+                    if fim + dur_volta > LIMITE_EXPEDIENTE_DAVI_MIN:
+                        return None
+
+                return dist, dur_api, dur
+
             while unpicked or carrying:
-                if current_time >= 15 * 60 + 30: 
-                    for t in [t for t in unpicked if t['Peso'] < 4]: unpicked.remove(t); st.session_state['demandas_adiadas'].append(t)
+                if current_time >= 15 * 60 + 30:
+                    baixa_prioridade = [t for t in unpicked if t['Peso'] < 4]
+                    for t in baixa_prioridade:
+                        unpicked.remove(t)
+                    _registrar_adiadas(baixa_prioridade)
+
+                # Se o relógio entrou no almoço, a pausa acontece antes de escolher
+                # a próxima parada. Isso deixa a simulação de viabilidade consistente.
+                if 12 * 60 <= current_time < 13 * 60 and not lunch_taken:
+                    route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
+                    current_time = 13 * 60
+                    lunch_taken = True
 
                 candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
-                if not candidates: break
+                if not candidates:
+                    break
+
+                avaliacoes = {p: _avaliar_candidato_expediente(p) for p in candidates}
+                candidates_viaveis = {p for p, avaliacao in avaliacoes.items() if avaliacao is not None}
+
+                if not candidates_viaveis:
+                    # Nada restante cabe no expediente. Não cria trecho para depois
+                    # das 17h; as demandas ficam pendentes para o planejamento seguinte.
+                    _registrar_adiadas(list(unpicked) + list(carrying))
+                    unpicked.clear()
+                    carrying.clear()
+                    break
 
                 best_point = None
                 while ordem_otimizada:
                     ponto_planejado = ordem_otimizada.pop(0)
-                    if ponto_planejado in candidates:
+                    if ponto_planejado in candidates_viaveis:
                         best_point = ponto_planejado
                         break
 
                 if best_point is None:
-                    best_point = min(candidates, key=lambda p: pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)[0])
+                    best_point = min(
+                        candidates_viaveis,
+                        key=lambda p: pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)[0],
+                    )
 
                 # O trecho vem da matriz OSRM. A validação operacional aplica apenas
                 # um piso realista para deslocamentos urbanos, sem depender de API paga.
                 best_dist, best_dur_api = get_dist_dur_bruto(current, best_point)
                 best_dur = ajustar_tempo_deslocamento_operacional(best_dist, best_dur_api, current_time)
 
-                if 12*60 <= current_time < 13*60 and not lunch_taken:
-                    route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
-                    current_time = 13 * 60
-                    lunch_taken = True
-                    
                 arr_time = current_time + best_dur
                 
                 if current_time <= 12*60 and arr_time > 12*60 and not lunch_taken:
@@ -7496,12 +7717,19 @@ with tab_roteiro:
                     current_time = fim_almoco
                     lunch_taken = True
 
+            st.session_state['retorno_omitido_expediente'] = False
             if retornar_base and current != ponto_saida:
                 d, dur_api = get_dist_dur_bruto(current, ponto_saida)
                 dur = ajustar_tempo_deslocamento_operacional(d, dur_api, current_time)
-                total_km += d
-                route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "travel_mins_api": dur_api, "chegada": format_time(current_time + dur), "saida": format_time(current_time + dur), "actions": []})
-                current_time += dur
+                chegada_base = current_time + dur
+                if current_time < LIMITE_EXPEDIENTE_DAVI_MIN and chegada_base <= LIMITE_EXPEDIENTE_DAVI_MIN:
+                    total_km += d
+                    route_steps_new.append({"type": "return", "destino": ponto_saida, "dist": d, "travel_mins": dur, "travel_mins_api": dur_api, "chegada": format_time(chegada_base), "saida": format_time(chegada_base), "actions": []})
+                    current_time = chegada_base
+                else:
+                    # Pode acontecer quando uma conclusão REAL já foi registrada após
+                    # as 17h. Preservamos a conclusão, mas não inventamos nova rota.
+                    st.session_state['retorno_omitido_expediente'] = True
 
             route_steps = past_route_steps + route_steps_new
             route_steps = consolidar_coletas_base_na_preparacao(
@@ -7583,7 +7811,7 @@ with tab_roteiro:
         # Qualquer COLETA arrastada para a base vira PREPARAÇÃO e nunca uma
         # parada operacional separada.
 
-        if st.session_state.get('demandas_adiadas'): st.warning(f"⚠️ **Capacidade Atingida:** {len(st.session_state['demandas_adiadas'])} demanda(s) com prazo folgado foi(ram) deixada(s) para amanhã.")
+        if st.session_state.get('demandas_adiadas'): st.warning(f"⏰ **Limite do expediente:** {len(st.session_state['demandas_adiadas'])} demanda(s) ficou(ram) para o próximo planejamento por prioridade/capacidade ou por não caber(em) até 17h.")
         
         df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
@@ -7800,8 +8028,10 @@ with tab_roteiro:
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
             st.success(f"📍 **Planejamento Original (Se saísse no horário):** Término às {horario_base_fim}.")
-            if final_dyn_min <= 17 * 60: st.info(f"🟢 **Previsão Real Atualizada:** Término às {horario_dyn_fim} (Dentro do expediente).")
-            else: st.warning(f"⚠️ **Previsão Real Atualizada:** Término às {horario_dyn_fim} (Vai gerar hora extra!).")
+            if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
+                st.info(f"🟢 **Previsão Real Atualizada:** Término às {horario_dyn_fim} (Dentro do expediente).")
+            else:
+                st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
 
             st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km")
 
