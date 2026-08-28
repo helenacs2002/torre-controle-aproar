@@ -138,6 +138,8 @@ def aplicar_estilo_customizado():
         div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div { background-color: rgba(13, 16, 37, 0.8) !important; border: 1px solid rgba(64,116,146,.3) !important; color: #e4e8f4 !important; border-radius: 8px !important; transition: border-color 0.2s; }
         div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within { border-color: #2563eb !important; box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3) !important; }
         [data-testid="stDataFrame"] { background-color: rgba(18, 21, 48, 0.6) !important; border: 1px solid rgba(64,116,146,.2) !important; border-radius: 12px !important; overflow: hidden; }
+        /* Folium/Leaflet deve ocupar toda a coluna; evita o bloco escuro sobrando à direita. */
+        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe { width: 100% !important; max-width: 100% !important; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #070913; }
         ::-webkit-scrollbar-thumb { background: #2563eb; border-radius: 4px; }
@@ -2655,6 +2657,7 @@ def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto, material_fot
 # ESTADO PERSISTENTE DOS COMPROVANTES DO DAVI
 # Mantém fotos/recebedor/finalização mesmo quando o swipe troca a demanda.
 # =====================================================================
+@st.cache_resource(show_spinner=False)
 def garantir_tabela_comprovantes_davi():
     execute_db(
         """
@@ -2672,6 +2675,38 @@ def garantir_tabela_comprovantes_davi():
         )
         """
     )
+    return True
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def carregar_resumo_comprovantes_davi(data_rota):
+    """Resumo leve para a Torre: não transfere o campo arquivo/foto em cada rerun."""
+    estados = {}
+    try:
+        linhas = fetch_all(
+            """
+            SELECT demanda_id, MAX(recebedor) AS recebedor, COUNT(*) AS qtd_fotos,
+                   BOOL_OR(finalizado) AS finalizado
+            FROM comprovantes_entrega_davi
+            WHERE data_rota = :data
+            GROUP BY demanda_id
+            """,
+            {"data": data_rota},
+        )
+    except Exception:
+        return estados
+    for linha in linhas:
+        m = linha._mapping if hasattr(linha, "_mapping") else linha
+        demanda_id = str(m["demanda_id"] or "")
+        chave = _nome_seguro_comprovante(demanda_id or "SEM-ID", 40)
+        qtd = int(m["qtd_fotos"] or 0)
+        estados[chave] = {
+            "recebedor": str(m["recebedor"] or ""),
+            "fotos": [None] * qtd,
+            "finalizado": bool(m["finalizado"]),
+            "input_version": 0,
+        }
+    return estados
 
 
 def carregar_comprovantes_davi(data_rota):
@@ -2731,6 +2766,10 @@ def registrar_foto_comprovante_davi(data_rota, tarefa, recebedor, arquivo, tipo_
             "tipo_foto": str(tipo_foto or "Foto"),
         },
     )
+    try:
+        carregar_resumo_comprovantes_davi.clear()
+    except Exception:
+        pass
 
 
 def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
@@ -2746,6 +2785,10 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
             "demanda_id": str(demanda_id or ""),
         },
     )
+    try:
+        carregar_resumo_comprovantes_davi.clear()
+    except Exception:
+        pass
 
 
 # =====================================================================
@@ -3695,7 +3738,7 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("SV ELÉTRICA MARACANAÚ", "Av. Dr. Mendel Steinbruch, 6340 - Aracapé, Fortaleza - CE, 60765-242"),
 ]
 
-SCHEMA_APP_VERSION = "2026-08-28-v12"
+SCHEMA_APP_VERSION = "2026-08-28-v13"
 
 @st.cache_resource(show_spinner=False)
 def inicializar_bd():
@@ -3788,34 +3831,44 @@ def inicializar_bd():
 
     return True
 
-# Garante a inicialização segura do banco Supabase
-try:
-    inicializar_bd()
-    if "rota_gerada" not in st.session_state or not st.session_state.get("rota_gerada"):
-        res_rota = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-        if res_rota:
-            st.session_state['route_steps'] = json.loads(res_rota[0])
-            st.session_state['locais_dict'] = json.loads(res_rota[1])
-            st.session_state['geometria_rota'] = json.loads(res_rota[2])
-            st.session_state['enderecos_dict'] = json.loads(res_rota[3])
-            st.session_state['total_km'] = res_rota[4]
-            st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — rota viária"
-            st.session_state['horario_matriz_rota'] = res_rota[6] or ""
-            if st.session_state['route_steps']:
-                st.session_state['p_saida'] = st.session_state['route_steps'][0]['destino']
-                h, m = map(int, st.session_state['route_steps'][-1]['saida'].split(':'))
+# A interface não deve esperar DDL/migrações nem a leitura da rota antes de aparecer.
+# O banco já é persistente no Supabase; a rota salva é carregada somente quando o
+# módulo Roteiro realmente é aberto. Isso deixa a navegação disponível imediatamente.
+def carregar_rota_salva_para_sessao(data_rota):
+    if st.session_state.get("rota_gerada") and st.session_state.get("data_rota") == data_rota:
+        return True
+    try:
+        res_rota = fetch_one(
+            "SELECT json_route, json_locais, json_geometria, json_enderecos, total_km, fonte_matriz, horario_matriz "
+            "FROM rota_ativa WHERE id = 1 AND data_rota = :data",
+            {"data": data_rota},
+        )
+        if not res_rota:
+            return False
+        st.session_state['route_steps'] = json.loads(res_rota[0] or '[]')
+        st.session_state['locais_dict'] = json.loads(res_rota[1] or '{}')
+        st.session_state['geometria_rota'] = json.loads(res_rota[2] or '[]')
+        st.session_state['enderecos_dict'] = json.loads(res_rota[3] or '{}')
+        st.session_state['total_km'] = float(res_rota[4] or 0)
+        st.session_state['fonte_matriz_rota'] = res_rota[5] or "OSRM — rota viária"
+        st.session_state['horario_matriz_rota'] = res_rota[6] or ""
+        if st.session_state['route_steps']:
+            st.session_state['p_saida'] = st.session_state['route_steps'][0].get('destino', 'ESCRITÓRIO')
+            _ultima_saida = str(st.session_state['route_steps'][-1].get('saida', '') or '')
+            try:
+                h, m = map(int, _ultima_saida.split(':')[:2])
                 st.session_state['horario_conclusao_min'] = h * 60 + m
-            # Rotas viárias normalmente têm dezenas/centenas de pontos. Se o
-            # fallback salvo contiver apenas os pontos das paradas, não o tratamos
-            # como traçado viário real ao reabrir o aplicativo.
-            _geom_carregada = st.session_state.get('geometria_rota') or []
-            _passos_carregados = st.session_state.get('route_steps') or []
-            st.session_state['geometria_viaria'] = len(_geom_carregada) > max(6, len(_passos_carregados) + 3)
-            st.session_state['rota_gerada'] = True
-            st.session_state['data_rota'] = DATA_REF_ROTA_STR
-except:
-    st.error("⚠️ Atenção: Não foi possível conectar ao Banco de Dados Supabase. Verifique se as credenciais estão corretas nos Secrets do Streamlit.")
-    st.stop()
+            except Exception:
+                pass
+        _geom_carregada = st.session_state.get('geometria_rota') or []
+        _passos_carregados = st.session_state.get('route_steps') or []
+        st.session_state['geometria_viaria'] = len(_geom_carregada) > max(6, len(_passos_carregados) + 3)
+        st.session_state['rota_gerada'] = True
+        st.session_state['data_rota'] = data_rota
+        return True
+    except Exception as erro:
+        st.session_state['_erro_carregar_rota'] = str(erro)
+        return False
 
 # =====================================================================
 # LÓGICA DE EXTRAÇÃO E AUTOMAÇÃO DO TRELLO
@@ -6831,6 +6884,27 @@ try:
     st.markdown(f'<div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;"><img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;"><h1 style="margin: 0; padding: 0; line-height: 1.2; color: #e4e8f4;">TORRE DE CONTROLE LOGÍSTICO</h1></div>', unsafe_allow_html=True)
 except: st.title("🚚 TORRE DE CONTROLE LOGÍSTICO")
 
+# NAVEGAÇÃO PRIMEIRO: nenhuma consulta de rede/banco deve bloquear a troca de módulo.
+MODULOS_PRINCIPAIS = [
+    "🗺️ Roteiro do Davi",
+    "📡 Rastreador ao vivo",
+    "📦 Demandas ativas",
+    "📋 Histórico e concluídos",
+    "📍 Endereços",
+    "🚗 Frota e custos",
+]
+if hasattr(st, "segmented_control"):
+    modulo_principal = st.segmented_control(
+        "Módulo", MODULOS_PRINCIPAIS, default=MODULOS_PRINCIPAIS[0],
+        key="modulo_principal", label_visibility="collapsed",
+    )
+else:
+    modulo_principal = st.radio(
+        "Módulo", MODULOS_PRINCIPAIS, index=0, horizontal=True,
+        key="modulo_principal", label_visibility="collapsed",
+    )
+modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
+
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
@@ -6839,38 +6913,12 @@ with st.sidebar:
     if st.session_state.get("_ultima_rotina_auto"):
         st.caption(f"🔄 Trello e rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
     
-    # Atualiza o Trello ao vivo a cada 2 minutos enquanto o app estiver aberto.
-    # A leitura é forçada para não depender de um cache antigo do Supabase.
-    # Depois da sincronização, um rerun completo dispara o recálculo automático da rota.
+    # A interface não executa mais Trello/rastreador/Teams em loop no thread da página.
+    # Isso era a principal causa de cliques em módulos ficarem aguardando. O cron do
+    # Supabase continua mantendo o cache; a tela só lê/atualiza quando necessário.
     if "ultima_sincronizacao" not in st.session_state:
-        st.session_state.ultima_sincronizacao = 0
-        # Primeiro carregamento usa a cópia do Supabase. O quadro completo só é
-        # consultado pelo ciclo de 2 minutos ou pelo botão de sincronização manual.
-        if sincronizar_demandas(forcar=False):
-            st.session_state["_recalcular_rota_automatico"] = True
-    
-    if hasattr(st, "fragment"):
-        @st.fragment(run_every="30s")
-        def _loop_operacoes():
-            # O fragmento é executado imediatamente quando a página abre. Na versão
-            # anterior isso disparava uma varredura completa de Trello + histórico antes
-            # mesmo de o primeiro quadro aparecer. A primeira execução apenas arma o ciclo;
-            # a automação normal começa no próximo tick (30 s).
-            if not st.session_state.get("_loop_operacoes_iniciado"):
-                st.session_state["_loop_operacoes_iniciado"] = True
-                return
-
-            tempo_desde_sync = time.time() - st.session_state.get("ultima_sincronizacao", 0)
-            if tempo_desde_sync >= INTERVALO_TRELLO_SEGUNDOS:
-                if sincronizar_demandas(forcar=True):
-                    # Agora o cache já contém a leitura nova; registra baixas antes de recalcular.
-                    loop_automacoes_background()
-                    st.session_state["_recalcular_rota_automatico"] = True
-                    st.session_state["_ultima_rotina_auto"] = datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
-                    st.rerun()
-            else:
-                loop_automacoes_background()
-        _loop_operacoes()
+        st.session_state.ultima_sincronizacao = time.time()
+    st.caption("⚡ Navegação rápida ativa • sincronização pesada fora do carregamento da tela")
 
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
@@ -6900,30 +6948,6 @@ estrategia = st.session_state.get("cfg_estrategia_rota", "⚖️ Equilibrada")
 retornar_base = st.session_state.get("cfg_retornar_base", True)
 
 if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
-
-MODULOS_PRINCIPAIS = [
-    "🗺️ Roteiro do Davi",
-    "📡 Rastreador ao vivo",
-    "📦 Demandas ativas",
-    "📋 Histórico e concluídos",
-    "📍 Endereços",
-    "🚗 Frota e custos",
-]
-
-# st.tabs executa o conteúdo de TODAS as abas, inclusive as ocultas. Isso fazia o
-# rastreador, a frota e o histórico consultarem rede/banco antes de o Roteiro abrir.
-# A navegação abaixo é realmente sob demanda: só o módulo escolhido é executado.
-if hasattr(st, "segmented_control"):
-    modulo_principal = st.segmented_control(
-        "Módulo", MODULOS_PRINCIPAIS, default=MODULOS_PRINCIPAIS[0],
-        key="modulo_principal", label_visibility="collapsed",
-    )
-else:
-    modulo_principal = st.radio(
-        "Módulo", MODULOS_PRINCIPAIS, index=0, horizontal=True,
-        key="modulo_principal", label_visibility="collapsed",
-    )
-modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
 
 if modulo_principal == "📡 Rastreador ao vivo":
     st.subheader("📡 Rastreador ao vivo — Protege Express")
@@ -7620,7 +7644,10 @@ if modulo_principal == "🚗 Frota e custos":
         )
 
 if modulo_principal == "🗺️ Roteiro do Davi":
-    if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR): st.session_state['rota_gerada'] = False
+    if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR):
+        st.session_state['rota_gerada'] = False
+    if not st.session_state.get('rota_gerada', False):
+        carregar_rota_salva_para_sessao(DATA_REF_ROTA_STR)
 
     df_ativos = st.session_state.demandas.copy()
     ajustes_manuais = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
@@ -7655,11 +7682,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     _destino[_id_card] = _rotulo
 
         _dados_rotulos_cache = {}
-        try:
-            _dados_rotulos_cache = obter_dados_trello() or {}
-            _mesclar_rotulos(_mapa_rotulos_trello, construir_mapa_rotulos_obras_trello(_dados_rotulos_cache))
-        except Exception:
-            pass
+        # Sincronizar_demandas já constrói este mapa. Só lê o cache completo do Trello
+        # quando a sessão ainda não possui mapa de rótulos, evitando varrer >1.500 cartões
+        # a cada clique/rerun do roteiro.
+        if not _mapa_rotulos_trello:
+            try:
+                _dados_rotulos_cache = obter_dados_trello() or {}
+                _mesclar_rotulos(_mapa_rotulos_trello, construir_mapa_rotulos_obras_trello(_dados_rotulos_cache))
+            except Exception:
+                pass
 
         # Se qualquer tarefa salva ainda aparece apenas como unidade (ex.:
         # HORIZONTE/BARRA DO CEARÁ), buscamos o quadro diretamente uma vez.
@@ -8323,7 +8354,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         # Comprovantes da rota: usados pela Torre para mostrar status e permitir reabertura.
         try:
             garantir_tabela_comprovantes_davi()
-            comprovantes_torre = carregar_comprovantes_davi(DATA_REF_ROTA_STR)
+            comprovantes_torre = carregar_resumo_comprovantes_davi(DATA_REF_ROTA_STR)
         except Exception:
             comprovantes_torre = {}
         
@@ -8813,7 +8844,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
                 ).add_to(m)
 
-            st_folium(m, width=450, height=550, returned_objects=[])
+            st_folium(
+                m, height=540, use_container_width=True, returned_objects=[],
+                key=f"mapa_rota_{DATA_REF_ROTA_STR}",
+            )
             legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
             st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
