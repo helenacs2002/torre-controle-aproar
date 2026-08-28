@@ -5796,9 +5796,11 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
     penalidade_retorno = 0.0
     if is_dropoff and pendentes_mesmo_destino:
         urgencia_pendente = max([peso_valido(t) for t in pendentes_mesmo_destino] + [1.0])
+        # Na rota Equilibrada, uma entrega de hoje/vencida também pode justificar
+        # uma visita antes de esperar outra coleta futura para o mesmo destino.
         entrega_urgente_isolada = (
-            "Urgências" in estrategia
-            and urgencia_entrega >= 4
+            ("Urgências" in estrategia or "Equilibrada" in estrategia)
+            and urgencia_entrega >= 5
             and urgencia_entrega > urgencia_pendente
         )
 
@@ -5829,8 +5831,28 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
             prioridade *= 2.0
         if is_pickup:
             prioridade *= 3.0 if coleta_completa_carga else 1.5
+        urgencia_local = max(urgencia_coleta, urgencia_entrega)
         if "Urgências" in estrategia:
-            prioridade *= max(urgencia_coleta, urgencia_entrega) ** 2
+            prioridade *= max(urgencia_local, 1.0) ** 2.2
+        elif "Equilibrada" in estrategia:
+            # Equilibrada = prazo + logística. Até a versão anterior ela quase não
+            # considerava urgência nesta decisão local, permitindo que cartões
+            # FUTURO passassem na frente de uma demanda HOJE. O multiplicador é
+            # forte para prazo crítico, mas ainda divide o custo de deslocamento,
+            # preservando a eficiência geográfica entre alternativas equivalentes.
+            if urgencia_local >= 7:
+                fator_prazo = 16.0
+            elif urgencia_local >= 6:
+                fator_prazo = 12.0
+            elif urgencia_local >= 5:
+                fator_prazo = 8.0
+            elif urgencia_local >= 4:
+                fator_prazo = 2.4
+            elif urgencia_local >= 3:
+                fator_prazo = 1.35
+            else:
+                fator_prazo = 1.0
+            prioridade *= fator_prazo
         elif "Descarregar" in estrategia and is_dropoff:
             prioridade *= 5.0
 
@@ -5939,7 +5961,27 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         if not pontos:
             return 0.0
         menor_tempo = min(get_dist_dur(atual, p)[1] for p in pontos)
-        return menor_tempo * 0.35 + len(pontos) * 0.8
+        base = menor_tempo * 0.35 + len(pontos) * 0.8
+
+        # Evita que o beam search descarte cedo justamente os caminhos que já
+        # atenderam as demandas mais urgentes. Estados com HOJE/VENCIDA ainda não
+        # entregues carregam uma "dívida de prazo" adicional.
+        if "Equilibrada" in estrategia or "Urgências" in estrategia:
+            divida_prazo = 0.0
+            for i, peso in enumerate(pesos):
+                bit = 1 << i
+                if entregues_mask & bit:
+                    continue
+                if peso >= 7:
+                    divida_prazo += 150.0
+                elif peso >= 6:
+                    divida_prazo += 110.0
+                elif peso >= 5:
+                    divida_prazo += 75.0
+                elif peso >= 3:
+                    divida_prazo += 8.0
+            base += divida_prazo
+        return base
 
     mascara_pre_coletadas = 0
     for indice, tarefa in enumerate(tarefas):
@@ -6035,10 +6077,24 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 tempo_decorrido = max(0.0, nova_hora - horario_inicio)
                 if "Menor Distância" not in estrategia:
                     for i in ids_entrega:
+                        peso_i = float(pesos[i])
                         if "Urgências" in estrategia:
-                            fator_urgencia = max(0.0, pesos[i] - 2.0) * 0.75
+                            fator_urgencia = max(0.0, peso_i - 2.0) * 1.15
+                        elif "Equilibrada" in estrategia:
+                            # Custo por adiar uma entrega: quanto mais crítico o
+                            # prazo, mais caro é deixá-la para o fim da rota.
+                            if peso_i >= 7:
+                                fator_urgencia = 2.40
+                            elif peso_i >= 6:
+                                fator_urgencia = 1.85
+                            elif peso_i >= 5:
+                                fator_urgencia = 1.30
+                            elif peso_i >= 3:
+                                fator_urgencia = 0.18
+                            else:
+                                fator_urgencia = 0.0
                         else:
-                            fator_urgencia = {5: 0.65, 4: 0.32, 3: 0.10}.get(int(pesos[i]), 0.0)
+                            fator_urgencia = {7: 1.20, 6: 0.95, 5: 0.70, 4: 0.40, 3: 0.10}.get(int(peso_i), 0.0)
                         incremento += tempo_decorrido * fator_urgencia
 
                 carga_apos = (novas_coletadas & ~novas_entregues).bit_count()
@@ -6088,12 +6144,38 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         return list(melhor["ordem"])
 
     # Se nem todas as demandas couberem até 17h, devolve a melhor sequência
-    # PARCIAL possível. Priorizamos quantidade entregue e evitamos terminar o
-    # planejamento com materiais apenas coletados e ainda sem entrega.
+    # PARCIAL possível. Na Equilibrada, prazo vem antes de simplesmente maximizar
+    # a quantidade de cartões: não faz sentido concluir três FUTURO e deixar uma
+    # demanda HOJE de fora apenas porque as três eram geograficamente mais fáceis.
     if estados:
+        def _valor_prioridade_entregue(mask):
+            valor = 0.0
+            criticas = 0
+            vencidas = 0
+            for i, peso in enumerate(pesos):
+                if not (mask & (1 << i)):
+                    continue
+                if peso >= 7:
+                    valor += 180.0; vencidas += 1; criticas += 1
+                elif peso >= 6:
+                    valor += 130.0; criticas += 1
+                elif peso >= 5:
+                    valor += 100.0; criticas += 1
+                elif peso >= 3:
+                    valor += 16.0
+                elif peso >= 2:
+                    valor += 4.0
+                else:
+                    valor += 1.0
+            return vencidas, criticas, valor
+
         def chave_parcial(estado):
-            entregues_qtd = int(estado["entregues"]).bit_count()
+            entregues_mask = int(estado["entregues"])
+            entregues_qtd = entregues_mask.bit_count()
             carregadas_sem_entrega = int(estado["coletadas"] & ~estado["entregues"]).bit_count()
+            vencidas, criticas, valor_prazo = _valor_prioridade_entregue(entregues_mask)
+            if "Equilibrada" in estrategia or "Urgências" in estrategia:
+                return (-vencidas, -criticas, -valor_prazo, -entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
             return (-entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
         melhor_parcial = min(estados, key=chave_parcial)
         if melhor_parcial.get("ordem"):
@@ -6439,15 +6521,43 @@ def alvo_endereco_trello(descricao, origem, destino):
     return None
 
 def classificar_prioridade(due_str):
-    if not due_str: return 1, "Sem Prazo"
+    """Transforma o prazo do Trello em prioridade operacional da rota.
+
+    A estratégia Equilibrada precisa distinguir uma demanda apenas futura de uma
+    demanda que vence hoje — especialmente quando o horário-limite está próximo.
+    O número retornado é deliberadamente espaçado para que o otimizador consiga
+    respeitar prazo sem abandonar distância/tempo de deslocamento.
+    """
+    if not due_str:
+        return 1, "Sem Prazo"
     try:
-        due_date = converter_data_trello(due_str).date()
-        diff = (due_date - DATA_REF_ROTA_DATE).days
-        if diff < 0: return 5, "VENCIDA"
-        elif diff == 0: return 4, "HOJE"
-        elif diff <= 2: return 3, f"Em {diff} dias"
-        else: return 2, "Futuro"
-    except: return 1, "Sem Prazo"
+        due_local = converter_data_trello(due_str)
+        diff = (due_local.date() - DATA_REF_ROTA_DATE).days
+
+        if diff < 0:
+            return 7, "VENCIDA"
+
+        if diff == 0:
+            # Para o planejamento do próprio dia, considera também o relógio do
+            # Trello. Ex.: entrega hoje às 16h não pode ter o mesmo peso de uma
+            # demanda futura quando já são 14h.
+            if DATA_REF_ROTA_DATE == AGORA_REAL.date():
+                agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+                prazo_min = due_local.hour * 60 + due_local.minute
+                restante = prazo_min - agora_min
+                if restante <= 0:
+                    return 7, "VENCIDA"
+                if restante <= 120:
+                    return 6, "HOJE — prazo crítico"
+                if restante <= 240:
+                    return 5, "HOJE"
+            return 5, "HOJE"
+
+        if diff <= 2:
+            return 3, f"Em {diff} dias"
+        return 2, "Futuro"
+    except Exception:
+        return 1, "Sem Prazo"
 
 def converter_data_trello(valor):
     if not valor: return None
@@ -6928,7 +7038,12 @@ with st.sidebar:
     if st.button("🔄 Sincronizar manualmente (Trello)", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
             if sincronizar_demandas(manual=True, forcar=True):
-                st.success("✅ Trello sincronizado e demandas importadas!")
+                # A sincronização manual é uma ação explícita do operador; portanto,
+                # a rota deve incorporar imediatamente novos prazos/demandas. Isso
+                # não volta a pesar na inicialização porque só acontece após o clique.
+                st.session_state["_recalcular_rota_automatico"] = True
+                st.session_state["_mensagem_ajuste_rota"] = "✅ Trello sincronizado. A rota foi recalculada com os prazos atuais."
+                st.rerun()
     
     @fragmento_independente
     def controles_planejamento_rota():
@@ -6937,7 +7052,7 @@ with st.sidebar:
         st.divider()
         st.selectbox("🏁 Ponto de saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"], key="cfg_ponto_saida")
         estrategia_atual = st.selectbox("🎯 Estratégia da rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"], key="cfg_estrategia_rota")
-        st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Combina urgência e proximidade para tornar a rota mais lógica e eficiente.', '🏢 Foco em Descarregar': 'Prioriza as entregas para reduzir o volume de materiais transportados no veículo.', '⛽ Menor Distância': 'Prioriza a menor distância percorrida, com foco na economia de combustível.', '🚨 Priorizar Urgências': 'Prioriza as demandas vencidas ou programadas para hoje.'}[estrategia_atual] }*")
+        st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Prioriza primeiro os prazos críticos (vencidas/hoje) e, entre opções de prioridade semelhante, equilibra proximidade, tempo e carga.', '🏢 Foco em Descarregar': 'Prioriza as entregas para reduzir o volume de materiais transportados no veículo.', '⛽ Menor Distância': 'Prioriza a menor distância percorrida, com foco na economia de combustível.', '🚨 Priorizar Urgências': 'Dá peso máximo às demandas vencidas ou programadas para hoje.'}[estrategia_atual] }*")
         st.checkbox("Retornar à base no fim do dia", value=True, key="cfg_retornar_base")
 
     controles_planejamento_rota()
