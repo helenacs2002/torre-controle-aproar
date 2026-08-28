@@ -5954,18 +5954,25 @@ def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
 def extrair_dados_completos(texto, card_name):
     titulo = str(card_name or "")
 
-    # O título do Trello sempre carrega o número da obra. Priorizamos a forma
-    # "OBRA 086" (inclusive com 2/3 dígitos e zero à esquerda) e mantemos
-    # compatibilidade com códigos APR e os identificadores antigos de 4 dígitos.
+    # O identificador da obra deve ser preservado EXATAMENTE como aparece no
+    # título: não existe quantidade fixa de dígitos. Exemplos válidos: 086,
+    # 2546, 12, 10358, 2112.1 e códigos APR. Priorizamos o valor logo após
+    # a palavra OBRA; se ela não existir, aceitamos um identificador no início
+    # do título para não capturar números de bloco, endereço, quantidade etc.
     num_match = re.search(
-        r'(?i)\bOBRA\s*[-:#]?\s*(APR[A-Z0-9]+|\d{2,4}(?:\.\d+)?)\b',
+        r'(?i)\bOBRA\s*[-:#]?\s*(APR[A-Z0-9]+|\d+(?:\.\d+)?)\b',
         titulo,
     )
     if not num_match:
-        num_match = re.search(r'\b(APR[A-Z0-9]+|\d{3,4}(?:\.\d+)?)\b', titulo, re.IGNORECASE)
+        num_match = re.match(
+            r'(?i)^\s*[-:#]?\s*(APR[A-Z0-9]+|\d+(?:\.\d+)?)\b',
+            titulo,
+        )
     num = num_match.group(1).upper() if num_match else ""
 
-    # Ex.: "OBRA 086 - REFORMA FACHADA - BLOCO H - UNIFOR" -> "086 - UNIFOR".
+    # Exemplos:
+    # "OBRA 086 - REFORMA FACHADA - BLOCO H - UNIFOR" -> "086 - UNIFOR"
+    # "OBRA 2546 - ... - BARRA DO CEARÁ" -> "2546 - BARRA DO CEARÁ".
     unidade = identificar_unidade_empresa(titulo, permitir_contexto=True)
 
     origem, destino = "", ""
