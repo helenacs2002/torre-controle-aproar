@@ -1608,7 +1608,7 @@ def renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave):
         else:
             st.dataframe(gastos, use_container_width=True, hide_index=True)
 
-        st.markdown("**🛣️ Quilometragens do mês**")
+        st.markdown("**🛣️ Registros de quilometragem do mês**")
         if quilometragem.empty:
             st.info("Nenhuma quilometragem lançada no mês.")
         else:
@@ -2731,7 +2731,7 @@ if modo_url == "true":
     except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, HORA_INICIO_ROTA_DAVI
 
     if not res:
-        st.info("Nenhuma rota foi liberada pela Torre de Controle para hoje ainda. Aguarde a central calcular e tente atualizar a tela.")
+        st.info("Nenhuma rota foi liberada pela Torre de Controle para hoje ainda. Aguarde o cálculo da central e tente atualizar a tela.")
         st.stop()
 
     route_steps = json.loads(res[0])
@@ -4415,6 +4415,85 @@ def registrar_movimento_manual_rota(data_rota, route_steps, demanda_id, acao, de
     ajustes["ordem_por_local"] = ordem_por_local
     salvar_ajustes_manuais_rota(data_rota, ajustes)
     return True
+
+
+def aplicar_movimento_manual_route_steps_imediato(route_steps, demanda_id, acao, destino_alvo, indice_alvo, ponto_saida=""):
+    """Reflete o drag imediatamente na rota exibida.
+
+    O ajuste definitivo continua sendo aplicado ao DataFrame e ao otimizador no
+    recálculo seguinte. Esta função evita que a tela permaneça mostrando a rota
+    antiga entre o drop e esse recálculo: remove a ação da parada anterior e a
+    insere na parada escolhida, preservando as demais etapas.
+    """
+    demanda_id = str(demanda_id or "").strip()
+    acao = str(acao or "").upper().strip()
+    destino_alvo = canonicalizar_ponto_rota(destino_alvo)
+    if not route_steps or not demanda_id or acao not in {"COLETAR", "ENTREGAR"} or not destino_alvo:
+        return route_steps
+
+    chave = f"{demanda_id}|{acao}"
+    passos = []
+    acao_movida = None
+    indice_origem = None
+
+    for indice, step in enumerate(route_steps or []):
+        copia = dict(step)
+        if step.get("type") == "stop":
+            novas_acoes = []
+            for acao_step, tarefa_step in step.get("actions", []) or []:
+                if _chave_acao_rota(tarefa_step, acao_step) == chave and acao_movida is None:
+                    acao_movida = (acao_step, tarefa_step)
+                    indice_origem = indice
+                    continue
+                novas_acoes.append((acao_step, tarefa_step))
+            copia["actions"] = novas_acoes
+        passos.append(copia)
+
+    if acao_movida is None:
+        return route_steps
+
+    # Localiza a parada-alvo existente no próprio editor. A preparação é uma
+    # parada normal de destino igual à base e também pode receber COLETAS.
+    indice_destino = next(
+        (
+            i for i, step in enumerate(passos)
+            if step.get("type") == "stop"
+            and canonicalizar_ponto_rota(step.get("destino", "")) == destino_alvo
+        ),
+        None,
+    )
+    if indice_destino is None:
+        return route_steps
+
+    lista_alvo = list(passos[indice_destino].get("actions", []) or [])
+    try:
+        pos = max(0, min(int(indice_alvo), len(lista_alvo)))
+    except Exception:
+        pos = len(lista_alvo)
+    lista_alvo.insert(pos, acao_movida)
+    passos[indice_destino]["actions"] = lista_alvo
+
+    # Uma parada operacional que ficou sem ações após o movimento não deve
+    # continuar aparecendo no roteiro. Nunca remove preparação, almoço ou retorno.
+    base = canonicalizar_ponto_rota(ponto_saida)
+    resultado = []
+    for i, step in enumerate(passos):
+        if step.get("type") != "stop":
+            resultado.append(step)
+            continue
+        local = canonicalizar_ponto_rota(step.get("destino", ""))
+        eh_preparacao = (
+            local == base
+            and (
+                i == 0
+                or "preparacao" in remover_acentos(str(step.get("tempo_local_fonte", "") or "")).lower()
+            )
+        )
+        if not step.get("actions") and not eh_preparacao:
+            continue
+        resultado.append(step)
+
+    return resultado
 
 
 def construir_editor_arrastavel_rota(route_steps, ponto_saida, ajustes):
@@ -6587,7 +6666,7 @@ with st.sidebar:
     st.header("⚙️ Painel de operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     if st.session_state.get("_ultima_rotina_auto"):
-        st.caption(f"🔄 Trello + rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
+        st.caption(f"🔄 Trello e rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
     
     # Atualiza o Trello ao vivo a cada 2 minutos enquanto o app estiver aberto.
     # A leitura é forçada para não depender de um cache antigo do Supabase.
@@ -7148,7 +7227,11 @@ with tab_frota:
                     st.markdown(f"🏷️ **Preço médio por litro:** {media_litro}")
 
                 abastec_txt = f"{resumo['abastecimentos']} abastecimento" + ("s" if resumo['abastecimentos'] != 1 else "")
-                manut_txt = f"{resumo['manutencoes']} manutenção" + ("ões" if resumo['manutencoes'] != 1 else "")
+                manut_txt = (
+                    f"{resumo['manutencoes']} manutenção"
+                    if resumo['manutencoes'] == 1
+                    else f"{resumo['manutencoes']} manutenções"
+                )
                 st.caption(f"🧾 {abastec_txt}  •  🛠️ {manut_txt}")
 
                 if custo_total_frota > 0:
@@ -7303,7 +7386,7 @@ with tab_frota:
                         edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
                         save_df_to_db(edited_km_clean, "registro_km")
                         carregar_registro_km_df.clear()
-                        st.success("Quilometragens atualizadas na nuvem com sucesso!")
+                        st.success("Registros de quilometragem atualizados na nuvem com sucesso!")
                 else:
                     st.info("Nenhuma quilometragem registrada.")
 
@@ -7317,7 +7400,7 @@ with tab_frota:
                 "Inícios de rota": df_inicio,
                 "Paradas rastreadas": df_paradas_tbl,
                 "Abastecimentos e manutenção": df_abastecimentos_relatorio,
-                "Quilometragens": df_quilometragens_relatorio,
+                "Registros de quilometragem": df_quilometragens_relatorio,
             },
             "registros_da_frota", "registros",
         )
@@ -7372,8 +7455,27 @@ with tab_roteiro:
             )
             st.query_params.clear()
             if movimento_ok:
+                _rota_pos_movimento = aplicar_movimento_manual_route_steps_imediato(
+                    st.session_state.get('route_steps') or [],
+                    _mr_id, _mr_acao, _mr_destino, int(_mr_ordem or 0), ponto_saida,
+                )
+                _ajustes_pos_movimento = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                _rota_pos_movimento = consolidar_coletas_base_na_preparacao(
+                    _rota_pos_movimento, _ajustes_pos_movimento, ponto_saida
+                )
+                _rota_pos_movimento = aplicar_ordem_manual_route_steps(
+                    _rota_pos_movimento, _ajustes_pos_movimento
+                )
+                st.session_state['route_steps'] = _rota_pos_movimento
+                try:
+                    execute_db(
+                        "UPDATE rota_ativa SET json_route=:route WHERE id=1 AND data_rota=:data",
+                        {"route": json.dumps(_rota_pos_movimento, ensure_ascii=False), "data": DATA_REF_ROTA_STR},
+                    )
+                except Exception:
+                    pass
                 st.session_state["_recalcular_rota_automatico"] = True
-                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. A rota foi recalculada mantendo seu ajuste manual."
+                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. Roteiro, horários e mapa foram atualizados com o ajuste manual."
                 st.rerun()
         except Exception as _erro_movimento_rota:
             st.query_params.clear()
@@ -7463,6 +7565,11 @@ with tab_roteiro:
                         acao_salva == 'COLETAR'
                         and tarefa_id_salva
                         and tarefa_id_salva in ativos_por_id
+                        # Se a COLETA foi arrastada manualmente para outro local,
+                        # o ajuste atual prevalece sobre a preparação antiga salva.
+                        and canonicalizar_ponto_rota(
+                            ativos_por_id[tarefa_id_salva].get('Origem', '')
+                        ) == base_canonica
                     ):
                         ids_preparados_salvos_ativos.add(tarefa_id_salva)
 
@@ -8047,8 +8154,37 @@ with tab_roteiro:
                                 int(_evento_drag.get("ordem", 0) or 0), p_saida,
                             )
                             if _movimento_drag_ok:
+                                # Reflete a mudança imediatamente no roteiro atual, antes mesmo
+                                # do recálculo viário completo. Assim editor, cartões e rota não
+                                # ficam divergentes após o drop.
+                                _rota_pos_drag = aplicar_movimento_manual_route_steps_imediato(
+                                    route_steps,
+                                    _evento_drag.get("demanda_id", ""),
+                                    _evento_drag.get("acao", ""),
+                                    _evento_drag.get("destino", ""),
+                                    int(_evento_drag.get("ordem", 0) or 0),
+                                    p_saida,
+                                )
+                                _ajustes_pos_drag = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                                _rota_pos_drag = consolidar_coletas_base_na_preparacao(
+                                    _rota_pos_drag, _ajustes_pos_drag, p_saida
+                                )
+                                _rota_pos_drag = aplicar_ordem_manual_route_steps(
+                                    _rota_pos_drag, _ajustes_pos_drag
+                                )
+                                st.session_state["route_steps"] = _rota_pos_drag
+                                try:
+                                    execute_db(
+                                        "UPDATE rota_ativa SET json_route=:route WHERE id=1 AND data_rota=:data",
+                                        {
+                                            "route": json.dumps(_rota_pos_drag, ensure_ascii=False),
+                                            "data": DATA_REF_ROTA_STR,
+                                        },
+                                    )
+                                except Exception:
+                                    pass
                                 st.session_state["_recalcular_rota_automatico"] = True
-                                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. A rota foi recalculada mantendo seu ajuste manual."
+                                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. Roteiro, horários e mapa foram atualizados com o ajuste manual."
                                 st.rerun()
                             else:
                                 st.warning("Não foi possível aplicar esse movimento. Atualize a rota e tente novamente.")
