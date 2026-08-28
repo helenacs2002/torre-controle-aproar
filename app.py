@@ -122,6 +122,9 @@ def aplicar_estilo_customizado():
         }
         [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
         [data-testid="stSidebar"] { background-color: #0b0e1e !important; border-right: 1px solid rgba(64,116,146,.15) !important; }
+        /* A rota /davi usa uma página técnica do Streamlit; escondemos a navegação
+           multipágina nativa para manter apenas o menu corporativo da Torre. */
+        [data-testid="stSidebarNav"] { display: none !important; }
         [data-testid="stHeader"] { background-color: rgba(7, 9, 19, 0.8) !important; backdrop-filter: blur(8px); }
         /* Evita que a tela inteira escureça enquanto apenas um trecho é atualizado. */
         [data-stale="true"] { opacity: 1 !important; }
@@ -2118,6 +2121,12 @@ HORA_INICIO_ROTA_DAVI = "08:00"
 HORA_PREPARACAO_INICIO = "07:30"
 HORA_PREPARACAO_FIM = "08:00"
 
+# Precisa existir antes da renderização do App do Motorista. A rota /davi
+# encerra a execução com st.stop() antes de chegar ao bloco da Torre (PC).
+# Na V17 esta constante estava declarada somente depois do app mobile, causando
+# NameError ao montar o banner de ETA no celular.
+LIMITE_EXPEDIENTE_DAVI_MIN = 17 * 60
+
 def ajustar_tempo_deslocamento_operacional(dist_km, duracao_api_min, horario_partida_min=None):
     """Evita ETAs urbanos otimistas demais sem substituir a matriz viária.
 
@@ -2794,9 +2803,13 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
 # =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
+# Compatibilidade: o link antigo ?davi=true continua funcionando, mas o endereço
+# oficial do motorista agora é /davi. A página pages/davi.py executa este mesmo
+# arquivo com APROAR_DAVI_MODE=True sem depender de parâmetros visíveis na URL.
 modo_url = st.query_params.get("davi", "")
+modo_davi = bool(globals().get("APROAR_DAVI_MODE", False)) or modo_url == "true"
 
-if modo_url == "true":
+if modo_davi:
     st.markdown("""
         <style>
             [data-testid="stSidebar"] {display: none !important;}
@@ -2871,7 +2884,7 @@ if modo_url == "true":
     if erro_checkin_mobile:
         st.error(erro_checkin_mobile)
 
-    # No modo ?davi=true o Streamlit executa este bloco antes de chegar às
+    # No modo /davi o Streamlit executa este bloco antes de chegar às
     # funções de planejamento declaradas mais abaixo no arquivo. Portanto, não
     # podemos chamar atualizar_tempos_por_parada() diretamente aqui, pois ela
     # ainda não existe neste ponto da execução e causava NameError no app móvel.
@@ -3296,7 +3309,7 @@ if modo_url == "true":
                     f"✅ Marcada às {html_escape(checkin_etapa['hora'])} • toque para desfazer"
                     if checkin_etapa else f"☐ Marcar {rotulo_lembrete} como feita"
                 )
-                link_marcacao = html_escape(f"?davi=true&foco={i}&etapa={i}&feito={novo_estado}", quote=True)
+                link_marcacao = html_escape(f"/davi?foco={i}&etapa={i}&feito={novo_estado}", quote=True)
                 botao_feito = (
                     f"<a class='marcar-feita{classe_marcacao}' data-feita='{'1' if checkin_etapa else '0'}' "
                     f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
@@ -3407,7 +3420,8 @@ if modo_url == "true":
                 navegando = true;
                 try {
                     const url = new URL(window.top.location.href);
-                    url.searchParams.set('davi', 'true');
+                    url.pathname = '/davi';
+                    url.searchParams.delete('davi');
                     url.searchParams.set('foco', etapa);
                     url.searchParams.delete('etapa');
                     url.searchParams.delete('feito');
@@ -3415,7 +3429,7 @@ if modo_url == "true":
                     window.top.location.href = url.toString();
                 } catch (e) {
                     const link = document.createElement('a');
-                    link.href = `?davi=true&foco=${encodeURIComponent(etapa)}#comprovante`;
+                    link.href = `/davi?foco=${encodeURIComponent(etapa)}#comprovante`;
                     link.target = '_top';
                     document.body.appendChild(link);
                     link.click();
@@ -3606,10 +3620,8 @@ VELOCIDADE_MEDIA_KMH = 25.0
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
-# Expediente operacional do Davi: nenhuma NOVA etapa pode ser planejada para
-# ultrapassar este limite. Conclusões reais já registradas depois das 17h são
-# preservadas no histórico, mas não liberam novas paradas após o expediente.
-LIMITE_EXPEDIENTE_DAVI_MIN = 17 * 60
+# O limite do expediente é declarado junto às constantes do Davi, antes do
+# App do Motorista, para estar disponível tanto no mobile quanto na Torre (PC).
 
 # Nomes canônicos das unidades atendidas pela empresa. FIEC/CASA DA INDÚSTRIA
 # permanecem por compatibilidade com cadastros antigos já existentes no sistema.
@@ -7102,7 +7114,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
-    st.components.v1.html("""<script>function copyLink() { try { var tempInput = document.createElement("input"); tempInput.value = window.parent.location.origin + window.parent.location.pathname + "?davi=true"; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput); var btn = document.getElementById("btn"); btn.innerText = "✅ Copiado!"; btn.style.background = "linear-gradient(135deg, #16a34a, #15803d)"; btn.style.color = "white"; btn.style.border = "none"; setTimeout(() => { btn.innerText = "🔗 Copiar link do Davi"; btn.style.background = "transparent"; btn.style.color = "#8da0b8"; btn.style.border = "1px solid rgba(64,116,146,.35)"; }, 2500); } catch (err) { alert("Erro ao copiar."); } }</script><button id="btn" onclick="copyLink()" style="width:100%; padding:10px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:8px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer; transition: all 0.2s;">🔗 Copiar link do Davi</button>""", height=50)
+    st.components.v1.html("""<script>function copyLink() { try { var tempInput = document.createElement("input"); tempInput.value = window.parent.location.origin + "/davi"; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput); var btn = document.getElementById("btn"); btn.innerText = "✅ Copiado!"; btn.style.background = "linear-gradient(135deg, #16a34a, #15803d)"; btn.style.color = "white"; btn.style.border = "none"; setTimeout(() => { btn.innerText = "🔗 Copiar link do Davi"; btn.style.background = "transparent"; btn.style.color = "#8da0b8"; btn.style.border = "1px solid rgba(64,116,146,.35)"; }, 2500); } catch (err) { alert("Erro ao copiar."); } }</script><button id="btn" onclick="copyLink()" style="width:100%; padding:10px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:8px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer; transition: all 0.2s;">🔗 Copiar link do Davi</button>""", height=50)
     st.markdown("---")
 
     if st.button("🔄 Sincronizar manualmente (Trello)", use_container_width=True, type="primary"):
