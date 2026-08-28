@@ -3695,9 +3695,24 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("SV ELÉTRICA MARACANAÚ", "Av. Dr. Mendel Steinbruch, 6340 - Aracapé, Fortaleza - CE, 60765-242"),
 ]
 
+SCHEMA_APP_VERSION = "2026-08-28-v12"
+
 @st.cache_resource(show_spinner=False)
 def inicializar_bd():
-    """Prepara a estrutura do banco uma única vez por processo do aplicativo."""
+    """Prepara o banco sem repetir dezenas de DDLs a cada cold start do Streamlit."""
+    conn_db = get_conn()
+    with conn_db.session as s:
+        # Esta tabela pequena permite saber se as migrações desta versão já foram
+        # aplicadas no Supabase. Em reinicializações futuras fazemos só duas consultas.
+        s.execute(text("CREATE TABLE IF NOT EXISTS app_meta (chave TEXT PRIMARY KEY, valor TEXT)"))
+        versao = s.execute(
+            text("SELECT valor FROM app_meta WHERE chave='schema_version'")
+        ).fetchone()
+        if versao and str(versao[0]) == SCHEMA_APP_VERSION:
+            s.commit()
+            return True
+        s.commit()
+
     queries = [
         "CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)",
         "CREATE TABLE IF NOT EXISTS locais_removidos (apelido TEXT PRIMARY KEY)",
@@ -3728,7 +3743,6 @@ def inicializar_bd():
     ]
 
     # Uma única sessão/commit evita dezenas de viagens separadas até o Supabase.
-    conn_db = get_conn()
     with conn_db.session as s:
         for query in queries:
             s.execute(text(query))
@@ -3765,6 +3779,11 @@ def inicializar_bd():
         for alias in ALIASES_LOCAL_BASE:
             s.execute(text("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:alias, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon"), {"alias": alias, "end": LOCAL_BASE_ENDERECO, "lat": LOCAL_BASE_COORDS[0], "lon": LOCAL_BASE_COORDS[1]})
 
+        s.execute(
+            text("INSERT INTO app_meta (chave, valor) VALUES ('schema_version', :versao) "
+                 "ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor"),
+            {"versao": SCHEMA_APP_VERSION},
+        )
         s.commit()
 
     return True
@@ -4100,6 +4119,7 @@ def informar_entrega_manual_teams(card_id, tarefa):
 
 def is_in_ceara(lat, lon): return -7.5 <= lat <= -2.5 and -42.0 <= lon <= -37.0
 
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
 def buscar_coordenadas(endereco):
     if not endereco: return None, None
     endereco_limpo = endereco.strip()
@@ -6426,14 +6446,23 @@ def sincronizar_demandas(manual=False, forcar=False):
         endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
         alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
         if endereco_card and alvo_endereco:
-            lat, lon = buscar_coordenadas(endereco_card)
-            if lat is not None and lon is not None:
-                local_alvo = origem if alvo_endereco == "origem" else destino
-                if local_alvo and normalizar_local(local_alvo) not in UNIDADES_PROPRIAS:
-                    # Nunca sobrescreve coordenadas já validadas no banco por causa
-                    # de um cartão do Trello. A aba Endereços permanece soberana.
-                    existente = fetch_one("SELECT lat, lon FROM locais WHERE apelido = :apelido", {"apelido": local_alvo})
-                    if not existente or existente[0] is None or existente[1] is None:
+            local_alvo = origem if alvo_endereco == "origem" else destino
+            if local_alvo and canonicalizar_ponto_rota(local_alvo) not in UNIDADES_PROPRIAS:
+                # Primeiro consulta o banco. Antes, o aplicativo chamava o geocodificador
+                # externo em TODA sincronização mesmo quando o GPS já estava salvo, o que
+                # deixava a inicialização muito lenta.
+                existente = fetch_one(
+                    "SELECT lat, lon FROM locais WHERE apelido = :apelido",
+                    {"apelido": local_alvo},
+                )
+                gps_ja_salvo = bool(
+                    existente and existente[0] is not None and existente[1] is not None
+                )
+                if not gps_ja_salvo:
+                    lat, lon = buscar_coordenadas(endereco_card)
+                    if lat is not None and lon is not None:
+                        # Nunca sobrescreve coordenadas já validadas no banco por causa
+                        # de um cartão do Trello. A aba Endereços permanece soberana.
                         execute_db(
                             "INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) "
                             "ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon",
@@ -6823,6 +6852,14 @@ with st.sidebar:
     if hasattr(st, "fragment"):
         @st.fragment(run_every="30s")
         def _loop_operacoes():
+            # O fragmento é executado imediatamente quando a página abre. Na versão
+            # anterior isso disparava uma varredura completa de Trello + histórico antes
+            # mesmo de o primeiro quadro aparecer. A primeira execução apenas arma o ciclo;
+            # a automação normal começa no próximo tick (30 s).
+            if not st.session_state.get("_loop_operacoes_iniciado"):
+                st.session_state["_loop_operacoes_iniciado"] = True
+                return
+
             tempo_desde_sync = time.time() - st.session_state.get("ultima_sincronizacao", 0)
             if tempo_desde_sync >= INTERVALO_TRELLO_SEGUNDOS:
                 if sincronizar_demandas(forcar=True):
@@ -6864,9 +6901,31 @@ retornar_base = st.session_state.get("cfg_retornar_base", True)
 
 if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
 
-tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_frota = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao vivo", "📦 Demandas ativas", "📋 Histórico e concluídos", "📍 Endereços", "🚗 Frota e custos"])
+MODULOS_PRINCIPAIS = [
+    "🗺️ Roteiro do Davi",
+    "📡 Rastreador ao vivo",
+    "📦 Demandas ativas",
+    "📋 Histórico e concluídos",
+    "📍 Endereços",
+    "🚗 Frota e custos",
+]
 
-with tab_rastreador:
+# st.tabs executa o conteúdo de TODAS as abas, inclusive as ocultas. Isso fazia o
+# rastreador, a frota e o histórico consultarem rede/banco antes de o Roteiro abrir.
+# A navegação abaixo é realmente sob demanda: só o módulo escolhido é executado.
+if hasattr(st, "segmented_control"):
+    modulo_principal = st.segmented_control(
+        "Módulo", MODULOS_PRINCIPAIS, default=MODULOS_PRINCIPAIS[0],
+        key="modulo_principal", label_visibility="collapsed",
+    )
+else:
+    modulo_principal = st.radio(
+        "Módulo", MODULOS_PRINCIPAIS, index=0, horizontal=True,
+        key="modulo_principal", label_visibility="collapsed",
+    )
+modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
+
+if modulo_principal == "📡 Rastreador ao vivo":
     st.subheader("📡 Rastreador ao vivo — Protege Express")
     st.caption("Posições consultadas diretamente no portal. Atualização automática a cada 30 segundos.")
 
@@ -6974,7 +7033,7 @@ with tab_rastreador:
         if hasattr(st, "fragment"): st.fragment(run_every="30s")(exibir_painel_rastreador)()
         else: exibir_painel_rastreador()
 
-with tab_demandas:
+if modulo_principal == "📦 Demandas ativas":
     st.subheader(f"Gerenciamento de cargas da rota ({DATA_REF_ROTA_STR})")
 
     @fragmento_independente
@@ -7055,7 +7114,7 @@ with tab_demandas:
         "demandas_ativas", "demandas",
     )
 
-with tab_historico:
+if modulo_principal == "📋 Histórico e concluídos":
     st.subheader(f"📋 Entregas fisicamente concluídas ({DATA_HOJE_REAL_STR})")
     df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_HOJE_REAL_STR})
     if df_hist.empty: st.info("Nenhuma entrega foi registrada como finalizada no Trello no dia de hoje.")
@@ -7065,7 +7124,7 @@ with tab_historico:
         "entregas_concluidas", "historico",
     )
 
-with tab_enderecos:
+if modulo_principal == "📍 Endereços":
     @fragmento_independente
     def painel_enderecos():
         st.subheader("Locais e coordenadas GPS")
@@ -7109,17 +7168,28 @@ with tab_enderecos:
 
     painel_enderecos()
 
-with tab_frota:
+if modulo_principal == "🚗 Frota e custos":
     st.subheader("🚗 Frota e custos")
     st.caption("Custos, quilometragem, abastecimentos, manutenção e histórico operacional da frota em um só lugar.")
 
-    sub_resumo_frota, sub_operacao_frota, sub_historico_frota = st.tabs([
+    SUBMODULOS_FROTA = [
         "📊 Resumo e lançamentos",
         "🕒 Operação e paradas",
         "🗂️ Histórico editável",
-    ])
+    ]
+    if hasattr(st, "segmented_control"):
+        submodulo_frota = st.segmented_control(
+            "Seção da frota", SUBMODULOS_FROTA, default=SUBMODULOS_FROTA[0],
+            key="submodulo_frota", label_visibility="collapsed",
+        )
+    else:
+        submodulo_frota = st.radio(
+            "Seção da frota", SUBMODULOS_FROTA, index=0, horizontal=True,
+            key="submodulo_frota", label_visibility="collapsed",
+        )
+    submodulo_frota = submodulo_frota or SUBMODULOS_FROTA[0]
 
-    with sub_resumo_frota:
+    if submodulo_frota == "📊 Resumo e lançamentos":
         cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1").iloc[0]
 
         @fragmento_independente
@@ -7469,7 +7539,7 @@ with tab_frota:
             "fechamento_mensal_frota", "custos",
         )
 
-    with sub_operacao_frota:
+    if submodulo_frota == "🕒 Operação e paradas":
         st.markdown("### 🕒 Operação do rastreador")
         st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
         st.markdown("#### 🕒 Horários da operação (rastreador)")
@@ -7493,7 +7563,7 @@ with tab_frota:
             else:
                 st.info("Nenhum registro de parada do rastreador encontrado.")
 
-    with sub_historico_frota:
+    if submodulo_frota == "🗂️ Histórico editável":
         st.markdown("### 🗂️ Histórico e correções")
         st.caption("Consulte, ajuste e exporte os registros consolidados da frota.")
         st.markdown("#### 💰 Histórico de custos e abastecimentos (editável)")
@@ -7549,7 +7619,7 @@ with tab_frota:
             "registros_da_frota", "registros",
         )
 
-with tab_roteiro:
+if modulo_principal == "🗺️ Roteiro do Davi":
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR): st.session_state['rota_gerada'] = False
 
     df_ativos = st.session_state.demandas.copy()
