@@ -179,6 +179,15 @@ def format_mins_to_time(mins):
         return f"{horario} (+{dias} dias)"
     return horario
 
+def plural_pt(qtd, singular, plural=None):
+    """Retorna singular/plural sem usar formas como ``demanda(s)`` na interface."""
+    try:
+        numero = int(qtd)
+    except (TypeError, ValueError):
+        numero = qtd
+    return singular if numero == 1 else (plural or f"{singular}s")
+
+
 def _limpar_texto_relatorio(valor):
     if valor is None:
         return ""
@@ -204,7 +213,7 @@ def _normalizar_tabelas_relatorio(dados):
         "Tempo_Entrega": "Tempo de entrega (min)",
         "obs": "Observação",
         "data": "Data",
-        "km": "KM",
+        "km": "km",
         "litros": "Litros",
         "valor_litro": "Valor por litro (R$)",
         "manutencao": "Manutenção (R$)",
@@ -394,7 +403,7 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         custo_km = custo_total / km if km > 0 else None
         adicionar("Quilometragem total", f"{numero_br(km, 1)} km")
         adicionar("Custo total da frota", moeda_br(custo_total))
-        adicionar("Custo médio por KM", moeda_br(custo_km) if custo_km is not None else None, "Dentro da referência de R$ 1,50/km." if custo_km is not None and custo_km <= 1.5 else "Acima da referência de R$ 1,50/km." if custo_km is not None else "")
+        adicionar("Custo médio por km", moeda_br(custo_km) if custo_km is not None else None, "Dentro da referência de R$ 1,50/km." if custo_km is not None and custo_km <= 1.5 else "Acima da referência de R$ 1,50/km." if custo_km is not None else "")
         adicionar("Total de combustível", moeda_br(combustivel), f"{numero_br(100 * combustivel / custo_total, 1)}% do custo total." if custo_total else "")
         adicionar("Total de manutenção", moeda_br(manutencao), f"{numero_br(100 * manutencao / custo_total, 1)}% do custo total." if custo_total else "")
         gastos = pd.concat([df for nome, df in tabelas if normalizar(nome).startswith("gastos") and not df.empty], ignore_index=True) if any(normalizar(nome).startswith("gastos") and not df.empty for nome, df in tabelas) else pd.DataFrame()
@@ -407,7 +416,7 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         paradas = next((df for nome, df in tabelas if "paradas rastreadas" in normalizar(nome)), pd.DataFrame())
         abastecimentos = next((df for nome, df in tabelas if "abastecimentos" in normalizar(nome)), pd.DataFrame())
         quilometragens = next((df for nome, df in tabelas if "quilometragens" in normalizar(nome)), pd.DataFrame())
-        saida_col = localizar_coluna(inicios, "Hora Saída") if not inicios.empty else None
+        saida_col = localizar_coluna(inicios, "Hora de saída", "Hora Saída") if not inicios.empty else None
         adicionar("Saídas registradas", len(inicios))
         adicionar("Horário médio de saída", horario_medio(inicios[saida_col]) if saida_col else None, "Permite acompanhar a aderência ao início previsto.")
         adicionar("Paradas rastreadas", len(paradas))
@@ -423,10 +432,10 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         combustivel_total = float((numeros(abastecimentos, "Litros").fillna(0) * numeros(abastecimentos, "Valor por litro (R$)", "valor_litro").fillna(0)).sum()) if not abastecimentos.empty else 0
         adicionar("Litros médios por abastecimento", f"{numero_br(litros.mean(), 1)} L" if len(litros) else None)
         adicionar("Preço médio do litro", moeda_br(valor_litro.mean()) if len(valor_litro) else None)
-        adicionar("Custo total registrado", moeda_br(combustivel_total + manutencao.sum()), "Combustível calculado mais manutenções registradas.")
+        adicionar("Custo total registrado", moeda_br(combustivel_total + manutencao.sum()), "Soma do combustível calculado e das manutenções registradas.")
         kms = numeros(quilometragens, "KM").dropna()
-        adicionar("KM total registrado", f"{numero_br(kms.sum(), 1)} km" if len(kms) else None)
-        adicionar("KM médio por registro", f"{numero_br(kms.mean(), 1)} km" if len(kms) else None)
+        adicionar("Quilometragem total registrada", f"{numero_br(kms.sum(), 1)} km" if len(kms) else None)
+        adicionar("Quilometragem média por registro", f"{numero_br(kms.mean(), 1)} km" if len(kms) else None)
 
     elif "entregas concluidas" in titulo_norm:
         total = len(principal)
@@ -730,7 +739,7 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
                 ultima_coluna = max(0, len(df.columns) - 1)
                 if eh_resumo_analitico:
                     worksheet.merge_range(0, 0, 0, 13, f"{titulo.upper()} - ANÁLISES", titulo_fmt)
-                    worksheet.merge_range(1, 0, 1, 13, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} indicador(es)", meta_fmt)
+                    worksheet.merge_range(1, 0, 1, 13, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {plural_pt(len(df), 'indicador', 'indicadores')}", meta_fmt)
                     worksheet.set_row(0, 29)
                     worksheet.set_row(1, 19)
                     worksheet.hide_gridlines(2)
@@ -809,7 +818,7 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
                     worksheet.merge_range(0, 0, 0, largura_modelo, titulo_planilha, titulo_fmt)
                 else:
                     worksheet.write(0, 0, titulo_planilha, titulo_fmt)
-                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} registro(s) • Seção: {nome}", meta_fmt)
+                worksheet.write(1, 0, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {plural_pt(len(df), 'registro', 'registros')} • Seção: {nome}", meta_fmt)
                 worksheet.set_row(0, 27)
                 worksheet.set_row(inicio_tabela, 28)
                 worksheet.freeze_panes(inicio_tabela + 1, 0)
@@ -902,7 +911,7 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
                 ws.cell(1, 1).font = Font(bold=True, size=16, color="FFFFFF")
                 ws.cell(1, 1).alignment = Alignment(horizontal="center", vertical="center")
                 for coluna_titulo in range(1, ultima_coluna + 1): ws.cell(1, coluna_titulo).fill = PatternFill("solid", fgColor="08B7B7")
-                tipo_linha = "indicador(es)" if nome_aba == "Resumo Analítico" else "registro(s)"
+                tipo_linha = plural_pt(len(df), "indicador", "indicadores") if nome_aba == "Resumo Analítico" else plural_pt(len(df), "registro", "registros")
                 ws.cell(2, 1, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} • {len(df)} {tipo_linha}")
                 ws.cell(2, 1).font = Font(size=9, italic=True, color="64748B")
                 if eh_principal:
@@ -1045,7 +1054,7 @@ def _criar_pdf_textual(titulo, tabelas):
         df = _colunas_relevantes_pdf(df_original, limite=9)
         garantir(28)
         retangulo(comandos, margem_x, y - 21, largura_util, 21, cores["teal"])
-        escrever(comandos, f"{limpo(nome).upper()} - {len(df_original)} registro(s)", margem_x + 7, y - 14, 9, True, cores["branco"])
+        escrever(comandos, f"{limpo(nome).upper()} - {len(df_original)} {plural_pt(len(df_original), 'registro', 'registros')}", margem_x + 7, y - 14, 9, True, cores["branco"])
         y -= 21
         if df.empty or not len(df.columns):
             escrever(comandos, "Nenhum registro disponível nesta seção.", margem_x + 6, y - 15, 8, False, cores["texto"])
@@ -1098,7 +1107,7 @@ def _criar_pdf_textual(titulo, tabelas):
     retangulo(comandos, margem_x, y - 29, largura_util, 29, cores["teal"])
     escrever(comandos, limpo(titulo).upper(), largura_pagina / 2, y - 19, 13, True, cores["branco"], "centro")
     y -= 36
-    escrever(comandos, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} | {total_registros} registro(s)", margem_x + 6, y - 8, 8, False, cores["texto"])
+    escrever(comandos, f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} | {total_registros} {plural_pt(total_registros, 'registro', 'registros')}", margem_x + 6, y - 8, 8, False, cores["texto"])
     y -= 19
 
     if not resumo_analitico.empty:
@@ -1246,7 +1255,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
     elementos = [
         faixa_titulo,
         Spacer(1, 5),
-        Paragraph(f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} &nbsp;&nbsp;|&nbsp;&nbsp; {total_registros} registro(s)", estilo_meta),
+        Paragraph(f"Gerado em {datetime.now(FUSO_LOCAL).strftime('%d/%m/%Y às %H:%M')} &nbsp;&nbsp;|&nbsp;&nbsp; {total_registros} {plural_pt(total_registros, 'registro', 'registros')}", estilo_meta),
         Spacer(1, 7),
     ]
 
@@ -1277,7 +1286,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
             chave in nome_secao_norm for chave in ("paradas e demandas", "detalhamento da rota", "detalhamento")
         ):
             elementos.append(PageBreak())
-        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome).upper())} &nbsp; - &nbsp; {len(df_original)} registro(s)", estilo_secao))
+        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome).upper())} &nbsp; - &nbsp; {len(df_original)} {plural_pt(len(df_original), 'registro', 'registros')}", estilo_secao))
         if df_original.empty or not len(df_original.columns):
             elementos.append(Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio))
             continue
@@ -1383,7 +1392,7 @@ def _criar_pdf_resumo_rota_tabela(titulo, df_resumo):
             (r"^COLETAR\s+materiais\s*$", "COLETAR"),
             (r"^ENTREGAR\s+materiais\s*-\s*", "ENTREGAR: "),
             (r"^ENTREGAR\s+materiais\s*$", "ENTREGAR"),
-            (r"^PAUSA\s+DE\s+1H\s+PARA\s+ALMOÇO$", "ALMOÇO - 1h"),
+            (r"^PAUSA\s+DE\s+1(?:H|\s+HORA)\s+PARA\s+ALMOÇO$", "ALMOÇO - 1 hora"),
             (r"^RETORNAR\s+para\s+", "RETORNAR: "),
         ]
         for padrao, novo in substituicoes:
@@ -1774,7 +1783,7 @@ def _passos_resumo_rota(route_steps, ponto_saida="ESCRITÓRIO", retornar_base=Tr
             saida = step.get("dyn_saida", step.get("saida", "13:00"))
             passos.append({
                 "local": "ALMOÇO",
-                "acao": "PAUSA DE 1H PARA ALMOÇO",
+                "acao": "PAUSA DE 1 HORA PARA ALMOÇO",
                 "horario": f"{chegada} - {saida}" if chegada or saida else "",
                 "tipo": "pausa",
             })
@@ -2221,11 +2230,13 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
             continue
 
         if step['type'] == 'return':
+            # Se a rota está sendo acompanhada hoje, o deslocamento de retorno
+            # começa do horário REAL atual, nunca de um ETA antigo já ultrapassado.
+            if agora_min_efetivo is not None and current_min < agora_min_efetivo:
+                current_min = agora_min_efetivo
             arr_min = current_min + step.get('travel_mins', 0)
             if current_min <= 12 * 60 and arr_min > 12 * 60:
                 arr_min = max(arr_min + 60, 13 * 60)
-            if agora_min_efetivo is not None and arr_min < agora_min_efetivo:
-                arr_min = agora_min_efetivo
             if 12 * 60 <= arr_min < 13 * 60:
                 arr_min = 13 * 60
 
@@ -2272,13 +2283,17 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
         if 12 * 60 <= current_min < 13 * 60:
             current_min = 13 * 60
 
+        # A primeira etapa ainda pendente deve sair de AGORA. O comportamento
+        # anterior apenas elevava a chegada para o horário atual e, com isso,
+        # podia até eliminar indevidamente o tempo de deslocamento até a parada.
+        if agora_min_efetivo is not None and current_min < agora_min_efetivo:
+            current_min = agora_min_efetivo
+
         travel = step.get('travel_mins', 0)
         arr_min = current_min + travel
 
         if current_min <= 12 * 60 and arr_min > 12 * 60:
             arr_min = max(arr_min + 60, 13 * 60)
-        if agora_min_efetivo is not None and arr_min < agora_min_efetivo:
-            arr_min = agora_min_efetivo
         if 12 * 60 <= arr_min < 13 * 60:
             arr_min = 13 * 60
 
@@ -2701,7 +2716,7 @@ if modo_url == "true":
     """, unsafe_allow_html=True)
 
     st.markdown("<h2 style='text-align: center; color: #e4e8f4; margin-bottom: 0;'>📱 App do Motorista</h2>", unsafe_allow_html=True)
-    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px; color: #8da0b8;'>Rota Oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
+    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px; color: #8da0b8;'>Rota oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
 
     if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"): st.rerun()
 
@@ -2886,13 +2901,18 @@ if modo_url == "true":
                 if not pendentes_foco:
                     parada_num = entregas_foco[0]["parada"]
                     destino_foco = entregas_foco[0]["destino"]
-                    st.success(f"✅ Todas as {len(entregas_foco)} entrega(s) da **Parada {parada_num} — {destino_foco}** já têm comprovante finalizado.")
+                    qtd_entregas_foco = len(entregas_foco)
+                    st.success(
+                        f"✅ {plural_pt(qtd_entregas_foco, 'A entrega', 'Todas as entregas')} da "
+                        f"**Parada {parada_num} — {destino_foco}** já "
+                        f"{plural_pt(qtd_entregas_foco, 'tem', 'têm')} comprovante finalizado."
+                    )
                     for item_pronto in entregas_foco:
                         estado_pronto = estados_comprovantes.get(item_pronto["chave"], {})
                         obra_pronta = str(item_pronto["tarefa"].get("Obra", "") or "")
                         st.caption(
                             f"✅ {obra_pronta} • Trello {item_pronto['id']} • "
-                            f"{len(estado_pronto.get('fotos', []))} foto(s) • {estado_pronto.get('recebedor', '')}"
+                            f"{len(estado_pronto.get('fotos', []))} {plural_pt(len(estado_pronto.get('fotos', [])), 'foto', 'fotos')} • {estado_pronto.get('recebedor', '')}"
                         )
                 else:
                     entrega_sel = pendentes_foco[0]
@@ -3066,7 +3086,7 @@ if modo_url == "true":
                             st.caption(f"✅ Foto {pos} • {foto_enviada['tipo']} • {foto_enviada['hora']}")
 
                         if st.button(
-                            f"✅ FINALIZAR ESTA ENTREGA ({len(estado['fotos'])} FOTO(S))",
+                            f"✅ FINALIZAR ESTA ENTREGA ({len(estado['fotos'])} {plural_pt(len(estado['fotos']), 'FOTO', 'FOTOS')})",
                             type="primary",
                             use_container_width=True,
                             key=f"davi_finalizar_comprovante_{chave_comprovante}",
@@ -3084,7 +3104,7 @@ if modo_url == "true":
                         st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
 
 
-    st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro Passo a Passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
+    st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro passo a passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
     st.caption("Deslize para o lado para avançar pelas etapas da rota.")
     cartoes_mobile = []
     numero_parada_mobile = 1
@@ -3384,7 +3404,7 @@ if modo_url == "true":
         st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
-    st.markdown("#### 🗺️ Visão Geral da Rota")
+    st.markdown("#### 🗺️ Visão geral da rota")
     m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
     pontos_reais_mobile = []
     if p_saida in locais_dict:
@@ -5074,7 +5094,7 @@ def calcular_matriz_mapbox_trafego(coords, horario_partida=None):
             if distancias[i][j] is None or duracoes[i][j] is None
         )
         if restantes:
-            _registrar_diagnostico_mapbox(False, 'Mapbox respondeu, mas a matriz ficou incompleta.', f'{restantes} trecho(s) sem rota.')
+            _registrar_diagnostico_mapbox(False, 'Mapbox respondeu, mas a matriz ficou incompleta.', f"{restantes} {plural_pt(restantes, 'trecho sem rota', 'trechos sem rota')}.")
             return None
 
         try:
@@ -5085,7 +5105,7 @@ def calcular_matriz_mapbox_trafego(coords, horario_partida=None):
             pass
         detalhe_tempo = 'trânsito no horário planejado' if usou_depart_at else 'trânsito atual (depart_at da Matrix indisponível na conta)'
         if faltantes:
-            _registrar_diagnostico_mapbox(True, f'Mapbox ativa • {detalhe_tempo} • {len(faltantes)} trecho(s) completado(s) pelo OSRM.')
+            _registrar_diagnostico_mapbox(True, f"Mapbox ativa • {detalhe_tempo} • {len(faltantes)} {plural_pt(len(faltantes), 'trecho completado', 'trechos completados')} pelo OSRM.")
         else:
             _registrar_diagnostico_mapbox(True, f'Mapbox Matrix ativa • {detalhe_tempo}.')
         return distancias, duracoes
@@ -5381,7 +5401,7 @@ def calcular_matriz_tomtom_trafego(coords, horario_partida):
             if distancias[i][j] is None or duracoes[i][j] is None
         )
         if ainda_faltantes:
-            detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else f'{ainda_faltantes} trecho(s) sem resposta'
+            detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else f"{ainda_faltantes} {plural_pt(ainda_faltantes, 'trecho sem resposta', 'trechos sem resposta')}"
             _registrar_diagnostico_tomtom(False, 'TomTom respondeu, mas a matriz ficou incompleta.', detalhe)
             return None
 
@@ -5392,7 +5412,7 @@ def calcular_matriz_tomtom_trafego(coords, horario_partida):
             pass
         if qtd_fallback:
             detalhe = ', '.join(sorted(set(falhas_api))) if falhas_api else ''
-            _registrar_diagnostico_tomtom(True, f'TomTom ativa; {qtd_fallback} trecho(s) isolado(s) completado(s) por contingência OSRM.', detalhe)
+            _registrar_diagnostico_tomtom(True, f"TomTom ativa; {qtd_fallback} {plural_pt(qtd_fallback, 'trecho isolado completado', 'trechos isolados completados')} por contingência do OSRM.", detalhe)
         else:
             _registrar_diagnostico_tomtom(True, 'TomTom Matrix Routing v2 ativa e respondendo normalmente.')
         return distancias, duracoes
@@ -6363,7 +6383,10 @@ def loop_automacoes_background():
                     st.session_state["_teams_ultimo_erro"] = f"{short_name}: {detalhe}"
 
             if novas_entregas > 0:
-                st.toast(f"🔔 {novas_entregas} nova(s) baixa(s) no Trello registrada(s)!", icon="✅")
+                st.toast(
+                    f"🔔 {novas_entregas} {plural_pt(novas_entregas, 'nova baixa registrada', 'novas baixas registradas')} no Trello!",
+                    icon="✅",
+                )
     except: pass
 
     try:
@@ -6516,7 +6539,7 @@ except: st.title("🚚 TORRE DE CONTROLE LOGÍSTICO")
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
-    st.header("⚙️ Painel de Operações")
+    st.header("⚙️ Painel de operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     if st.session_state.get("_ultima_rotina_auto"):
         st.caption(f"🔄 Trello + rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
@@ -6546,22 +6569,22 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
-    st.components.v1.html("""<script>function copyLink() { try { var tempInput = document.createElement("input"); tempInput.value = window.parent.location.origin + window.parent.location.pathname + "?davi=true"; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput); var btn = document.getElementById("btn"); btn.innerText = "✅ Copiado!"; btn.style.background = "linear-gradient(135deg, #16a34a, #15803d)"; btn.style.color = "white"; btn.style.border = "none"; setTimeout(() => { btn.innerText = "🔗 Copiar Link do Davi"; btn.style.background = "transparent"; btn.style.color = "#8da0b8"; btn.style.border = "1px solid rgba(64,116,146,.35)"; }, 2500); } catch (err) { alert("Erro ao copiar."); } }</script><button id="btn" onclick="copyLink()" style="width:100%; padding:10px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:8px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer; transition: all 0.2s;">🔗 Copiar Link do Davi</button>""", height=50)
+    st.components.v1.html("""<script>function copyLink() { try { var tempInput = document.createElement("input"); tempInput.value = window.parent.location.origin + window.parent.location.pathname + "?davi=true"; document.body.appendChild(tempInput); tempInput.select(); document.execCommand("copy"); document.body.removeChild(tempInput); var btn = document.getElementById("btn"); btn.innerText = "✅ Copiado!"; btn.style.background = "linear-gradient(135deg, #16a34a, #15803d)"; btn.style.color = "white"; btn.style.border = "none"; setTimeout(() => { btn.innerText = "🔗 Copiar link do Davi"; btn.style.background = "transparent"; btn.style.color = "#8da0b8"; btn.style.border = "1px solid rgba(64,116,146,.35)"; }, 2500); } catch (err) { alert("Erro ao copiar."); } }</script><button id="btn" onclick="copyLink()" style="width:100%; padding:10px; background-color:transparent; color:#8da0b8; border:1px solid rgba(64,116,146,.35); border-radius:8px; font-family:sans-serif; font-size:14px; font-weight:bold; cursor:pointer; transition: all 0.2s;">🔗 Copiar link do Davi</button>""", height=50)
     st.markdown("---")
 
-    if st.button("🔄 Sincronizar Manualmente (Trello)", use_container_width=True, type="primary"):
+    if st.button("🔄 Sincronizar manualmente (Trello)", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
             if sincronizar_demandas(manual=True, forcar=True):
-                st.success("✅ Trello Sincronizado e Demandas Importadas!")
+                st.success("✅ Trello sincronizado e demandas importadas!")
     
     @fragmento_independente
     def controles_planejamento_rota():
         st.divider()
-        st.radio("🚗 Tipo de Custeio da Rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"], key="cfg_veiculo_rota")
+        st.radio("🚗 Tipo de custeio da rota", ["Frota da Empresa (Calcula Gasolina)", "Carro Próprio/Frete (R$ 1,50/km)"], key="cfg_veiculo_rota")
         st.divider()
-        st.selectbox("🏁 Ponto de Saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"], key="cfg_ponto_saida")
-        estrategia_atual = st.selectbox("🎯 Estratégia da Rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"], key="cfg_estrategia_rota")
-        st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Mescla urgência com proximidade para fazer a rota mais lógica e eficiente.', '🏢 Foco em Descarregar': 'Prioriza entregar os materiais o quanto antes para esvaziar a caçamba.', '⛽ Menor Distância': 'Foca 100% no menor KM percorrido (Economia de combustível).', '🚨 Priorizar Urgências': 'Foca 100% nas demandas Vencidas ou programadas para Hoje.'}[estrategia_atual] }*")
+        st.selectbox("🏁 Ponto de saída", ["ESCRITÓRIO", "CASA DA INDÚSTRIA", "SENAI CENTRO", "MARACANAÚ"], key="cfg_ponto_saida")
+        estrategia_atual = st.selectbox("🎯 Estratégia da rota", ["⚖️ Equilibrada", "🏢 Foco em Descarregar", "⛽ Menor Distância", "🚨 Priorizar Urgências"], key="cfg_estrategia_rota")
+        st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Combina urgência e proximidade para tornar a rota mais lógica e eficiente.', '🏢 Foco em Descarregar': 'Prioriza as entregas para reduzir o volume de materiais transportados no veículo.', '⛽ Menor Distância': 'Prioriza a menor distância percorrida, com foco na economia de combustível.', '🚨 Priorizar Urgências': 'Prioriza as demandas vencidas ou programadas para hoje.'}[estrategia_atual] }*")
         st.checkbox("Retornar à base no fim do dia", value=True, key="cfg_retornar_base")
 
     controles_planejamento_rota()
@@ -6571,12 +6594,12 @@ ponto_saida = st.session_state.get("cfg_ponto_saida", "ESCRITÓRIO")
 estrategia = st.session_state.get("cfg_estrategia_rota", "⚖️ Equilibrada")
 retornar_base = st.session_state.get("cfg_retornar_base", True)
 
-if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar Manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
+if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
 
-tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_frota = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao Vivo", "📦 Demandas Ativas", "📋 Histórico & Concluídos", "📍 Endereços", "🚗 Frota & Custos"])
+tab_roteiro, tab_rastreador, tab_demandas, tab_historico, tab_enderecos, tab_frota = st.tabs(["🗺️ Roteiro do Davi", "📡 Rastreador ao vivo", "📦 Demandas ativas", "📋 Histórico e concluídos", "📍 Endereços", "🚗 Frota e custos"])
 
 with tab_rastreador:
-    st.subheader("📡 Rastreador ao Vivo — Protege Express")
+    st.subheader("📡 Rastreador ao vivo — Protege Express")
     st.caption("Posições consultadas diretamente no portal. Atualização automática a cada 30 segundos.")
 
     usuario_protege, senha_protege, ids_veiculos = carregar_config_protege()
@@ -6651,7 +6674,7 @@ with tab_rastreador:
                 if confirmacao_inicio:
                     st.success(confirmacao_inicio)
 
-                for p in posicoes: p['🟢 Início da Rota (Hoje)'] = start_times.get(p['Placa'], "Ainda não saiu (Raio 500m)")
+                for p in posicoes: p['🟢 Início da Rota (Hoje)'] = start_times.get(p['Placa'], "Ainda não saiu (raio de 500 m)")
 
                 velocidades = [p["Velocidade (km/h)"] for p in posicoes]
                 met1, met2, met3 = st.columns(3)
@@ -6684,16 +6707,16 @@ with tab_rastreador:
         else: exibir_painel_rastreador()
 
 with tab_demandas:
-    st.subheader(f"Gerenciamento de Cargas da Rota ({DATA_REF_ROTA_STR})")
+    st.subheader(f"Gerenciamento de cargas da rota ({DATA_REF_ROTA_STR})")
 
     @fragmento_independente
     def editor_tempos_demandas():
         st.session_state.demandas = st.data_editor(st.session_state.demandas, column_config={"Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120), "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120), "Peso": None, "id": None, "Supervisor": None}, disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"], hide_index=True, use_container_width=True, key="editor_tempos_demandas")
 
     editor_tempos_demandas()
-    st.caption("⏱️ Os tempos de coleta/entrega representam a complexidade de cada demanda. Quando várias demandas acontecem no mesmo endereço, o sistema calcula uma única permanência no local — não soma 10/20 minutos completos para cada cartão.")
+    st.caption("⏱️ Os tempos de coleta/entrega representam a complexidade de cada demanda. Quando várias demandas acontecem no mesmo endereço, o sistema calcula uma única permanência no local — não soma 10 ou 20 minutos completos para cada cartão.")
     st.divider()
-    st.subheader("📣 Monitoramento da Rota Atual (Status Trello)")
+    st.subheader("📣 Monitoramento da rota atual (status do Trello)")
     st.caption("A baixa do Trello continua sendo automática a cada 2 minutos. O botão **Informar entrega** é apenas uma contingência caso o alerta automático não apareça no Teams.")
 
     df_entregues_hoje = get_df(
@@ -6719,7 +6742,7 @@ with tab_demandas:
     else:
         for card_id, row in demandas_na_rota.items():
             c1, c_status, c_manual = st.columns([3.4, 2.15, 1.55])
-            c1.markdown(f"📦 **{row.get('Obra', '')} — {row.get('Destino', '')}** (Resp: {row.get('Supervisor', 'Sede')}) <br><span style='font-size:12px; color:gray;'>{row.get('Materiais', '')}</span>", unsafe_allow_html=True)
+            c1.markdown(f"📦 **{row.get('Obra', '')} — {row.get('Destino', '')}** (Responsável: {row.get('Supervisor', 'Sede')}) <br><span style='font-size:12px; color:gray;'>{row.get('Materiais', '')}</span>", unsafe_allow_html=True)
 
             info_teams = status_teams_monitor.get(card_id, {})
             teams_ok = info_teams.get("notificado") is True
@@ -6730,7 +6753,7 @@ with tab_demandas:
                 elif info_teams.get("notificado") is False:
                     c_status.caption("⚠️ Teams pendente")
             else:
-                c_status.warning("⏳ Pendente / No Carro")
+                c_status.warning("⏳ Pendente — no veículo")
 
             # Se o Teams já confirmou, evita duplicidade. Caso contrário, o botão fica
             # disponível tanto para uma entrega ainda sem baixa automática quanto para
@@ -6765,7 +6788,7 @@ with tab_demandas:
     )
 
 with tab_historico:
-    st.subheader(f"📋 Entregas Fisicamente Concluídas ({DATA_HOJE_REAL_STR})")
+    st.subheader(f"📋 Entregas fisicamente concluídas ({DATA_HOJE_REAL_STR})")
     df_hist = get_df("SELECT * FROM historico_concluidos WHERE data_conclusao = :data ORDER BY id DESC", {"data": DATA_HOJE_REAL_STR})
     if df_hist.empty: st.info("Nenhuma entrega foi registrada como finalizada no Trello no dia de hoje.")
     else: st.dataframe(df_hist, use_container_width=True, hide_index=True)
@@ -6777,28 +6800,28 @@ with tab_historico:
 with tab_enderecos:
     @fragmento_independente
     def painel_enderecos():
-        st.subheader("Locais e Coordenadas GPS")
+        st.subheader("Locais e coordenadas GPS")
         mensagem_local = st.session_state.pop("mensagem_local", "")
         if mensagem_local:
             st.success(mensagem_local)
 
         col1, col2 = st.columns(2)
-        with col1: apelido_input = st.text_input("Nome da Loja/Local (ex: LECI FERRAGENS)").upper().strip()
-        with col2: endereco_input = st.text_input("Endereço Completo ou Link do Google Maps").strip()
-        if st.button("Salvar Endereço Definitivo / Extrair GPS"):
+        with col1: apelido_input = st.text_input("Nome da loja ou do local (ex.: LECI FERRAGENS)").upper().strip()
+        with col2: endereco_input = st.text_input("Endereço completo ou link do Google Maps").strip()
+        if st.button("Salvar endereço e extrair GPS"):
             if apelido_input and endereco_input:
                 lat, lon = buscar_coordenadas(endereco_input)
                 if lat:
                     execute_db("DELETE FROM locais_removidos WHERE apelido = :apelido", {"apelido": apelido_input})
                     execute_db("INSERT INTO locais (apelido, endereco, lat, lon) VALUES (:apelido, :end, :lat, :lon) ON CONFLICT (apelido) DO UPDATE SET endereco=EXCLUDED.endereco, lat=EXCLUDED.lat, lon=EXCLUDED.lon", {"apelido": apelido_input, "end": endereco_input, "lat": lat, "lon": lon})
-                    st.success(f"✅ GPS de '{apelido_input}' salvo com sucesso na Nuvem!")
-                else: st.error("❌ Não consegui achar as coordenadas com esse texto. Cole o Link Direto do Google Maps!")
+                    st.success(f"✅ GPS de '{apelido_input}' salvo com sucesso na nuvem!")
+                else: st.error("❌ Não consegui localizar as coordenadas com esse texto. Cole o link direto do Google Maps.")
             else: st.warning("Preencha o nome e o endereço.")
 
         df_locais = get_df("SELECT * FROM locais ORDER BY apelido")
         st.dataframe(df_locais, use_container_width=True, hide_index=True)
         _conteudo_exportador(
-            "Locais e Coordenadas GPS", df_locais,
+            "Locais e coordenadas GPS", df_locais,
             "locais_e_enderecos", "enderecos",
         )
         st.divider()
@@ -6819,13 +6842,13 @@ with tab_enderecos:
     painel_enderecos()
 
 with tab_frota:
-    st.subheader("🚗 Frota & Custos")
+    st.subheader("🚗 Frota e custos")
     st.caption("Custos, quilometragem, abastecimentos, manutenção e histórico operacional da frota em um só lugar.")
 
     sub_resumo_frota, sub_operacao_frota, sub_historico_frota = st.tabs([
-        "📊 Resumo & Lançamentos",
-        "🕒 Operação & Paradas",
-        "🗂️ Histórico Editável",
+        "📊 Resumo e lançamentos",
+        "🕒 Operação e paradas",
+        "🗂️ Histórico editável",
     ])
 
     with sub_resumo_frota:
@@ -6833,11 +6856,11 @@ with tab_frota:
 
         @fragmento_independente
         def configuracao_base_frota():
-            st.markdown("#### ⚙️ Estimativa Base do Carro")
+            st.markdown("#### ⚙️ Parâmetros-base do veículo")
             cc1, cc2 = st.columns(2)
-            novo_consumo_cfg = cc1.number_input("Consumo Médio (km/L)", value=float(cfg['consumo']), step=0.1, key="cfg_consumo_frota")
-            novo_preco_cfg = cc2.number_input("Preço da Gasolina Base (R$/L)", value=float(cfg['preco_gasolina']), step=0.01, key="cfg_preco_gasolina")
-            if st.button("Atualizar Base"):
+            novo_consumo_cfg = cc1.number_input("Consumo médio (km/L)", value=float(cfg['consumo']), step=0.1, key="cfg_consumo_frota")
+            novo_preco_cfg = cc2.number_input("Preço-base da gasolina (R$/L)", value=float(cfg['preco_gasolina']), step=0.01, key="cfg_preco_gasolina")
+            if st.button("Atualizar parâmetros"):
                 execute_db("UPDATE config_frota SET consumo=:c, preco_gasolina=:p WHERE id=1", {"c": novo_consumo_cfg, "p": novo_preco_cfg})
                 st.success("✅ Base de cálculo atualizada!")
 
@@ -6847,19 +6870,19 @@ with tab_frota:
         st.divider()
         col_recibo, col_km = st.columns(2)
         with col_recibo:
-            st.markdown("#### ⛽ Lançar Recibo de Gasto")
+            st.markdown("#### ⛽ Lançar recibo de gasto")
 
             @fragmento_independente
             def formulario_recibo():
                 with st.form("form_recibo", clear_on_submit=True):
-                    f_data = st.date_input("Data do Recibo")
-                    fc_veic = st.selectbox("Veículo do Gasto", ["Strada", "L200"])
+                    f_data = st.date_input("Data do recibo")
+                    fc_veic = st.selectbox("Veículo do gasto", ["Strada", "L200"])
                     fc1, fc2 = st.columns(2)
-                    f_litros = fc1.number_input("Litros Abastecidos", min_value=0.0, step=0.1)
+                    f_litros = fc1.number_input("Litros abastecidos", min_value=0.0, step=0.1)
                     f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
-                    f_manut = st.number_input("Gastos c/ Manutenção (R$)", min_value=0.0, step=10.0)
-                    f_obs = st.text_input("Observação (Ex: Posto Ipiranga, Troca de Óleo)")
-                    if st.form_submit_button("Lançar no Caixa"):
+                    f_manut = st.number_input("Gastos com manutenção (R$)", min_value=0.0, step=10.0)
+                    f_obs = st.text_input("Observação (ex.: Posto Ipiranga, troca de óleo)")
+                    if st.form_submit_button("Lançar no caixa"):
                         execute_db("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (:data, :litros, :valor, :manut, :obs, :veic)", {"data": f_data.strftime("%d/%m/%Y"), "litros": f_litros, "valor": f_valor, "manut": f_manut, "obs": f_obs, "veic": fc_veic})
                         carregar_abastecimentos_df.clear()
                         st.success("Recibo salvo com sucesso!")
@@ -6867,47 +6890,47 @@ with tab_frota:
             formulario_recibo()
 
         with col_km:
-            st.markdown("#### 🛣️ Lançar KMs Avulsos")
+            st.markdown("#### 🛣️ Lançar quilometragem avulsa")
 
             @fragmento_independente
             def formulario_km_avulso():
                 with st.form("form_km", clear_on_submit=True):
-                    k_data = st.date_input("Data da Corrida")
-                    k_veic = st.selectbox("Veículo Utilizado", ["Strada", "L200"])
-                    k_km = st.number_input("Total de KM Rodado", min_value=0.1, step=1.0)
-                    k_obs = st.text_input("Motivo (Ex: Ida ao banco, Frete extra)")
-                    if st.form_submit_button("Lançar KMs"):
+                    k_data = st.date_input("Data do deslocamento")
+                    k_veic = st.selectbox("Veículo utilizado", ["Strada", "L200"])
+                    k_km = st.number_input("Quilometragem total rodada", min_value=0.1, step=1.0)
+                    k_obs = st.text_input("Motivo (ex.: ida ao banco, frete extra)")
+                    if st.form_submit_button("Lançar quilometragem"):
                         execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": k_data.strftime("%d/%m/%Y"), "km": k_km, "obs": k_obs, "veic": k_veic})
                         carregar_registro_km_df.clear()
-                        st.success(f"{k_km} km salvos com sucesso!")
+                        st.success(f"Quilometragem de {k_km} km salva com sucesso!")
 
             formulario_km_avulso()
 
         st.divider()
-        st.markdown("#### 📅 Lançamento de Fechamento de KM (Período)")
+        st.markdown("#### 📅 Lançamento de fechamento de quilometragem (período)")
 
         @fragmento_independente
         def formulario_fechamento_km():
             with st.form("form_fechamento_km", clear_on_submit=True):
                 col_f1, col_f2 = st.columns([1, 2])
-                f_veic = col_f1.selectbox("Veículo do Fechamento", ["Strada", "L200"])
-                f_obs = col_f2.text_input("Observação (Ex: Quinzena 1, Fechamento Mensal)")
+                f_veic = col_f1.selectbox("Veículo do fechamento", ["Strada", "L200"])
+                f_obs = col_f2.text_input("Observação (ex.: quinzena 1, fechamento mensal)")
                 
                 col_f3, col_f4, col_f5, col_f6 = st.columns(4)
-                f_data_ini = col_f3.date_input("Data Inicial")
-                f_km_ini = col_f4.number_input("KM Inicial", min_value=0.0, step=1.0)
-                f_data_fin = col_f5.date_input("Data Final")
-                f_km_fin = col_f6.number_input("KM Final", min_value=0.0, step=1.0)
+                f_data_ini = col_f3.date_input("Data inicial")
+                f_km_ini = col_f4.number_input("Quilometragem inicial", min_value=0.0, step=1.0)
+                f_data_fin = col_f5.date_input("Data final")
+                f_km_fin = col_f6.number_input("Quilometragem final", min_value=0.0, step=1.0)
                 
-                if st.form_submit_button("Calcular e Lançar Fechamento"):
+                if st.form_submit_button("Calcular e lançar fechamento"):
                     km_rodado = f_km_fin - f_km_ini
                     if km_rodado > 0:
                         obs_final = f"Fechamento ({f_data_ini.strftime('%d/%m')} a {f_data_fin.strftime('%d/%m')}) - {f_obs}"
                         execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": f_data_fin.strftime("%d/%m/%Y"), "km": km_rodado, "obs": obs_final, "veic": f_veic})
                         carregar_registro_km_df.clear()
-                        st.success(f"✅ Conta fechou em {km_rodado:.1f} km! Lançamento salvo com sucesso para a {f_veic}.")
+                        st.success(f"✅ Quilometragem calculada: {km_rodado:.1f} km. Lançamento salvo com sucesso para a {f_veic}.")
                     else:
-                        st.warning("⚠️ O KM Final precisa ser maior que o KM Inicial para calcular o trecho.")
+                        st.warning("⚠️ A quilometragem final precisa ser maior que a quilometragem inicial para calcular o trecho.")
 
         formulario_fechamento_km()
 
@@ -6992,17 +7015,17 @@ with tab_frota:
         # -------- Resumo consolidado --------
         st.markdown("#### 🧾 Resumo do mês")
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("🛣️ KM total", f"{km_total_frota:,.1f} km".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        k1.metric("🛣️ Quilometragem total", f"{km_total_frota:,.1f} km".replace(',', 'X').replace('.', ',').replace('X', '.'))
         k2.metric("💳 Custo total", f"R$ {custo_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        k3.metric("📉 Custo médio / KM", f"R$ {custo_km_frota:.2f}".replace('.', ',') if custo_km_frota is not None else "—",
-                  "Dentro da referência" if custo_km_frota is not None and custo_km_frota <= 1.50 else "Acima de R$ 1,50/km" if custo_km_frota is not None else "Sem KM lançado",
+        k3.metric("📉 Custo médio por km", f"R$ {custo_km_frota:.2f}".replace('.', ',') if custo_km_frota is not None else "—",
+                  "Dentro da referência" if custo_km_frota is not None and custo_km_frota <= 1.50 else "Acima de R$ 1,50/km" if custo_km_frota is not None else "Sem quilometragem lançada",
                   delta_color="normal" if custo_km_frota is not None and custo_km_frota <= 1.50 else "inverse")
         k4.metric("⛽ Combustível", f"R$ {combustivel_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
 
         k5, k6, k7, k8 = st.columns(4)
         k5.metric("🔧 Manutenção", f"R$ {manutencao_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         k6.metric("🧪 Litros abastecidos", f"{litros_total_frota:,.1f} L".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        k7.metric("🏷️ Preço médio / L", f"R$ {preco_medio_frota:.2f}".replace('.', ',') if preco_medio_frota is not None else "—")
+        k7.metric("🏷️ Preço médio por litro", f"R$ {preco_medio_frota:.2f}".replace('.', ',') if preco_medio_frota is not None else "—")
         k8.metric("🧾 Lançamentos", str(lancamentos_total))
 
         if custo_total_frota <= 0 and km_total_frota <= 0:
@@ -7034,13 +7057,13 @@ with tab_frota:
                 # Cabeçalho simples e largo para evitar truncamento.
                 st.markdown(f"### {icone} {veiculo}")
                 if custo_km is None:
-                    st.caption("⚪ Sem KM suficiente para calcular o custo por quilômetro")
+                    st.caption("⚪ Sem quilometragem suficiente para calcular o custo por quilômetro")
                 elif dentro_referencia:
-                    st.caption("🟢 Custo por KM dentro da referência de R$ 1,50/km")
+                    st.caption("🟢 Custo por km dentro da referência de R$ 1,50/km")
                 else:
-                    st.caption("🔴 Custo por KM acima da referência de R$ 1,50/km")
+                    st.caption("🔴 Custo por km acima da referência de R$ 1,50/km")
                 if eh_mais_economico:
-                    st.success("🏆 Menor custo por KM da frota neste mês")
+                    st.success("🏆 Menor custo por km da frota neste mês")
 
                 # Evita st.metric aqui: em meia tela o componente corta valores com "...".
                 # Os indicadores são exibidos em duas colunas com texto normal, que quebra linha
@@ -7054,13 +7077,13 @@ with tab_frota:
                         st.markdown(f"### {formatar_moeda_br(resumo['custo_total'])}")
                 with m2:
                     with st.container(border=True):
-                        st.caption("🛣️ KM no mês")
+                        st.caption("🛣️ Quilometragem no mês")
                         st.markdown(f"### {formatar_numero_br(resumo['km'])} km")
 
                 m3, m4 = st.columns(2)
                 with m3:
                     with st.container(border=True):
-                        st.caption("📉 Custo por KM")
+                        st.caption("📉 Custo por km")
                         valor_custo_km = formatar_moeda_br(custo_km) if custo_km is not None else "—"
                         st.markdown(f"### {valor_custo_km}")
                 with m4:
@@ -7077,7 +7100,7 @@ with tab_frota:
                 with r2:
                     st.markdown(f"🔧 **Manutenção:** {formatar_moeda_br(resumo['manutencao'])}")
                     media_litro = formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else "—"
-                    st.markdown(f"🏷️ **Preço médio/L:** {media_litro}")
+                    st.markdown(f"🏷️ **Preço médio por litro:** {media_litro}")
 
                 abastec_txt = f"{resumo['abastecimentos']} abastecimento" + ("s" if resumo['abastecimentos'] != 1 else "")
                 manut_txt = f"{resumo['manutencoes']} manutenção" + ("ões" if resumo['manutencoes'] != 1 else "")
@@ -7100,7 +7123,7 @@ with tab_frota:
                     for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
                         gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
                 if not quilometragem.empty:
-                    quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "KM", "obs": "Observação"})
+                    quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "km", "obs": "Observação"})
 
                 renderizar_detalhes_fechamento(veiculo, gastos, quilometragem, chave)
                 return gastos, quilometragem
@@ -7125,7 +7148,7 @@ with tab_frota:
         alertas_frota = []
         for resumo in resumos_veiculos.values():
             if resumo['custo_total'] > 0 and resumo['km'] <= 0:
-                alertas_frota.append(f"⚠️ **{resumo['veiculo']}** tem custos lançados, mas ainda não possui KM no mês; o custo/KM não pode ser calculado.")
+                alertas_frota.append(f"⚠️ **{resumo['veiculo']}** tem custos lançados, mas ainda não possui quilometragem no mês; o custo por km não pode ser calculado.")
             if resumo['custo_km'] is not None and resumo['custo_km'] > 1.50:
                 alertas_frota.append(f"🔴 **{resumo['veiculo']}** está em **{formatar_moeda_br(resumo['custo_km'])}/km**, acima da referência de R$ 1,50/km.")
             if resumo['custo_total'] > 0 and resumo['manutencao'] / resumo['custo_total'] >= 0.35:
@@ -7138,7 +7161,7 @@ with tab_frota:
             diferenca = outro['custo_km'] - melhor['custo_km']
             if diferenca > 0:
                 st.success(
-                    f"🏆 **{mais_economico}** está com o menor custo por KM do mês: "
+                    f"🏆 **{mais_economico}** está com o menor custo por km do mês: "
                     f"**{formatar_moeda_br(melhor['custo_km'])}/km**, economia de aproximadamente "
                     f"**{formatar_moeda_br(diferenca)}/km** em relação ao outro veículo."
                 )
@@ -7149,13 +7172,13 @@ with tab_frota:
         df_resumo_fechamento = pd.DataFrame([
             {
                 "Veículo": resumo['veiculo'],
-                "KM": round(resumo['km'], 2),
+                "Quilometragem (km)": round(resumo['km'], 2),
                 "Litros": round(resumo['litros'], 2),
-                "Preço médio/L (R$)": round(resumo['preco_medio_litro'], 2) if resumo['preco_medio_litro'] is not None else 0.0,
+                "Preço médio por litro (R$)": round(resumo['preco_medio_litro'], 2) if resumo['preco_medio_litro'] is not None else 0.0,
                 "Combustível (R$)": round(resumo['combustivel'], 2),
                 "Manutenção (R$)": round(resumo['manutencao'], 2),
                 "Custo total (R$)": round(resumo['custo_total'], 2),
-                "Custo/KM (R$)": round(resumo['custo_km'], 2) if resumo['custo_km'] is not None else 0.0,
+                "Custo por km (R$)": round(resumo['custo_km'], 2) if resumo['custo_km'] is not None else 0.0,
                 "Abastecimentos": resumo['abastecimentos'],
                 "Manutenções": resumo['manutencoes'],
             }
@@ -7167,31 +7190,31 @@ with tab_frota:
             {
                 "Resumo": df_resumo_fechamento,
                 "Gastos Strada": gastos_strada_mes,
-                "KM Strada": kms_strada_mes,
+                "Quilometragem Strada": kms_strada_mes,
                 "Gastos L200": gastos_l200_mes,
-                "KM L200": kms_l200_mes,
+                "Quilometragem L200": kms_l200_mes,
             },
             "fechamento_mensal_frota", "custos",
         )
 
     with sub_operacao_frota:
-        st.markdown("### 🕒 Operação do Rastreador")
+        st.markdown("### 🕒 Operação do rastreador")
         st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
-        st.markdown("#### 🕒 Horários da Operação (Rastreador)")
+        st.markdown("#### 🕒 Horários da operação (rastreador)")
         c_inicio, c_paradas = st.columns([1, 1.8])
 
         with c_inicio:
-            st.markdown("**🏁 Início da Rota (Saídas do Pátio)**")
-            st.caption("Marcado quando o carro afasta > 500m do escritório.")
-            df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora Saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC")
+            st.markdown("**🏁 Início da rota (saídas do pátio)**")
+            st.caption("Marcado quando o veículo se afasta a mais de 500 m do escritório.")
+            df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora de saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC")
             if not df_inicio.empty:
                 st.dataframe(df_inicio, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhum registro de início encontrado.")
                 
         with c_paradas:
-            st.markdown("**📍 Paradas Realizadas nas Obras (Geofence)**")
-            st.caption("Registra tempo parado no raio de 250m do destino.")
+            st.markdown("**📍 Paradas realizadas nas obras (geocerca)**")
+            st.caption("Registra o tempo de permanência dentro de um raio de 250 m do destino.")
             df_paradas_tbl = get_df("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150")
             if not df_paradas_tbl.empty:
                 st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
@@ -7199,43 +7222,43 @@ with tab_frota:
                 st.info("Nenhum registro de parada do rastreador encontrado.")
 
     with sub_historico_frota:
-        st.markdown("### 🗂️ Histórico e Correções")
+        st.markdown("### 🗂️ Histórico e correções")
         st.caption("Consulte, ajuste e exporte os registros consolidados da frota.")
-        st.markdown("#### 💰 Histórico de Custos e Abastecimentos (Editável)")
+        st.markdown("#### 💰 Histórico de custos e abastecimentos (editável)")
         st.caption("Você pode alterar os valores nas tabelas abaixo ou apagar linhas inteiras. Para salvar, clique no botão azul correspondente.")
 
         cx_abast, cx_km = st.columns(2)
         with cx_abast:
-            st.markdown("**⛽ Combustível e Manutenções**")
+            st.markdown("**⛽ Combustível e manutenções**")
 
             @fragmento_independente
             def editor_abastecimentos():
                 df_abastec_all = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
                 if not df_abastec_all.empty:
                     edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
-                    if st.button("💾 Salvar Alterações (Abastecimentos)", type="primary"):
+                    if st.button("💾 Salvar alterações (abastecimentos)", type="primary"):
                         edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
                         save_df_to_db(edited_abastec_clean, "abastecimentos")
                         carregar_abastecimentos_df.clear()
-                        st.success("Abastecimentos atualizados na Nuvem com sucesso!")
+                        st.success("Abastecimentos atualizados na nuvem com sucesso!")
                 else:
-                    st.info("Nenhum abastecimento ou manutenção registrada.")
+                    st.info("Não há abastecimentos nem manutenções registradas.")
 
             editor_abastecimentos()
                 
         with cx_km:
-            st.markdown("**🛣️ Quilometragem Rodada**")
+            st.markdown("**🛣️ Quilometragem rodada**")
 
             @fragmento_independente
             def editor_quilometragem():
                 df_km_all = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
                 if not df_km_all.empty:
                     edited_km = st.data_editor(df_km_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_km")
-                    if st.button("💾 Salvar Alterações (KM)", type="primary"):
+                    if st.button("💾 Salvar alterações (quilometragem)", type="primary"):
                         edited_km_clean = edited_km.drop(columns=['id'], errors='ignore')
                         save_df_to_db(edited_km_clean, "registro_km")
                         carregar_registro_km_df.clear()
-                        st.success("KMs atualizados na Nuvem com sucesso!")
+                        st.success("Quilometragens atualizadas na nuvem com sucesso!")
                 else:
                     st.info("Nenhuma quilometragem registrada.")
 
@@ -7244,7 +7267,7 @@ with tab_frota:
         df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
         df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
         renderizar_exportador(
-            "Registros e Histórico da Frota",
+            "Registros e histórico da frota",
             {
                 "Inícios de rota": df_inicio,
                 "Paradas rastreadas": df_paradas_tbl,
@@ -7478,6 +7501,17 @@ with tab_roteiro:
                     current_point = ponto_saida
                     current_time_tsp = max(current_time_tsp, parse_time_to_mins(HORA_PREPARACAO_FIM))
 
+            # Em uma rota de HOJE, o recálculo das etapas pendentes precisa partir
+            # do relógio real. Antes, o sistema podia reconstruir o restante da rota
+            # a partir da última baixa (por exemplo, 10:29), mesmo já sendo 14:00.
+            # A sequência cabia até 17h no relógio antigo, mas o ETA dinâmico depois
+            # a empurrava para 18h/19h. Agora o próprio planejador usa o horário atual.
+            if DATA_REF_ROTA_DATE == AGORA_REAL.date():
+                agora_planejamento_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+                if 12 * 60 <= agora_planejamento_min < 13 * 60:
+                    agora_planejamento_min = 13 * 60
+                current_time_tsp = max(current_time_tsp, agora_planejamento_min)
+
             # As coletas da base já estão fisicamente no veículo desde a preparação:
             # elas saem de "a coletar" e entram direto em "carrying".
             unpicked = [
@@ -7533,7 +7567,7 @@ with tab_roteiro:
             st.session_state['enderecos_dict'] = enderecos_dict
             
             faltando = sorted(p for p in pontos_necessarios if p not in locais_dict and p not in {"", "DESCONHECIDO", "NAN", "NONE"})
-            if faltando: st.warning(f"⚠️ Faltam endereços na Aba 2 para: **{', '.join(faltando)}**"); st.stop()
+            if faltando: st.warning(f"⚠️ Faltam endereços cadastrados na aba Endereços para: **{', '.join(faltando)}**"); st.stop()
 
             pontos_unicos = list(locais_dict.keys())
             coords = [locais_dict[p] for p in pontos_unicos]
@@ -7818,7 +7852,13 @@ with tab_roteiro:
         # Qualquer COLETA arrastada para a base vira PREPARAÇÃO e nunca uma
         # parada operacional separada.
 
-        if st.session_state.get('demandas_adiadas'): st.warning(f"⏰ **Limite do expediente:** {len(st.session_state['demandas_adiadas'])} demanda(s) ficou(ram) para o próximo planejamento por prioridade/capacidade ou por não caber(em) até 17h.")
+        if st.session_state.get('demandas_adiadas'):
+            qtd_adiadas = len(st.session_state['demandas_adiadas'])
+            st.warning(
+                f"⏰ **Limite do expediente:** {qtd_adiadas} "
+                f"{plural_pt(qtd_adiadas, 'demanda ficou', 'demandas ficaram')} para o próximo planejamento, "
+                f"por prioridade, capacidade ou falta de tempo hábil até as 17h."
+            )
         
         df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
@@ -7844,10 +7884,39 @@ with tab_roteiro:
         route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
+        # Uma rota que cabia às 08h pode deixar de caber depois de atrasos reais.
+        # Se o ETA atual ultrapassar 17h e ainda houver demanda pendente, refazemos
+        # automaticamente o restante a partir de AGORA. O motor de planejamento
+        # então remove do trajeto o que não couber no expediente e deixa para o
+        # próximo planejamento. Conclusões reais já registradas são preservadas.
+        pendencias_na_rota = any(
+            step.get('type') == 'stop'
+            and any(
+                str(tarefa.get('id', '')) not in dict_concluidos_torre
+                for _acao, tarefa in (step.get('actions', []) or [])
+            )
+            for step in route_steps
+        )
+        if (
+            DATA_REF_ROTA_DATE == AGORA_REAL.date()
+            and final_dyn_min > LIMITE_EXPEDIENTE_DAVI_MIN
+            and pendencias_na_rota
+            and not df_ativos.empty
+        ):
+            chave_recalculo_17h = f"{DATA_REF_ROTA_STR}-{AGORA_REAL.strftime('%H:%M')}"
+            if st.session_state.get('_ultimo_recalculo_limite_17h') != chave_recalculo_17h:
+                st.session_state['_ultimo_recalculo_limite_17h'] = chave_recalculo_17h
+                st.session_state['_recalcular_rota_automatico'] = True
+                st.session_state['_mensagem_ajuste_rota'] = (
+                    "⏰ A previsão ultrapassou 17h. O restante da rota foi recalculado "
+                    "a partir do horário atual e o que não couber ficará para o próximo planejamento."
+                )
+                st.rerun()
+
         col_esq, col_dir = st.columns([1.2, 0.8])
         with col_esq:
-            st.subheader(f"📋 Roteiro de Viagem do Davi — {DATA_REF_ROTA_STR}")
-            st.caption(f"🕖 Expediente: 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
+            st.subheader(f"📋 Roteiro de viagem do Davi — {DATA_REF_ROTA_STR}")
+            st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -7892,7 +7961,7 @@ with tab_roteiro:
 
             with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
                 st.caption(
-                    "Arraste uma COLETA ou ENTREGA para cima/baixo ou solte dentro de outra parada. "
+                    "Arraste uma COLETA ou ENTREGA para cima ou para baixo, ou solte-a dentro de outra parada. "
                     "O ajuste fica salvo no Supabase e continua valendo quando o Trello atualizar a rota."
                 )
                 _html_editor, _altura_editor = construir_editor_arrastavel_rota(
@@ -7905,16 +7974,16 @@ with tab_roteiro:
                     st.session_state["_mensagem_ajuste_rota"] = "♻️ Ajustes manuais removidos. A rota voltou para o planejamento automático."
                     st.rerun()
             
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
+            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: das 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
             for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para Almoço** (Previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
+                    st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
                     texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
                     continue
                 if step['type'] == 'return':
-                    st.info(f"🏁 **Retorno à Base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
+                    st.info(f"🏁 **Retorno à base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
                     texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
                     continue
 
@@ -7963,7 +8032,7 @@ with tab_roteiro:
                         fonte_parada_torre = str(step.get('tempo_local_fonte', 'média operacional') or 'média operacional')
                         st.caption(
                             f"⏱️ **Permanência estimada no local: {tempo_parada_torre} min** • {fonte_parada_torre}. "
-                            f"As {len(step.get('actions', []))} demanda(s) desta parada compartilham esse período."
+                            f"{len(step.get('actions', []))} {plural_pt(len(step.get('actions', [])), 'demanda desta parada compartilha', 'demandas desta parada compartilham')} esse período."
                         )
 
                     for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
@@ -8008,7 +8077,7 @@ with tab_roteiro:
                                 fotos_comp_torre = estado_comp_torre.get("fotos", []) or []
                                 if estado_comp_torre.get("finalizado"):
                                     recebedor_comp_torre = str(estado_comp_torre.get("recebedor", "") or "").strip()
-                                    info_comp = f"📸 Comprovante finalizado • {len(fotos_comp_torre)} foto(s)"
+                                    info_comp = f"📸 Comprovante finalizado • {len(fotos_comp_torre)} {plural_pt(len(fotos_comp_torre), 'foto', 'fotos')}"
                                     if recebedor_comp_torre:
                                         info_comp += f" • Recebedor: {recebedor_comp_torre}"
                                     st.caption(info_comp)
@@ -8024,7 +8093,11 @@ with tab_roteiro:
                                         except Exception as erro_reabrir:
                                             st.error(f"Não foi possível reabrir o comprovante: {erro_reabrir}")
                                 elif fotos_comp_torre:
-                                    st.caption(f"📸 Comprovante em aberto • {len(fotos_comp_torre)} foto(s) já enviada(s)")
+                                    qtd_fotos_comp = len(fotos_comp_torre)
+                                    st.caption(
+                                        f"📸 Comprovante em aberto • {qtd_fotos_comp} "
+                                        f"{plural_pt(qtd_fotos_comp, 'foto já enviada', 'fotos já enviadas')}"
+                                    )
 
                         texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
                     
@@ -8034,13 +8107,13 @@ with tab_roteiro:
             horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
-            st.success(f"📍 **Planejamento Original (Se saísse no horário):** Término às {horario_base_fim}.")
+            st.success(f"📍 **Planejamento original (considerando a saída no horário):** término às {horario_base_fim}.")
             if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
-                st.info(f"🟢 **Previsão Real Atualizada:** Término às {horario_dyn_fim} (Dentro do expediente).")
+                st.info(f"🟢 **Previsão real atualizada:** término às {horario_dyn_fim} (dentro do expediente).")
             else:
                 st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
 
-            st.success(f"🛣️ **Total Rodado Planejado:** {total_km:.1f} km")
+            st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
 
             if len(route_steps) > 1:
                 waypts_addr = []
@@ -8056,19 +8129,24 @@ with tab_roteiro:
             @fragmento_independente
             def formulario_fechamento_rota():
                 with st.form("fechamento_km_rota"):
-                    st.markdown("#### 💾 Fechamento de KM da Rota do Dia")
+                    st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
                     total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
                     acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
                     
-                    if acoes_concluidas < total_acoes: st.warning(f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** demandas da rota foram concluídas hoje.")
-                    else: st.success("✅ Todas as demandas desta rota foram devidamente concluídas hoje!")
+                    if acoes_concluidas < total_acoes:
+                        st.warning(
+                            f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
+                            f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
+                            f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
+                        )
+                    else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
                         
-                    km_real = st.number_input("KM Efetivamente Rodado na Rota", value=float(total_km), step=1.0)
+                    km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
                     veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
-                    if st.form_submit_button("Gravar KM no Painel de Custos"):
+                    if st.form_submit_button("Registrar quilometragem no painel de custos"):
                         execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
                         carregar_registro_km_df.clear()
-                        st.success(f"✅ {km_real:.1f} km registrados para o veículo {veiculo_fechamento} na Nuvem!")
+                        st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
 
             formulario_fechamento_rota()
 
@@ -8077,18 +8155,18 @@ with tab_roteiro:
             @fragmento_independente
             def compartilhamento_rota():
                 if url_geral:
-                    if st.button("📢 Mandar Roteiro no Grupo Geral (Teams)", use_container_width=True):
-                        resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída Real do Pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão Dinâmica de Conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da Rota Completa]({link_maps})"
-                        enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro Diário Atualizado!", resumo)
+                    if st.button("📢 Enviar roteiro ao grupo geral (Teams)", use_container_width=True):
+                        resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
+                        enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
                         if enviado: st.success("✅ Roteiro enviado!")
                         else: st.error(f"Erro ao enviar: {detalhe}")
 
-                st.text_area("📋 Texto Pronto para WhatsApp", value=texto_whatsapp, height=150)
+                st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
 
             compartilhamento_rota()
 
         with col_dir:
-            st.subheader("🗺️ Mapa da Rota")
+            st.subheader("🗺️ Mapa da rota")
             # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
 
@@ -8247,7 +8325,7 @@ with tab_roteiro:
             "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária'),
         }])
         df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
-        st.caption("🛣️ Os horários do resumo usam distância viária + piso operacional para deslocamentos urbanos, evitando trechos otimistas demais. 🍽️ A pausa de 1h para almoço aparece como etapa própria.")
+        st.caption("🛣️ Os horários do resumo usam distância viária e piso operacional para deslocamentos urbanos, evitando estimativas excessivamente otimistas. 🍽️ A pausa de 1 hora para almoço aparece como etapa própria.")
         renderizar_exportador(
             f"Roteiro do Davi - {DATA_REF_ROTA_STR}",
             {"Resumo da rota": df_resumo_sequencial},
