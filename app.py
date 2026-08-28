@@ -2807,7 +2807,17 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
 # oficial do motorista agora é /davi. A página pages/davi.py executa este mesmo
 # arquivo com APROAR_DAVI_MODE=True sem depender de parâmetros visíveis na URL.
 modo_url = st.query_params.get("davi", "")
-modo_davi = bool(globals().get("APROAR_DAVI_MODE", False)) or modo_url == "true"
+try:
+    _url_contexto_davi = str(getattr(st.context, "url", "") or "")
+    _caminho_contexto_davi = urllib.parse.urlparse(_url_contexto_davi).path.rstrip("/").lower()
+except Exception:
+    _caminho_contexto_davi = ""
+modo_davi = (
+    bool(globals().get("APROAR_DAVI_MODE", False))
+    or bool(st.session_state.get("_aproar_davi_page", False))
+    or modo_url == "true"
+    or _caminho_contexto_davi.endswith("/davi")
+)
 
 if modo_davi:
     st.markdown("""
@@ -3919,11 +3929,13 @@ def salvar_cache_trello_supabase(dados):
     except Exception:
         pass
 
-def obter_dados_trello(forcar=False):
+def obter_dados_trello(forcar=False, somente_cache=False):
     if not forcar:
         dados_cache = ler_cache_trello_supabase()
         if dados_cache is not None:
             return dados_cache
+        if somente_cache:
+            return None
 
     # Reserva para a primeira instalação e para o botão manual.
     try:
@@ -6596,8 +6608,8 @@ def encontrar_conclusao_de_hoje(card_id, acoes):
         except: continue
     return max(conclusoes) if conclusoes else None
 
-def sincronizar_demandas(manual=False, forcar=False, geocodificar=True):
-    data = obter_dados_trello(forcar=forcar)
+def sincronizar_demandas(manual=False, forcar=False, geocodificar=True, somente_cache=False):
+    data = obter_dados_trello(forcar=forcar, somente_cache=somente_cache)
     if not data:
         if manual: st.error("⚠️ Erro ao acessar o Trello.")
         return False
@@ -7169,7 +7181,10 @@ ponto_saida = st.session_state.get("cfg_ponto_saida", "ESCRITÓRIO")
 estrategia = st.session_state.get("cfg_estrategia_rota", "⚖️ Equilibrada")
 retornar_base = st.session_state.get("cfg_retornar_base", True)
 
-if st.session_state.demandas.empty: st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
+if st.session_state.demandas.empty and not st.session_state.get('rota_gerada', False):
+    st.info("👋 Bem-vindo(a) à Torre de Controle! Clique no botão **'🔄 Sincronizar manualmente'** no menu lateral para puxar as demandas ao vivo e começar.")
+elif st.session_state.demandas.empty and st.session_state.get('rota_gerada', False):
+    st.caption("⚡ Rota salva carregada. As demandas ativas serão consultadas automaticamente quando forem necessárias para atualizar o planejamento.")
 
 if modulo_principal == "📡 Rastreador ao vivo":
     st.subheader("📡 Rastreador ao vivo — Protege Express")
@@ -8606,6 +8621,32 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             for step in route_steps
         )
 
+        # Em uma sessão recém-aberta, a rota salva aparece antes de carregarmos o
+        # quadro inteiro do Trello para manter o site rápido. Porém, duas situações
+        # exigem conhecer imediatamente as demandas ativas: (1) o ETA ficou acima
+        # das 17h; (2) o Davi terminou o roteiro antes das 17h e pode receber mais
+        # trabalho. Nesses casos usamos SOMENTE o cache do Supabase (sem chamada
+        # externa e sem geocodificação) e recalculamos a rota.
+        _agora_min_hidratacao = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+        _precisa_demandas_ativas = (
+            DATA_REF_ROTA_DATE == AGORA_REAL.date()
+            and _agora_min_hidratacao < LIMITE_EXPEDIENTE_DAVI_MIN
+            and isinstance(df_ativos, pd.DataFrame)
+            and df_ativos.empty
+            and (final_dyn_min > LIMITE_EXPEDIENTE_DAVI_MIN or not pendencias_na_rota)
+        )
+        if _precisa_demandas_ativas and not st.session_state.get('_tentou_hidratar_demandas_cache_turno'):
+            st.session_state['_tentou_hidratar_demandas_cache_turno'] = True
+            if sincronizar_demandas(forcar=False, geocodificar=False, somente_cache=True):
+                st.session_state['_recalcular_rota_automatico'] = True
+                st.session_state['_mensagem_ajuste_rota'] = (
+                    '🕒 O planejamento foi atualizado com as demandas ativas para respeitar '
+                    'o expediente até as 17h e aproveitar o tempo restante.'
+                )
+                st.rerun()
+        elif not df_ativos.empty:
+            st.session_state.pop('_tentou_hidratar_demandas_cache_turno', None)
+
         # Se o Davi terminou tudo o que estava no roteiro antes das 17h, não o
         # mandamos automaticamente encerrar o dia enquanto ainda houver demandas
         # ativas. O sistema tenta montar uma extensão do roteiro a partir de AGORA.
@@ -8651,7 +8692,17 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             and pendencias_na_rota
             and not df_ativos.empty
         ):
-            chave_recalculo_17h = f"{DATA_REF_ROTA_STR}-{AGORA_REAL.strftime('%H:%M')}"
+            _ids_pendentes_limite = sorted({
+                str(tarefa.get('id', ''))
+                for step in route_steps
+                if step.get('type') == 'stop'
+                for _acao, tarefa in (step.get('actions', []) or [])
+                if str(tarefa.get('id', '')) not in dict_concluidos_torre
+            })
+            chave_recalculo_17h = (
+                f"{DATA_REF_ROTA_STR}-{AGORA_REAL.strftime('%H:%M')}-"
+                f"{int(round(final_dyn_min))}-{'|'.join(_ids_pendentes_limite)}"
+            )
             if st.session_state.get('_ultimo_recalculo_limite_17h') != chave_recalculo_17h:
                 st.session_state['_ultimo_recalculo_limite_17h'] = chave_recalculo_17h
                 st.session_state['_recalcular_rota_automatico'] = True
