@@ -7991,7 +7991,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     if (recalculo_manual or recalculo_automatico) and not df_ativos.empty:
         if recalculo_automatico:
-            st.toast("🔄 Trello atualizado. Recalculando a rota automaticamente...", icon="🗺️")
+            st.toast("🔄 Recalculando o restante do expediente...", icon="🗺️")
         with st.spinner("Analisando histórico e inteligência de nomes para traçar rota..."):
             st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
@@ -8330,11 +8330,12 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 return dist, dur_api, dur
 
             while unpicked or carrying:
-                if current_time >= 15 * 60 + 30:
-                    baixa_prioridade = [t for t in unpicked if t['Peso'] < 4]
-                    for t in baixa_prioridade:
-                        unpicked.remove(t)
-                    _registrar_adiadas(baixa_prioridade)
+                # Não existe mais corte artificial às 15h30. Enquanto uma demanda
+                # ainda couber operacionalmente no tempo restante — deslocamento,
+                # atendimento e, quando configurado, retorno à base até 17h — ela
+                # continua elegível. A prioridade decide QUAL entra primeiro, mas
+                # demandas futuras podem preencher o restante do expediente para
+                # evitar ociosidade do motorista.
 
                 # Se o relógio entrou no almoço, a pausa acontece antes de escolher
                 # a próxima parada. Isso deixa a simulação de viabilidade consistente.
@@ -8351,8 +8352,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 candidates_viaveis = {p for p, avaliacao in avaliacoes.items() if avaliacao is not None}
 
                 if not candidates_viaveis:
-                    # Nada restante cabe no expediente. Não cria trecho para depois
-                    # das 17h; as demandas ficam pendentes para o planejamento seguinte.
+                    # Nada restante cabe no expediente considerando deslocamento,
+                    # atendimento e retorno à base até 17h. Só nesse caso o restante
+                    # fica para o próximo planejamento.
                     _registrar_adiadas(list(unpicked) + list(carrying))
                     unpicked.clear()
                     carrying.clear()
@@ -8569,6 +8571,46 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             )
             for step in route_steps
         )
+
+        # Se o Davi terminou tudo o que estava no roteiro antes das 17h, não o
+        # mandamos automaticamente encerrar o dia enquanto ainda houver demandas
+        # ativas. O sistema tenta montar uma extensão do roteiro a partir de AGORA.
+        # A própria simulação de expediente abaixo só aceita uma nova parada quando
+        # deslocamento + atendimento + retorno (se habilitado) ainda couberem até 17h.
+        ids_ativos_restantes = sorted({
+            str(valor)
+            for valor in (df_ativos['id'].tolist() if isinstance(df_ativos, pd.DataFrame) and 'id' in df_ativos.columns else [])
+            if str(valor) and str(valor) not in dict_concluidos_torre
+        })
+        assinatura_ativos_restantes = '|'.join(ids_ativos_restantes)
+        agora_min_turno = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+        rota_operacional_concluida = not pendencias_na_rota
+
+        if (
+            DATA_REF_ROTA_DATE == AGORA_REAL.date()
+            and agora_min_turno < LIMITE_EXPEDIENTE_DAVI_MIN
+            and rota_operacional_concluida
+            and ids_ativos_restantes
+            and st.session_state.get('_ultima_expansao_turno_solicitada') != assinatura_ativos_restantes
+        ):
+            # Marca antes do rerun para impedir loop caso nenhuma das demandas
+            # restantes seja viável dentro do tempo disponível. Uma mudança no
+            # conjunto de cartões ativos gera outra assinatura e libera nova tentativa.
+            st.session_state['_ultima_expansao_turno_solicitada'] = assinatura_ativos_restantes
+            st.session_state['_recalcular_rota_automatico'] = True
+            st.session_state['_mensagem_ajuste_rota'] = (
+                '🕒 O roteiro atual foi concluído antes das 17h. O sistema está ' 
+                'aproveitando o tempo restante e buscando novas demandas que ainda ' 
+                'caibam no expediente.'
+            )
+            st.rerun()
+
+        # Se existe novamente uma etapa pendente, a expansão funcionou. Removemos o
+        # bloqueio para que, quando esse novo lote for concluído e a lista de ativos
+        # mudar, o expediente possa ser preenchido outra vez.
+        if pendencias_na_rota:
+            st.session_state.pop('_ultima_expansao_turno_solicitada', None)
+
         if (
             DATA_REF_ROTA_DATE == AGORA_REAL.date()
             and final_dyn_min > LIMITE_EXPEDIENTE_DAVI_MIN
