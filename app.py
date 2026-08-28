@@ -6584,7 +6584,7 @@ def encontrar_conclusao_de_hoje(card_id, acoes):
         except: continue
     return max(conclusoes) if conclusoes else None
 
-def sincronizar_demandas(manual=False, forcar=False):
+def sincronizar_demandas(manual=False, forcar=False, geocodificar=True):
     data = obter_dados_trello(forcar=forcar)
     if not data:
         if manual: st.error("⚠️ Erro ao acessar o Trello.")
@@ -6608,7 +6608,7 @@ def sincronizar_demandas(manual=False, forcar=False):
         peso, status_prazo = classificar_prioridade(c.get('due'))
         endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
         alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
-        if endereco_card and alvo_endereco:
+        if geocodificar and endereco_card and alvo_endereco:
             local_alvo = origem if alvo_endereco == "origem" else destino
             if local_alvo and canonicalizar_ponto_rota(local_alvo) not in UNIDADES_PROPRIAS:
                 # Primeiro consulta o banco. Antes, o aplicativo chamava o geocodificador
@@ -6736,7 +6736,7 @@ def carregar_config_protege():
         return usuario, senha, ",".join(str(v).strip() for v in veiculos) if isinstance(veiculos, (list, tuple)) else str(veiculos).strip()
     except: return "", "", RASTREADOR_VEICULOS_PADRAO
 
-def loop_automacoes_background():
+def loop_automacoes_background(processar_rastreador=True):
     agora_loop = datetime.now(FUSO_LOCAL)
     try:
         data = obter_dados_trello()
@@ -6846,6 +6846,12 @@ def loop_automacoes_background():
                     icon="✅",
                 )
     except: pass
+
+    # O ciclo automático de 2 minutos do Trello/Teams não deve autenticar no
+    # rastreador. A Protege é muito mais pesada e continua restrita ao módulo
+    # Rastreador/rotinas específicas. Isso mantém a navegação responsiva.
+    if not processar_rastreador:
+        return
 
     try:
         sessao, pagina = st.session_state.get("protege_sessao"), st.session_state.get("protege_pagina")
@@ -7020,15 +7026,79 @@ if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(
 with st.sidebar:
     st.header("⚙️ Painel de operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
-    if st.session_state.get("_ultima_rotina_auto"):
-        st.caption(f"🔄 Trello e rota automáticos: último ciclo às **{st.session_state['_ultima_rotina_auto']}** • intervalo **2 min**")
-    
-    # A interface não executa mais Trello/rastreador/Teams em loop no thread da página.
-    # Isso era a principal causa de cliques em módulos ficarem aguardando. O cron do
-    # Supabase continua mantendo o cache; a tela só lê/atualiza quando necessário.
+    # Sincronização automática leve: Trello + baixas + Teams a cada 2 minutos.
+    # O primeiro carregamento NÃO consulta o Trello, para a página abrir rápido.
+    # A partir do próximo ciclo, o fragmento roda isoladamente e só força um rerun
+    # completo quando a lista/prioridade das demandas realmente mudou.
     if "ultima_sincronizacao" not in st.session_state:
         st.session_state.ultima_sincronizacao = time.time()
-    st.caption("⚡ Navegação rápida ativa • sincronização pesada fora do carregamento da tela")
+
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="120s")
+        def _ciclo_trello_teams_2min():
+            agora_ts = time.time()
+
+            # st.fragment executa imediatamente ao ser criado. Na primeira passagem
+            # apenas armamos o relógio; assim o cold start continua rápido.
+            if not st.session_state.get("_ciclo_trello_2min_armado"):
+                st.session_state["_ciclo_trello_2min_armado"] = True
+                st.session_state["_ultimo_ciclo_trello_2min_ts"] = agora_ts
+                return
+
+            ultimo = float(st.session_state.get("_ultimo_ciclo_trello_2min_ts", 0) or 0)
+            if agora_ts - ultimo < 110:
+                return
+            st.session_state["_ultimo_ciclo_trello_2min_ts"] = agora_ts
+
+            try:
+                df_antes = st.session_state.demandas.copy() if isinstance(st.session_state.get("demandas"), pd.DataFrame) else pd.DataFrame()
+                cols_sig = [c for c in ["id", "Obra", "Origem", "Destino", "Urgência", "Peso"] if c in df_antes.columns]
+                sig_antes = json.dumps(
+                    df_antes[cols_sig].fillna("").sort_values("id").to_dict("records") if cols_sig and "id" in cols_sig else [],
+                    ensure_ascii=False, sort_keys=True, default=str,
+                )
+
+                # Consulta o quadro uma única vez. No ciclo automático não geocodifica
+                # fornecedores novos: isso fica para sincronização manual/aba Endereços
+                # e evita travamentos periódicos por chamadas externas.
+                sincronizou = sincronizar_demandas(forcar=True, geocodificar=False)
+                if not sincronizou:
+                    st.session_state["_erro_ciclo_trello_2min"] = "Não foi possível consultar o Trello neste ciclo."
+                    return
+
+                # Usa o cache recém-gravado pela chamada acima para registrar baixas e
+                # enviar/repetir notificações pendentes ao Teams. Não toca na Protege.
+                loop_automacoes_background(processar_rastreador=False)
+
+                df_depois = st.session_state.demandas.copy()
+                cols_sig2 = [c for c in ["id", "Obra", "Origem", "Destino", "Urgência", "Peso"] if c in df_depois.columns]
+                sig_depois = json.dumps(
+                    df_depois[cols_sig2].fillna("").sort_values("id").to_dict("records") if cols_sig2 and "id" in cols_sig2 else [],
+                    ensure_ascii=False, sort_keys=True, default=str,
+                )
+
+                st.session_state["_ultima_rotina_auto"] = datetime.now(FUSO_LOCAL).strftime("%H:%M:%S")
+                st.session_state.pop("_erro_ciclo_trello_2min", None)
+
+                if sig_depois != sig_antes:
+                    st.session_state["_recalcular_rota_automatico"] = True
+                    # Só atualiza a página inteira quando houve mudança real.
+                    st.rerun(scope="app")
+            except TypeError:
+                # Compatibilidade com versões do Streamlit sem scope="app".
+                st.rerun()
+            except Exception as erro_ciclo:
+                st.session_state["_erro_ciclo_trello_2min"] = str(erro_ciclo)[:220]
+
+        _ciclo_trello_teams_2min()
+
+    ultimo_auto = st.session_state.get("_ultima_rotina_auto")
+    if ultimo_auto:
+        st.caption(f"🔄 Trello + Teams automáticos a cada 2 min • último ciclo: **{ultimo_auto}**")
+    else:
+        st.caption("🔄 Trello + Teams automáticos a cada 2 min • primeiro ciclo em até 2 min")
+    if st.session_state.get("_erro_ciclo_trello_2min"):
+        st.caption(f"⚠️ Último ciclo automático: {st.session_state['_erro_ciclo_trello_2min']}")
 
     st.markdown("---")
     st.markdown("📱 **App do Motorista**")
@@ -7037,7 +7107,10 @@ with st.sidebar:
 
     if st.button("🔄 Sincronizar manualmente (Trello)", use_container_width=True, type="primary"):
         with st.spinner("Puxando demandas ao vivo..."):
-            if sincronizar_demandas(manual=True, forcar=True):
+            if sincronizar_demandas(manual=True, forcar=True, geocodificar=True):
+                # Processa imediatamente qualquer baixa recém-lida e tenta o Teams,
+                # sem esperar o próximo ciclo automático de 2 minutos.
+                loop_automacoes_background(processar_rastreador=False)
                 # A sincronização manual é uma ação explícita do operador; portanto,
                 # a rota deve incorporar imediatamente novos prazos/demandas. Isso
                 # não volta a pesar na inicialização porque só acontece após o clique.
