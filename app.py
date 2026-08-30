@@ -377,10 +377,11 @@ def _html_logo_aproar(classe_css):
 
 
 def renderizar_cabecalho_torre():
-    """Cabeçalho compacto da Torre, inspirado no painel map-first."""
+    logo = _html_logo_aproar("aproar-logo-main")
     st.markdown(f"""
-        <header class="aproar-shell-header torre-mapfirst-header">
+        <header class="aproar-shell-header">
             <div class="aproar-brand">
+                {logo}
                 <div>
                     <div class="aproar-eyebrow">CENTRAL LOGÍSTICA</div>
                     <div class="aproar-title">Torre de Controle</div>
@@ -7343,6 +7344,12 @@ def loop_automacoes_background(processar_rastreador=True):
                 st.session_state["protege_pagina"] = pagina
 
         if posicoes:
+            try:
+                _pos_davi = next((p for p in posicoes if str(p.get("Placa","")).upper() == str(PLACA_DAVI).upper()), None)
+                if _pos_davi: st.session_state["_ultima_posicao_davi"] = dict(_pos_davi)
+            except Exception:
+                pass
+
             # 1. Inteligência de Início de Rota (>500m do escritório)
             lat_base, lon_base = LOCAL_BASE_COORDS
             for p in posicoes:
@@ -7465,253 +7472,313 @@ def loop_automacoes_background(processar_rastreador=True):
 
 
 # =====================================================================
-# DESIGN MAP-FIRST — TORRE DE CONTROLE
+# TORRE DE CONTROLE — VISUAL MAP-FIRST (MOCK APROVADO)
 # =====================================================================
-def aplicar_estilo_torre_map_first():
-    """Aproxima a Torre do conceito visual aprovado sem alterar o App do Davi."""
-    st.markdown("""
+def aplicar_estilo_torre_mock_aprovado():
+    st.markdown('''
     <style>
-        [data-testid="stSidebar"] { width: 252px !important; min-width:252px !important; }
-        [data-testid="stSidebar"] > div:first-child { width:252px !important; }
-        [data-testid="stSidebar"] .block-container { padding: 1.05rem .85rem 2rem !important; }
-        .main .block-container { max-width: 1740px !important; padding: 1rem 1.4rem 4rem !important; }
-        .torre-mapfirst-header { margin-bottom: 14px !important; padding: 15px 18px !important; }
-        .torre-mapfirst-header .aproar-title { font-size: 25px !important; }
-        .torre-mapfirst-header .aproar-subtitle { font-size: 11.5px !important; }
-
-        .torre-side-brand { padding: 10px 8px 14px; border-bottom:1px solid rgba(148,163,184,.12); margin-bottom:10px; }
-        .torre-side-brand .aproar-logo-sidebar { width:132px; height:44px; margin-bottom:8px; }
-        .torre-side-brand small { color:#60a5fa; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.13em; }
-        .torre-side-brand strong { display:block; color:#f8fafc; font-family:'Sora',sans-serif!important; font-size:18px; margin-top:2px; }
-        .torre-nav-title { color:#64748b; font-size:9.5px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; margin:12px 4px 5px; }
-        [data-testid="stSidebar"] div[role="radiogroup"] { gap:4px !important; }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label {
-            padding:8px 9px !important; border-radius:10px !important; min-height:38px;
-            border:1px solid transparent; transition:.15s ease; color:#cbd5e1 !important;
-        }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:rgba(37,99,235,.10); border-color:rgba(96,165,250,.16); }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-            background:linear-gradient(135deg,rgba(37,99,235,.88),rgba(29,78,216,.72)) !important;
-            border-color:rgba(96,165,250,.45) !important; box-shadow:0 8px 20px rgba(37,99,235,.22);
-        }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label p { font-size:12px !important; font-weight:800 !important; color:inherit !important; }
-
-        .tower-kpi-bar {
-            display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px;
-            margin:4px 0 12px; padding:10px; border:1px solid rgba(148,163,184,.15);
-            border-radius:16px; background:linear-gradient(145deg,#101827,#0b111d); box-shadow:0 14px 30px rgba(0,0,0,.22);
-        }
-        .tower-kpi-item { min-width:0; padding:9px 12px; border-right:1px solid rgba(148,163,184,.12); }
-        .tower-kpi-item:last-child { border-right:0; }
-        .tower-kpi-item span { display:block; color:#94a3b8; font-size:9.5px; text-transform:uppercase; letter-spacing:.08em; font-weight:900; }
-        .tower-kpi-item strong { display:block; margin-top:4px; color:#f8fafc; font-family:'Sora',sans-serif!important; font-size:20px; letter-spacing:-.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .tower-kpi-item small { display:block; margin-top:3px; color:#64748b; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .tower-kpi-item.good strong, .tower-kpi-item.good small { color:#4ade80; }
-        .tower-kpi-item.warn strong { color:#fbbf24; }
-        .tower-kpi-item.blue strong { color:#60a5fa; }
-
-        .tower-cargo-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0 0 14px; }
-        .tower-cargo-card { border-radius:15px; padding:13px 14px; background:rgba(15,21,38,.87); border:1px solid rgba(148,163,184,.16); min-height:118px; }
-        .tower-cargo-card.loaded { border-color:rgba(59,130,246,.34); background:linear-gradient(145deg,rgba(37,99,235,.10),rgba(15,21,38,.90)); }
-        .tower-cargo-card.collect { border-color:rgba(245,158,11,.30); }
-        .tower-cargo-card.deliver { border-color:rgba(34,197,94,.30); }
-        .tower-cargo-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
-        .tower-cargo-head strong { color:#f8fafc; font-size:12px; letter-spacing:.01em; }
-        .tower-cargo-count { display:grid;place-items:center;min-width:27px;height:27px;padding:0 8px;border-radius:999px;background:rgba(255,255,255,.07);color:#e2e8f0;font-weight:900;font-size:12px; }
-        .tower-cargo-list { display:flex; flex-direction:column; gap:7px; }
-        .tower-cargo-row { padding:7px 8px; border-radius:9px; background:rgba(255,255,255,.035); border:1px solid rgba(148,163,184,.08); }
-        .tower-cargo-row b { display:block; color:#e2e8f0; font-size:10.5px; line-height:1.3; }
-        .tower-cargo-row small { display:block; color:#7f8ea3; font-size:9.5px; margin-top:2px; line-height:1.25; }
-        .tower-cargo-empty { color:#64748b; font-size:10.5px; padding:7px 2px; }
-
-        .tower-stop-list { display:flex; flex-direction:column; gap:7px; margin:3px 0 11px; }
-        .tower-stop { display:grid; grid-template-columns:30px 1fr auto; gap:9px; align-items:center; padding:9px 10px; border-radius:11px; background:rgba(255,255,255,.035); border:1px solid rgba(148,163,184,.10); }
-        .tower-stop-num { width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:#17233a;color:#93c5fd;border:1px solid rgba(96,165,250,.34);font-weight:900;font-size:10px; }
-        .tower-stop.done .tower-stop-num { background:rgba(22,163,74,.18);color:#86efac;border-color:rgba(74,222,128,.4); }
-        .tower-stop.current { border-color:rgba(59,130,246,.4); background:rgba(37,99,235,.08); }
-        .tower-stop-copy b { display:block;color:#f8fafc;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-        .tower-stop-copy small { display:block;color:#7f8ea3;font-size:9.5px;margin-top:2px; }
-        .tower-stop-time { color:#cbd5e1;font-weight:900;font-size:10.5px;white-space:nowrap; }
-
-        .tower-map-title { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 8px; }
-        .tower-map-title h3 { margin:0 !important; font-size:18px !important; }
-        iframe[title*="streamlit_folium"] { border:1px solid rgba(148,163,184,.18) !important; box-shadow:0 16px 34px rgba(0,0,0,.22); }
-        div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:13px !important; }
-        .tower-action-status { display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:9.5px;font-weight:900;letter-spacing:.03em;white-space:nowrap; }
-        .tower-action-status.loaded { color:#bfdbfe;background:rgba(37,99,235,.17);border:1px solid rgba(96,165,250,.30); }
-        .tower-action-status.collect { color:#fde68a;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.28); }
-        .tower-action-status.deliver { color:#bbf7d0;background:rgba(34,197,94,.13);border:1px solid rgba(34,197,94,.27); }
-        .tower-action-status.done { color:#d1fae5;background:rgba(22,163,74,.22);border:1px solid rgba(74,222,128,.34); }
-
-        @media(max-width:1100px){.tower-kpi-bar{grid-template-columns:repeat(3,minmax(0,1fr));}.tower-cargo-grid{grid-template-columns:1fr;}.tower-kpi-item:nth-child(3){border-right:0;}}
-        @media(max-width:700px){.tower-kpi-bar{grid-template-columns:repeat(2,minmax(0,1fr));}.tower-kpi-item{border-right:0;}}
+      /* A Torre usa o mapa como tela principal; os demais módulos preservam o design system existente. */
+      [data-testid="stSidebar"] { width: 242px !important; min-width:242px !important; background:linear-gradient(180deg,#08111f,#0a1224) !important; border-right:1px solid rgba(148,163,184,.14)!important; }
+      [data-testid="stSidebar"] > div:first-child { width:242px !important; }
+      [data-testid="stSidebar"] .block-container { padding:1.2rem .85rem 2rem !important; }
+      .main .block-container { max-width: 1900px !important; padding:.35rem .65rem 3.5rem !important; }
+      [data-testid="stHeader"] { background:rgba(7,9,19,.92)!important; height:38px!important; }
+      .tc-side-brand { padding:8px 8px 14px; }
+      .tc-side-brand .aproar-logo-sidebar { width:132px!important; height:42px!important; margin-bottom:10px; }
+      .tc-side-brand small { display:block;color:#60a5fa;font-weight:800;font-size:10px;letter-spacing:.04em; }
+      .tc-side-brand strong { display:block;color:#f8fafc;font-family:'Sora',sans-serif!important;font-size:20px;line-height:1.15;margin-top:7px; }
+      .tc-side-nav-title { margin:14px 6px 6px;color:#64748b;font-size:9px;font-weight:900;letter-spacing:.12em;text-transform:uppercase; }
+      [data-testid="stSidebar"] div[role="radiogroup"] { gap:5px!important; }
+      [data-testid="stSidebar"] div[role="radiogroup"] > label { min-height:43px;padding:9px 10px!important;border-radius:10px!important;border:1px solid transparent;color:#d5deea!important; }
+      [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:rgba(37,99,235,.10)!important; }
+      [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) { background:linear-gradient(135deg,#2e67de,#1f4fb4)!important;border-color:rgba(96,165,250,.34)!important;box-shadow:0 8px 22px rgba(37,99,235,.22); }
+      [data-testid="stSidebar"] div[role="radiogroup"] > label p { font-size:12px!important;font-weight:700!important;color:inherit!important; }
+      .tc-side-status { margin:12px 0 4px;padding:11px 12px;border:1px solid rgba(148,163,184,.15);border-radius:12px;background:rgba(15,23,42,.72); }
+      .tc-side-status span { display:block;color:#94a3b8;font-size:10px; }
+      .tc-side-status b { display:block;color:#e2e8f0;font-size:12px;margin-top:3px; }
+      .tc-side-live { display:flex;align-items:center;gap:7px;margin-top:10px;color:#4ade80;font-size:11px;font-weight:800; }
+      .tc-side-live i { width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12); }
+      @media(max-width:1050px){ [data-testid="stSidebar"]{width:210px!important;min-width:210px!important;} [data-testid="stSidebar"]>div:first-child{width:210px!important;} }
     </style>
-    """, unsafe_allow_html=True)
+    ''', unsafe_allow_html=True)
 
 
-def construir_estado_carga_rota(route_steps, dict_concluidos, dict_checkins, df_paradas, p_saida, hora_inicio_real):
-    """Reconstrói o estado físico da carga: a coletar, no veículo, a entregar e entregue."""
-    registros = {}
+def _tc_parse_hora(valor):
     try:
-        agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
-        inicio_min = parse_time_to_mins(str(hora_inicio_real or HORA_INICIO_ROTA_DAVI))
-        preparacao_executada = DATA_REF_ROTA_DATE < AGORA_REAL.date() or (DATA_REF_ROTA_DATE == AGORA_REAL.date() and agora_min >= inicio_min)
+        h, m = map(int, str(valor).split(':')[:2])
+        return h * 60 + m
     except Exception:
-        preparacao_executada = False
+        return None
+
+
+def construir_estado_carga_torre_mock(route_steps, dict_concluidos, dict_checkins, df_paradas, p_saida, hora_inicio_real):
+    # Reconstrói o estado físico do material sem criar tabela nova.
+    registros = {}
+    agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+    inicio_min = _tc_parse_hora(hora_inicio_real) or _tc_parse_hora(HORA_INICIO_ROTA_DAVI) or 8*60
+    preparacao_executada = DATA_REF_ROTA_DATE < AGORA_REAL.date() or (DATA_REF_ROTA_DATE == AGORA_REAL.date() and agora_min >= inicio_min)
 
     for indice, step in enumerate(route_steps or []):
-        if step.get("type") != "stop":
+        if step.get('type') != 'stop':
             continue
-        local = str(step.get("destino", "") or "")
+        local = str(step.get('destino','') or '')
         eh_preparacao = indice == 0 and canonicalizar_ponto_rota(local) == canonicalizar_ponto_rota(p_saida)
         visitada = indice in (dict_checkins or {})
         if not visitada and not eh_preparacao:
             try:
-                real = obter_status_rastreio_local(df_paradas, local, DATA_REF_ROTA_STR)
-                visitada = bool(real and real.get("saida"))
+                status_real = obter_status_rastreio_local(df_paradas, local, DATA_REF_ROTA_STR)
+                visitada = bool(status_real and status_real.get('saida'))
             except Exception:
                 pass
-        coleta_realizada_na_etapa = (eh_preparacao and (preparacao_executada or indice in (dict_checkins or {}))) or visitada
+        coleta_feita = (eh_preparacao and preparacao_executada) or visitada
 
-        for acao, tarefa in step.get("actions", []) or []:
-            card_id = str(tarefa.get("id", "") or "").strip()
-            if not card_id:
+        for acao, tarefa in step.get('actions', []) or []:
+            cid = str(tarefa.get('id','') or '')
+            if not cid:
                 continue
-            rec = registros.setdefault(card_id, {
-                "id": card_id, "tarefa": dict(tarefa), "tem_coleta": False, "tem_entrega": False,
-                "coletado": False, "entregue": card_id in (dict_concluidos or {}),
-                "local_coleta": "", "local_entrega": "", "hora_coleta": "", "hora_entrega": "",
+            rec = registros.setdefault(cid, {
+                'id':cid, 'tarefa':dict(tarefa), 'tem_coleta':False, 'tem_entrega':False,
+                'coletado':False, 'entregue':cid in (dict_concluidos or {}),
+                'local_coleta':'', 'local_entrega':''
             })
-            if len(str(tarefa.get("Materiais", "") or "")) >= len(str(rec["tarefa"].get("Materiais", "") or "")):
-                rec["tarefa"] = dict(tarefa)
-            if acao == "COLETAR":
-                rec["tem_coleta"] = True
-                rec["local_coleta"] = local
-                if coleta_realizada_na_etapa:
-                    rec["coletado"] = True
-                    rec["hora_coleta"] = str((dict_checkins or {}).get(indice, {}).get("hora", "") or "")
-            elif acao == "ENTREGAR":
-                rec["tem_entrega"] = True
-                rec["local_entrega"] = local
+            if len(str(tarefa.get('Materiais','') or '')) >= len(str(rec['tarefa'].get('Materiais','') or '')):
+                rec['tarefa'] = dict(tarefa)
+            if acao == 'COLETAR':
+                rec['tem_coleta'] = True
+                rec['local_coleta'] = local
+                if coleta_feita:
+                    rec['coletado'] = True
+            elif acao == 'ENTREGAR':
+                rec['tem_entrega'] = True
+                rec['local_entrega'] = local
 
-    for card_id, rec in registros.items():
-        if card_id in (dict_concluidos or {}):
-            rec["entregue"] = True
-            rec["coletado"] = True
-            rec["hora_entrega"] = str((dict_concluidos or {}).get(card_id, "") or "")
-        elif not rec["tem_coleta"]:
-            origem = canonicalizar_ponto_rota(rec["tarefa"].get("Origem", ""))
-            if origem == canonicalizar_ponto_rota(p_saida) and preparacao_executada:
-                rec["coletado"] = True
+    # Entregue implica coletado. Demandas que saem da base ficam carregadas após o início da rota.
+    base = canonicalizar_ponto_rota(p_saida)
+    for rec in registros.values():
+        if rec['entregue']:
+            rec['coletado'] = True
+        if not rec['tem_coleta']:
+            origem = canonicalizar_ponto_rota(rec['tarefa'].get('Origem',''))
+            if origem == base and preparacao_executada:
+                rec['coletado'] = True
 
-    valores = list(registros.values())
+    vals = list(registros.values())
     return {
-        "registros": registros,
-        "ids_coletados": {r["id"] for r in valores if r["coletado"]},
-        "ids_entregues": {r["id"] for r in valores if r["entregue"]},
-        "no_veiculo": [r for r in valores if r["coletado"] and r["tem_entrega"] and not r["entregue"]],
-        "a_coletar": [r for r in valores if r["tem_coleta"] and not r["coletado"] and not r["entregue"]],
-        "a_entregar": [r for r in valores if r["tem_entrega"] and not r["entregue"]],
-        "entregues": [r for r in valores if r["entregue"]],
+        'registros':registros,
+        'ids_coletados':{r['id'] for r in vals if r['coletado']},
+        'ids_entregues':{r['id'] for r in vals if r['entregue']},
+        'no_veiculo':[r for r in vals if r['coletado'] and r['tem_entrega'] and not r['entregue']],
+        'a_coletar':[r for r in vals if r['tem_coleta'] and not r['coletado'] and not r['entregue']],
+        'a_entregar':[r for r in vals if r['tem_entrega'] and not r['entregue']],
+        'entregues':[r for r in vals if r['entregue']],
     }
 
 
-def _resumo_material_carga(tarefa, limite=92):
-    materiais = _separar_materiais_comprovante((tarefa or {}).get("Materiais", ""))
-    texto = " • ".join(materiais) if materiais else "Material não informado"
-    return texto if len(texto) <= limite else texto[:limite-1].rstrip() + "…"
+def _tc_resumo_material(tarefa, limite=72):
+    try:
+        itens = _separar_materiais_comprovante((tarefa or {}).get('Materiais',''))
+        texto = ' • '.join(itens) if itens else 'Material não informado'
+    except Exception:
+        texto = str((tarefa or {}).get('Materiais','') or 'Material não informado')
+    return texto if len(texto) <= limite else texto[:limite-1].rstrip() + '…'
 
 
-def renderizar_painel_carga_torre(estado):
-    def bloco(lista, vazio, mostrar_status=False):
-        if not lista:
-            return f'<div class="tower-cargo-empty">{html_escape(vazio)}</div>'
-        linhas = []
-        for rec in lista[:6]:
-            t = rec.get("tarefa", {})
-            obra = str(t.get("Obra", "Demanda") or "Demanda")
-            mat = _resumo_material_carga(t)
-            local = rec.get("local_entrega") or str(t.get("Destino", "") or "")
-            prefixo = "NO VEÍCULO • " if mostrar_status and rec.get("coletado") else ("AGUARDANDO COLETA • " if mostrar_status else "")
-            linhas.append(f'<div class="tower-cargo-row"><b>{html_escape(mat)}</b><small>{html_escape(prefixo + obra)}{(" • " + html_escape(local)) if local else ""}</small></div>')
-        if len(lista) > 6:
-            linhas.append(f'<div class="tower-cargo-empty">+ {len(lista)-6} outros itens</div>')
-        return "".join(linhas)
-
-    no_veiculo, a_coletar, a_entregar = estado.get("no_veiculo", []), estado.get("a_coletar", []), estado.get("a_entregar", [])
-    st.markdown(f"""
-        <div class="tower-cargo-grid">
-            <section class="tower-cargo-card loaded"><div class="tower-cargo-head"><strong>🚚 COLETADO / NO VEÍCULO</strong><span class="tower-cargo-count">{len(no_veiculo)}</span></div><div class="tower-cargo-list">{bloco(no_veiculo, 'Nenhum material pendente está carregado agora.')}</div></section>
-            <section class="tower-cargo-card collect"><div class="tower-cargo-head"><strong>📦 A COLETAR</strong><span class="tower-cargo-count">{len(a_coletar)}</span></div><div class="tower-cargo-list">{bloco(a_coletar, 'Nenhuma coleta pendente.')}</div></section>
-            <section class="tower-cargo-card deliver"><div class="tower-cargo-head"><strong>📬 A ENTREGAR</strong><span class="tower-cargo-count">{len(a_entregar)}</span></div><div class="tower-cargo-list">{bloco(a_entregar, 'Todas as entregas da rota foram concluídas.', True)}</div></section>
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def renderizar_kpis_rota_torre(estado, route_steps, final_dyn_min):
-    registros = estado.get("registros", {})
-    entregues = len(estado.get("entregues", []))
-    total = sum(1 for r in registros.values() if r.get("tem_entrega")) or len(registros)
-    carregados, coletas = len(estado.get("no_veiculo", [])), len(estado.get("a_coletar", []))
-    adiadas = len(st.session_state.get("demandas_adiadas", []) or [])
-    proxima, proxima_hora = "Rota concluída", "--:--"
+def _tc_proxima_parada(route_steps, estado):
+    ids_c = estado.get('ids_coletados', set())
+    ids_e = estado.get('ids_entregues', set())
     for step in route_steps or []:
-        if step.get("type") != "stop": continue
-        pendente = False
-        for acao, tarefa in step.get("actions", []) or []:
-            cid = str(tarefa.get("id", "") or "")
-            pendente |= acao == "ENTREGAR" and cid not in estado.get("ids_entregues", set())
-            pendente |= acao == "COLETAR" and cid not in estado.get("ids_coletados", set())
-        if pendente:
-            proxima = str(step.get("destino", "Próxima parada") or "Próxima parada")
-            proxima_hora = str(step.get("dyn_chegada", step.get("chegada", "--:--")) or "--:--")
-            break
-    st.markdown(f"""
-        <div class="tower-kpi-bar">
-            <div class="tower-kpi-item"><span>Demandas do dia</span><strong>{total}</strong><small>{max(0,total-entregues)} pendentes</small></div>
-            <div class="tower-kpi-item good"><span>Entregues</span><strong>{entregues}</strong><small>{round(100*entregues/max(1,total))}% concluído</small></div>
-            <div class="tower-kpi-item blue"><span>No veículo</span><strong>{carregados}</strong><small>coletados e não entregues</small></div>
-            <div class="tower-kpi-item warn"><span>A coletar</span><strong>{coletas}</strong><small>{adiadas} p/ próximo planejamento</small></div>
-            <div class="tower-kpi-item blue"><span>Próxima parada</span><strong>{html_escape(proxima_hora)}</strong><small>{html_escape(proxima)}</small></div>
-            <div class="tower-kpi-item good"><span>Término previsto</span><strong>{html_escape(format_mins_to_time(final_dyn_min))}</strong><small>expediente até 17:00</small></div>
-        </div>
-    """, unsafe_allow_html=True)
+        if step.get('type') != 'stop':
+            continue
+        for acao, tarefa in step.get('actions', []) or []:
+            cid = str(tarefa.get('id','') or '')
+            if (acao == 'COLETAR' and cid not in ids_c) or (acao == 'ENTREGAR' and cid not in ids_e):
+                return step
+    return None
 
 
-def renderizar_resumo_paradas_torre(route_steps, estado, p_saida):
-    ids_entregues, ids_coletados = estado.get("ids_entregues", set()), estado.get("ids_coletados", set())
-    itens, numero, atual_marcado = [], 0, False
-    for indice, step in enumerate(route_steps or []):
-        if step.get("type") == "lunch": continue
-        if step.get("type") == "return":
-            itens.append(("↩", "Retorno à base", str(step.get("dyn_chegada", "--:--")), "retorno", True, False)); continue
-        eh_inicio = indice == 0 and canonicalizar_ponto_rota(step.get("destino", "")) == canonicalizar_ponto_rota(p_saida)
-        if not eh_inicio: numero += 1
-        acoes = step.get("actions", []) or []
-        pendentes = []
-        for acao, tarefa in acoes:
-            cid = str(tarefa.get("id", "") or "")
-            if acao == "COLETAR" and cid not in ids_coletados: pendentes.append("coleta")
-            elif acao == "ENTREGAR" and cid not in ids_entregues: pendentes.append("entrega")
-        done = bool(acoes) and not pendentes
-        current = not done and not atual_marcado and not eh_inicio
-        if current: atual_marcado = True
-        qc, qe = sum(1 for a,_ in acoes if a == "COLETAR"), sum(1 for a,_ in acoes if a == "ENTREGAR")
-        desc = " • ".join(x for x in [f"{qc} coleta(s)" if qc else "", f"{qe} entrega(s)" if qe else ""] if x)
-        itens.append(("🏁" if eh_inicio else str(numero), str(step.get("destino", "")), str(step.get("dyn_chegada", step.get("chegada", "--:--"))), desc, done, current))
-    html = []
-    for num, local, hora, desc, done, current in itens[:8]:
-        classes = "tower-stop" + (" done" if done else "") + (" current" if current else "")
-        html.append(f'<div class="{classes}"><span class="tower-stop-num">{html_escape(str(num))}</span><div class="tower-stop-copy"><b>{html_escape(local)}</b><small>{html_escape(desc or ("Concluída" if done else "Parada operacional"))}</small></div><span class="tower-stop-time">{html_escape(hora)}</span></div>')
-    if len(itens) > 8: html.append(f'<div class="tower-cargo-empty">+ {len(itens)-8} paradas no restante do roteiro</div>')
-    st.markdown('<div class="tower-stop-list">' + ''.join(html) + '</div>', unsafe_allow_html=True)
+def _tc_html_rota(route_steps, estado, p_saida, hora_inicio_real, enderecos_dict):
+    ids_c = estado.get('ids_coletados', set())
+    ids_e = estado.get('ids_entregues', set())
+    cards, n, current_set = [], 0, False
+    for i, step in enumerate(route_steps or []):
+        if step.get('type') != 'stop':
+            continue
+        if i == 0 and canonicalizar_ponto_rota(step.get('destino','')) == canonicalizar_ponto_rota(p_saida):
+            continue
+        n += 1
+        pend = False
+        for acao, tarefa in step.get('actions', []) or []:
+            cid = str(tarefa.get('id','') or '')
+            if (acao == 'COLETAR' and cid not in ids_c) or (acao == 'ENTREGAR' and cid not in ids_e):
+                pend = True
+        done = bool(step.get('actions')) and not pend
+        current = (not done and not current_set)
+        if current: current_set = True
+        end = str((enderecos_dict or {}).get(step.get('destino',''),'') or '')
+        if end.startswith('http') or not end:
+            qc = sum(1 for a,_ in step.get('actions',[]) if a=='COLETAR')
+            qe = sum(1 for a,_ in step.get('actions',[]) if a=='ENTREGAR')
+            end = ' • '.join(x for x in [f'{qc} coleta' if qc else '', f'{qe} entrega' if qe else ''] if x) or 'Parada operacional'
+        cards.append({'n':n,'destino':str(step.get('destino','')),'hora':str(step.get('dyn_chegada',step.get('chegada','--:--'))),'end':end,'done':done,'current':current})
+    total = len(cards); concl = sum(1 for c in cards if c['done']); prog = round(100*concl/max(1,total))
+    proxima = next((c for c in cards if c['current']), None)
+    mins = None
+    if proxima:
+        alvo = _tc_parse_hora(proxima['hora'])
+        if alvo is not None: mins = max(0, alvo-(AGORA_REAL.hour*60+AGORA_REAL.minute))
+    rows=[]
+    for c in cards[:4]:
+        cls = 'done' if c['done'] else 'current' if c['current'] else ''
+        bullet = '✓' if c['done'] else c['n']
+        status = 'Concluída' if c['done'] else 'Previsão'
+        rows.append(f'''<div class="tc-stop {cls}"><span class="tc-bullet">{bullet}</span><div class="tc-stop-copy"><b>{c['n']}. {html_escape(c['destino'])}</b><small>{html_escape(c['end'])}</small></div><div class="tc-stop-time"><b>{html_escape(c['hora'])}</b><small>{status}</small></div></div>''')
+    extra = f'<div class="tc-more">+ {len(cards)-4} parada(s) no restante do roteiro</div>' if len(cards)>4 else ''
+    pill = f'<div class="tc-current-pill">🚚 Em trânsito • Chegada em {mins} min</div>' if proxima and mins is not None else ('<div class="tc-current-pill">🚚 Em trânsito</div>' if proxima else '')
+    return f'''
+      <section class="tc-overlay tc-route-card">
+        <div class="tc-card-title"><h3>🧾 Roteiro do Davi</h3><span>⌃ &nbsp; ✕</span></div>
+        <div class="tc-meta">🕖 Expediente: 07:00 às 17:00<br>◷ Início da rota: {html_escape(str(hora_inicio_real))}</div>
+        <div class="tc-progress-head"><span>Progresso da rota</span><b>{prog}%</b></div><div class="tc-progress"><i style="width:{prog}%"></i></div>
+        <div class="tc-progress-caption">{concl} de {max(1,total)} paradas concluídas</div>
+        <div class="tc-carga-mini"><span>🚚 {len(estado.get('no_veiculo',[]))} no veículo</span><span>📦 {len(estado.get('a_coletar',[]))} a coletar</span><span>📬 {len(estado.get('a_entregar',[]))} a entregar</span></div>
+        {''.join(rows)}{extra}{pill}<div class="tc-fake-button">Ver detalhes da rota &nbsp; ›</div>
+      </section>
+    '''
+
+
+def _tc_rastreador_resumo(route_steps, df_paradas, estado, enderecos_dict, locais_dict):
+    # Usa a última posição real da Protege quando disponível; caso contrário mostra a próxima parada.
+    pos = st.session_state.get('_ultima_posicao_davi') or {}
+    if pos:
+        return {
+            'veiculo':f"Davi • {str(pos.get('Placa',PLACA_DAVI))}", 'local':str(pos.get('Endereço','') or 'Posição atual do veículo'),
+            'atualizacao':str(pos.get('Última atualização','') or 'Atualizado agora'),
+            'vel':f"{float(pos.get('Velocidade (km/h)',0) or 0):.0f} km/h", 'gps':'Ótimo', 'bateria':'100%',
+            'lat':pos.get('Latitude'),'lon':pos.get('Longitude')
+        }
+    step = _tc_proxima_parada(route_steps, estado)
+    local = str(step.get('destino','') if step else 'Rota concluída')
+    end = str((enderecos_dict or {}).get(local,'') or local)
+    return {'veiculo':f"Davi • {veiculo_selecionado.split('(')[0].strip()}",'local':end,'atualizacao':f"Próxima parada {step.get('dyn_chegada',step.get('chegada','--:--'))}" if step else 'Rota concluída','vel':'Em rota' if step else '0 km/h','gps':'Online','bateria':'n/d','lat':None,'lon':None}
+
+
+def _tc_html_tracker(route_steps, df_paradas, estado, enderecos_dict, locais_dict, final_dyn_min):
+    r = _tc_rastreador_resumo(route_steps, df_paradas, estado, enderecos_dict, locais_dict)
+    try: link=f"https://www.google.com/maps?q={float(r['lat'])},{float(r['lon'])}" if r.get('lat') is not None else '#'
+    except Exception: link='#'
+    adiadas=len(st.session_state.get('demandas_adiadas',[]) or [])
+    if adiadas: aviso=f'{adiadas} demandas ficaram para o próximo planejamento por prioridade, capacidade ou falta de tempo hábil até as 17h.'
+    elif final_dyn_min > LIMITE_EXPEDIENTE_DAVI_MIN: aviso='A previsão atual ultrapassa o expediente. O sistema recalcula o restante para respeitar o limite das 17h.'
+    else: aviso='Operação dentro do previsto. Novas demandas ainda podem ser aproveitadas se couberem até as 17h.'
+    return f'''
+      <section class="tc-overlay tc-tracker-card"><div class="tc-card-title"><h3>Rastreador ao vivo</h3><span>✕</span></div>
+        <div class="tc-live-box"><i></i><div><small>Veículo em operação</small><b>{html_escape(r['veiculo'])}</b></div></div>
+        <div class="tc-location"><b>Localização atual</b><p>{html_escape(r['local'])}<br>{html_escape(r['atualizacao'])}</p></div>
+        <div class="tc-tracker-metrics"><div><small>Velocidade</small><b>{html_escape(r['vel'])}</b></div><div><small>Bateria/GPS</small><b class="green">{html_escape(r['bateria'])}</b></div><div><small>Sinal GPS</small><b class="green">{html_escape(r['gps'])}</b></div></div>
+        <a class="tc-blue-btn" href="{html_escape(link,quote=True)}" target="_blank">🧭 Ver no mapa</a>
+      </section>
+      <section class="tc-overlay tc-limit-card"><div class="tc-limit-icon">⚠️</div><div><b>Limite do expediente</b><p>{html_escape(aviso)}</p></div></section>
+    '''
+
+
+def _tc_html_kpis(estado, route_steps, final_dyn_min):
+    total = sum(1 for r in estado.get('registros',{}).values() if r.get('tem_entrega')) or len(estado.get('registros',{}))
+    entregues=len(estado.get('entregues',[])); agora=AGORA_REAL.hour*60+AGORA_REAL.minute
+    atrasos=0
+    for s in route_steps or []:
+        if s.get('type')!='stop': continue
+        p=_tc_parse_hora(s.get('dyn_chegada',s.get('chegada','')))
+        if p is not None and p < agora and not s.get('is_concluded'): atrasos += 1
+    prox=_tc_proxima_parada(route_steps,estado); nome=str(prox.get('destino','Rota concluída') if prox else 'Rota concluída')
+    hora=str(prox.get('dyn_chegada',prox.get('chegada','')) if prox else format_mins_to_time(final_dyn_min)); alvo=_tc_parse_hora(hora); mins=max(0,alvo-agora) if prox and alvo is not None else None
+    return f'''
+      <section class="tc-bottom-kpis">
+        <div><span>🧾 Demandas do dia</span><b>{total}</b><small>{max(0,total-entregues)} pendentes</small></div>
+        <div><span>✅ Entregas concluídas</span><b>{entregues}</b><small>{round(100*entregues/max(1,total))}% do total</small></div>
+        <div><span>🚚 Em andamento</span><b>{1 if prox else 0}</b><small>Davi • {html_escape(veiculo_selecionado.split('(')[0].strip())}</small></div>
+        <div><span>🕒 Atrasos</span><b>{atrasos}</b><small class="green">{'Dentro do previsto' if atrasos==0 else 'Requer atenção'}</small></div>
+        <div><span>🚩 Próxima parada</span><b>{str(mins)+' min' if mins is not None else '--'}</b><small>{html_escape(nome)}</small></div>
+        <div><span>🗓️ Término previsto</span><b>{html_escape(format_mins_to_time(final_dyn_min))}</b><small class="green">Hoje, {html_escape(DATA_REF_ROTA_STR)}</small></div>
+      </section>
+    '''
+
+
+def renderizar_torre_mock_aprovado(route_steps, locais_dict, enderecos_dict, p_saida, estado, df_paradas, hora_inicio_real, final_dyn_min):
+    # Folium é usado como mapa real; os cards HTML ficam por cima do mapa no mesmo iframe.
+    m=folium.Map(location=[-3.7319,-38.5267],zoom_start=12,tiles='CartoDB positron',zoom_control=False,control_scale=False)
+    folium.TileLayer('OpenStreetMap',name='Mapa').add_to(m)
+    pontos=[]
+    if p_saida in locais_dict: pontos.append([float(locais_dict[p_saida][0]),float(locais_dict[p_saida][1])])
+    for i,s in enumerate(route_steps or []):
+        if s.get('type')=='stop' and s.get('destino') in locais_dict and not (i==0 and canonicalizar_ponto_rota(s.get('destino',''))==canonicalizar_ponto_rota(p_saida)):
+            pontos.append([float(locais_dict[s['destino']][0]),float(locais_dict[s['destino']][1])])
+    geom=normalizar_geometria_mapa(st.session_state.get('geometria_rota') or [],pontos)
+    if len(geom)<2 and len(pontos)>1:
+        geom,_=buscar_geometria_rota(pontos); geom=normalizar_geometria_mapa(geom,pontos)
+    if len(geom)<2: geom=pontos
+    if len(geom)>1:
+        folium.PolyLine(geom,color='#fff',weight=9,opacity=.85).add_to(m); folium.PolyLine(geom,color='#2968f0',weight=5,opacity=1).add_to(m)
+    n=1
+    for i,s in enumerate(route_steps or []):
+        if s.get('type')!='stop' or s.get('destino') not in locais_dict: continue
+        if i==0 and canonicalizar_ponto_rota(s.get('destino',''))==canonicalizar_ponto_rota(p_saida): continue
+        lat,lon=map(float,locais_dict[s['destino']]); acts=s.get('actions',[]) or []
+        temc=any(a=='COLETAR' for a,_ in acts); teme=any(a=='ENTREGAR' for a,_ in acts); cor='#f59e0b' if temc else '#2563eb'
+        detalhes=[]
+        for ac,t in acts:
+            cid=str(t.get('id','') or ''); mat=_tc_resumo_material(t)
+            if ac=='COLETAR': stat='COLETADO' if cid in estado.get('ids_coletados',set()) else 'A COLETAR'; ico='📦'
+            else:
+                if cid in estado.get('ids_entregues',set()): stat='ENTREGUE'
+                elif cid in estado.get('ids_coletados',set()): stat='NO VEÍCULO / A ENTREGAR'
+                else: stat='A ENTREGAR'
+                ico='📬'
+            detalhes.append(f'{ico} <b>{html_escape(stat)}</b> — {html_escape(mat)}')
+        pop=f"<b>Parada {n}: {html_escape(str(s['destino']))}</b><br>Previsão: {html_escape(str(s.get('dyn_chegada',s.get('chegada',''))))}<br>"+'<br>'.join(detalhes)
+        icon=f'<div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:{cor};border:3px solid #fff;color:#fff;font:bold 15px Arial;box-shadow:0 4px 12px rgba(0,0,0,.24)">{n}</div>'
+        folium.Marker([lat,lon],popup=folium.Popup(pop,max_width=340),tooltip=f"Parada {n} — {s['destino']}",icon=folium.DivIcon(html=icon)).add_to(m); n+=1
+    pos=st.session_state.get('_ultima_posicao_davi') or {}
+    try:
+        plat,plon=float(pos.get('Latitude')),float(pos.get('Longitude')); pontos.append([plat,plon])
+        truck='<div style="width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#1d4ed8;border:4px solid #fff;color:#fff;font-size:19px;box-shadow:0 5px 16px rgba(0,0,0,.25)">🚚</div>'
+        folium.Marker([plat,plon],tooltip='Davi — posição atual',icon=folium.DivIcon(html=truck),z_index_offset=9000).add_to(m)
+    except Exception: pass
+    if len(pontos)>1: m.fit_bounds(pontos,padding=(35,35),max_zoom=14)
+
+    css=r'''<style>
+      html,body{margin:0!important;padding:0!important;width:100%;height:100%;overflow:hidden;font-family:Inter,Manrope,Arial,sans-serif;background:#e9edf2}.folium-map{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;z-index:1!important}.leaflet-control-attribution{font-size:8px!important;opacity:.38}
+      .tc-top-search{position:absolute;z-index:9900;top:22px;left:22px;width:300px;height:48px;background:rgba(255,255,255,.96);border:1px solid rgba(15,23,42,.07);border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,.12);display:flex;align-items:center;padding:0 15px;color:#64748b;font-size:13px}.tc-top-right{position:absolute;z-index:9900;top:22px;right:22px;display:flex;gap:10px}.tc-top-btn,.tc-weather{height:48px;border-radius:14px;background:rgba(255,255,255,.96);border:1px solid rgba(15,23,42,.07);box-shadow:0 8px 24px rgba(15,23,42,.10);display:flex;align-items:center;gap:8px;padding:0 14px;color:#111827;font-weight:800;font-size:12px}.tc-weather{font-weight:600}.tc-weather b{font-size:17px}.tc-weather small{display:block;color:#64748b;font-weight:500}
+      .tc-overlay{position:absolute;z-index:9950;background:linear-gradient(180deg,rgba(17,24,39,.97),rgba(8,14,25,.97));border:1px solid rgba(148,163,184,.18);border-radius:16px;color:#f8fafc;box-shadow:0 18px 34px rgba(2,6,23,.30)}.tc-route-card{top:87px;left:22px;width:286px;padding:15px}.tc-tracker-card{top:87px;right:22px;width:272px;padding:15px}.tc-limit-card{top:418px;right:22px;width:272px;padding:13px 15px;display:flex;gap:9px;align-items:flex-start}.tc-card-title{display:flex;align-items:center;justify-content:space-between}.tc-card-title h3{margin:0;font-size:16px}.tc-card-title span{color:#94a3b8;font-size:15px}.tc-meta{margin:12px 0 13px;color:#aebbd0;font-size:11px;line-height:1.5}.tc-progress-head{display:flex;justify-content:space-between;color:#e7edf7;font-size:12px;font-weight:800}.tc-progress{height:7px;border-radius:20px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:7px}.tc-progress i{display:block;height:100%;background:#3478f6}.tc-progress-caption{margin:7px 0 9px;color:#b9c5d6;font-size:11px}.tc-carga-mini{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}.tc-carga-mini span{background:rgba(37,99,235,.14);border:1px solid rgba(96,165,250,.18);border-radius:999px;padding:3px 6px;color:#cfe1ff;font-size:8px;font-weight:800}.tc-stop{display:grid;grid-template-columns:23px minmax(0,1fr) auto;gap:9px;align-items:start;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)}.tc-bullet{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;border:2px solid #41699f;color:#d7e7ff;font-size:9px;font-weight:900}.tc-stop.done .tc-bullet{background:#25b86a;border-color:#25b86a;color:#fff}.tc-stop.current .tc-bullet{background:#2563eb;border-color:#79a7ff;color:#fff}.tc-stop-copy{min-width:0}.tc-stop-copy b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tc-stop-copy small{display:block;color:#9fb0c8;font-size:9px;line-height:1.3;margin-top:3px;max-height:25px;overflow:hidden}.tc-stop-time{text-align:right}.tc-stop-time b{display:block;font-size:10px}.tc-stop-time small{display:block;color:#8fa3bd;font-size:8px;margin-top:3px}.tc-stop.done .tc-stop-time small{color:#47da85}.tc-stop.current .tc-stop-time small{color:#6ba0ff}.tc-current-pill{margin-top:9px;border-radius:9px;padding:7px 8px;background:#1d3f7f;color:#dceaff;font-size:9px;font-weight:800}.tc-more{padding:8px 0;color:#8fa2b9;font-size:9px}.tc-fake-button{margin-top:10px;height:35px;border:1px solid rgba(148,163,184,.18);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800}
+      .tc-live-box{margin-top:12px;padding:10px;border:1px solid rgba(148,163,184,.14);border-radius:11px;display:flex;gap:8px;align-items:center}.tc-live-box i{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}.tc-live-box small{display:block;color:#a6b5c8;font-size:9px}.tc-live-box b{display:block;font-size:10px;margin-top:2px}.tc-location{margin-top:13px}.tc-location>b{font-size:11px}.tc-location p{margin:5px 0 0;color:#c4cedd;font-size:10px;line-height:1.45}.tc-tracker-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(148,163,184,.12)}.tc-tracker-metrics div{border-right:1px solid rgba(148,163,184,.12)}.tc-tracker-metrics div:last-child{border-right:0}.tc-tracker-metrics small{display:block;color:#879ab2;font-size:8px}.tc-tracker-metrics b{display:block;margin-top:5px;font-size:11px}.green{color:#39d77c!important}.tc-blue-btn{height:36px;margin-top:12px;border-radius:8px;background:#245bd9;color:#fff!important;text-decoration:none!important;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}.tc-limit-icon{font-size:14px}.tc-limit-card b{font-size:10px}.tc-limit-card p{margin:5px 0 0;color:#c1ccdb;font-size:9px;line-height:1.45}
+      .tc-map-controls{position:absolute;z-index:9960;right:22px;top:535px;display:flex;flex-direction:column;gap:9px}.tc-map-controls button{width:40px;height:40px;border:0;border-radius:10px;background:rgba(255,255,255,.96);box-shadow:0 7px 18px rgba(15,23,42,.15);font-size:21px;color:#111827;cursor:pointer}.tc-map-controls .small{font-size:16px}
+      .tc-bottom-kpis{position:absolute;z-index:9970;left:12px;right:12px;bottom:12px;min-height:96px;padding:10px 14px;border-radius:15px;background:linear-gradient(180deg,rgba(18,27,42,.97),rgba(10,17,29,.97));border:1px solid rgba(148,163,184,.18);box-shadow:0 16px 34px rgba(2,6,23,.28);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));color:#fff}.tc-bottom-kpis>div{min-width:0;padding:3px 12px;border-right:1px solid rgba(148,163,184,.13);display:flex;flex-direction:column;justify-content:center}.tc-bottom-kpis>div:last-child{border-right:0}.tc-bottom-kpis span{color:#c7d2e1;font-size:9px}.tc-bottom-kpis b{font-size:23px;margin-top:5px;white-space:nowrap}.tc-bottom-kpis small{color:#aab9cc;font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      @media(max-width:1100px){.tc-tracker-card,.tc-limit-card{display:none}.tc-route-card{width:275px}.tc-bottom-kpis{grid-template-columns:repeat(3,1fr)}.tc-top-right{display:none}}
+    </style>'''
+    top='''<div class="tc-top-search">⌕ &nbsp; Buscar endereço, demanda ou local...</div><div class="tc-top-right"><div class="tc-top-btn">▰ &nbsp; Camadas</div><div class="tc-weather">🌤️ <div><b>22°C</b><small>Parcialmente nublado</small></div></div></div><div class="tc-map-controls"><button onclick="window._tc_in&&window._tc_in()">+</button><button onclick="window._tc_out&&window._tc_out()">−</button><button class="small" onclick="location.reload()">◎</button><button class="small">▱</button></div>'''
+    js='''<script>setTimeout(function(){try{var el=document.querySelector('.folium-map');var map=el&&window[el.id];if(map){window._tc_in=function(){map.zoomIn()};window._tc_out=function(){map.zoomOut()}}}catch(e){}},600);</script>'''
+    m.get_root().header.add_child(folium.Element(css)); m.get_root().html.add_child(folium.Element(top+_tc_html_rota(route_steps,estado,p_saida,hora_inicio_real,enderecos_dict)+_tc_html_tracker(route_steps,df_paradas,estado,enderecos_dict,locais_dict,final_dyn_min)+_tc_html_kpis(estado,route_steps,final_dyn_min)+js))
+    st.components.v1.html(m.get_root().render(),height=790,scrolling=False)
+
+
+def renderizar_resumo_carga_torre_mock(estado):
+    # Detalhamento textual acessível abaixo do mock; não polui a tela principal.
+    c1,c2,c3=st.columns(3)
+    def bloco(col,titulo,lista):
+        with col:
+            st.markdown(f'**{titulo} — {len(lista)}**')
+            if not lista: st.caption('Nenhum item.')
+            for r in lista[:10]:
+                t=r.get('tarefa',{}); local=r.get('local_entrega') or r.get('local_coleta') or ''
+                st.markdown(f"• **{_tc_resumo_material(t,100)}**  ")
+                st.caption(f"{t.get('Obra','')}" + (f" • {local}" if local else ''))
+    bloco(c1,'🚚 NO VEÍCULO',estado.get('no_veiculo',[])); bloco(c2,'📦 A COLETAR',estado.get('a_coletar',[])); bloco(c3,'📬 A ENTREGAR',estado.get('a_entregar',[]))
 
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
-aplicar_estilo_torre_map_first()
-renderizar_cabecalho_torre()
+aplicar_estilo_torre_mock_aprovado()
 
+# NAVEGAÇÃO LATERAL — igual ao mock aprovado.
 MODULOS_PRINCIPAIS = [
     "🗺️ Roteiro do Davi", "📡 Rastreador ao vivo", "📦 Demandas ativas",
     "📋 Histórico e concluídos", "📍 Endereços", "🚗 Frota e custos",
@@ -7721,15 +7788,11 @@ if "demandas" not in st.session_state:
 
 with st.sidebar:
     logo_sidebar = _html_logo_aproar("aproar-logo-sidebar")
-    st.markdown(f"""
-        <div class="torre-side-brand">{logo_sidebar}<small>Central Logística</small><strong>Torre de Controle</strong></div>
-        <div class="torre-nav-title">Navegação</div>
-    """, unsafe_allow_html=True)
-    _modulo_anterior = st.session_state.get("modulo_principal", MODULOS_PRINCIPAIS[0])
-    _indice_modulo = MODULOS_PRINCIPAIS.index(_modulo_anterior) if _modulo_anterior in MODULOS_PRINCIPAIS else 0
-    modulo_principal = st.radio("Navegação", MODULOS_PRINCIPAIS, index=_indice_modulo, key="modulo_principal", label_visibility="collapsed") or MODULOS_PRINCIPAIS[0]
-    st.markdown('<div class="torre-nav-title">Operação</div>', unsafe_allow_html=True)
-    st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
+    st.markdown(f"""<div class="tc-side-brand">{logo_sidebar}<small>Central Logística</small><strong>Torre de Controle</strong></div><div class="tc-side-nav-title">Navegação</div>""", unsafe_allow_html=True)
+    _mod_atual = st.session_state.get("modulo_principal", MODULOS_PRINCIPAIS[0])
+    _mod_index = MODULOS_PRINCIPAIS.index(_mod_atual) if _mod_atual in MODULOS_PRINCIPAIS else 0
+    modulo_principal = st.radio("Módulo", MODULOS_PRINCIPAIS, index=_mod_index, key="modulo_principal", label_visibility="collapsed") or MODULOS_PRINCIPAIS[0]
+    st.markdown(f"""<div class="tc-side-status"><span>Planejamento</span><b>{DATA_REF_ROTA_STR}</b><div class="tc-side-live"><i></i> Operação ativa</div></div>""", unsafe_allow_html=True)
     # Sincronização automática leve: Trello + baixas + Teams a cada 2 minutos.
     # O primeiro carregamento NÃO consulta o Trello, para a página abrir rápido.
     # A partir do próximo ciclo, o fragmento roda isoladamente e só força um rerun
@@ -7844,7 +7907,8 @@ with st.sidebar:
         st.caption(f"ℹ️ *{ {'⚖️ Equilibrada': 'Prioriza primeiro os prazos críticos (vencidas/hoje) e, entre opções de prioridade semelhante, equilibra proximidade, tempo e carga.', '🏢 Foco em Descarregar': 'Prioriza as entregas para reduzir o volume de materiais transportados no veículo.', '⛽ Menor Distância': 'Prioriza a menor distância percorrida, com foco na economia de combustível.', '🚨 Priorizar Urgências': 'Dá peso máximo às demandas vencidas ou programadas para hoje.'}[estrategia_atual] }*")
         st.checkbox("Retornar à base no fim do dia", value=True, key="cfg_retornar_base")
 
-    controles_planejamento_rota()
+    with st.expander("⚙️ Configuração da rota", expanded=False):
+        controles_planejamento_rota()
 
 veiculo_selecionado = st.session_state.get("cfg_veiculo_rota", "Frota da Empresa (Calcula Gasolina)")
 
@@ -9287,10 +9351,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
-        estado_carga_torre = construir_estado_carga_rota(
-            route_steps, dict_concluidos_torre, dict_checkins_torre, df_paradas, p_saida, hora_inicio_real
-        )
-
         # Uma rota que cabia às 08h pode deixar de caber depois de atrasos reais.
         # Se o ETA atual ultrapassar 17h e ainda houver demanda pendente, refazemos
         # automaticamente o restante a partir de AGORA. O motor de planejamento
@@ -9396,128 +9456,134 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 )
                 st.rerun()
 
-        renderizar_kpis_rota_torre(estado_carga_torre, route_steps, final_dyn_min)
-        renderizar_painel_carga_torre(estado_carga_torre)
+        estado_carga_torre = construir_estado_carga_torre_mock(
+            route_steps, dict_concluidos_torre, dict_checkins_torre, df_paradas, p_saida, hora_inicio_real
+        )
+        _msg_ajuste_visual = st.session_state.pop("_mensagem_ajuste_rota", "")
+        if _msg_ajuste_visual:
+            st.success(_msg_ajuste_visual)
+        renderizar_torre_mock_aprovado(
+            route_steps, locais_dict, enderecos_dict, p_saida, estado_carga_torre, df_paradas, hora_inicio_real, final_dyn_min
+        )
+        with st.expander("📦 Ver o que ele coletou e o que ainda precisa entregar", expanded=False):
+            renderizar_resumo_carga_torre_mock(estado_carga_torre)
 
-        col_esq, col_dir = st.columns([0.38, 0.62], gap="medium")
-        with col_esq:
-            st.subheader(f"📋 Roteiro de viagem do Davi — {DATA_REF_ROTA_STR}")
-            st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
+        with st.expander("⚙️ Detalhes técnicos, ajustes, comprovantes e mapa técnico", expanded=False):
+            col_esq, col_dir = st.columns([1.2, 0.8])
+            with col_esq:
+                st.subheader(f"📋 Roteiro de viagem do Davi — {DATA_REF_ROTA_STR}")
+                st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
 
-            # A marca invisível colocada dentro de uma etapa concluída pelo Davi
-            # acende a borda do próprio cartão, sem criar um painel separado.
-            st.markdown("""
-                <style>
-                    div[data-testid="stVerticalBlockBorderWrapper"]:has(.davi-etapa-feita) {
-                        border: 2px solid #39ff88 !important;
-                        background: linear-gradient(145deg, rgba(34,197,94,.10), rgba(13,16,37,.78)) !important;
-                        outline: 1px solid rgba(134,239,172,.85);
-                        outline-offset: 1px;
-                        box-shadow: 0 0 8px rgba(57,255,136,.95),
-                                    0 0 22px rgba(34,197,94,.55),
-                                    inset 0 0 18px rgba(34,197,94,.08);
-                        animation: pulso-davi 2.2s ease-in-out infinite;
-                    }
-                    .davi-etapa-feita { display:none; }
-                    .selo-davi-feita {
-                        display:inline-block; margin:7px 0 11px; padding:5px 10px;
-                        color:#d1fae5; background:rgba(22,163,74,.24);
-                        border:1px solid rgba(74,222,128,.65); border-radius:999px;
-                        font-size:12px; font-weight:800;
-                    }
-                    @keyframes pulso-davi {
-                        0%, 100% { box-shadow:0 0 7px rgba(57,255,136,.75), 0 0 18px rgba(34,197,94,.38), inset 0 0 18px rgba(34,197,94,.06); }
-                        50% { box-shadow:0 0 12px rgba(57,255,136,1), 0 0 30px rgba(34,197,94,.68), inset 0 0 22px rgba(34,197,94,.12); }
-                    }
-                </style>
-            """, unsafe_allow_html=True)
+                # A marca invisível colocada dentro de uma etapa concluída pelo Davi
+                # acende a borda do próprio cartão, sem criar um painel separado.
+                st.markdown("""
+                    <style>
+                        div[data-testid="stVerticalBlockBorderWrapper"]:has(.davi-etapa-feita) {
+                            border: 2px solid #39ff88 !important;
+                            background: linear-gradient(145deg, rgba(34,197,94,.10), rgba(13,16,37,.78)) !important;
+                            outline: 1px solid rgba(134,239,172,.85);
+                            outline-offset: 1px;
+                            box-shadow: 0 0 8px rgba(57,255,136,.95),
+                                        0 0 22px rgba(34,197,94,.55),
+                                        inset 0 0 18px rgba(34,197,94,.08);
+                            animation: pulso-davi 2.2s ease-in-out infinite;
+                        }
+                        .davi-etapa-feita { display:none; }
+                        .selo-davi-feita {
+                            display:inline-block; margin:7px 0 11px; padding:5px 10px;
+                            color:#d1fae5; background:rgba(22,163,74,.24);
+                            border:1px solid rgba(74,222,128,.65); border-radius:999px;
+                            font-size:12px; font-weight:800;
+                        }
+                        @keyframes pulso-davi {
+                            0%, 100% { box-shadow:0 0 7px rgba(57,255,136,.75), 0 0 18px rgba(34,197,94,.38), inset 0 0 18px rgba(34,197,94,.06); }
+                            50% { box-shadow:0 0 12px rgba(57,255,136,1), 0 0 30px rgba(34,197,94,.68), inset 0 0 22px rgba(34,197,94,.12); }
+                        }
+                    </style>
+                """, unsafe_allow_html=True)
 
-            fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
-            horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
-            referencia_txt = f" • referência {horario_matriz_exibicao}" if horario_matriz_exibicao else ""
-            st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}**{referencia_txt} • ETAs com validação operacional de trecho")
+                fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
+                horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
+                referencia_txt = f" • referência {horario_matriz_exibicao}" if horario_matriz_exibicao else ""
+                st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}**{referencia_txt} • ETAs com validação operacional de trecho")
 
-            hora_atual_str = AGORA_REAL.strftime("%H:%M")
-            nova_previsao_str = format_mins_to_time(final_dyn_min)
-            renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+                hora_atual_str = AGORA_REAL.strftime("%H:%M")
+                nova_previsao_str = format_mins_to_time(final_dyn_min)
+                renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
-            _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
-            if _msg_ajuste:
-                st.success(_msg_ajuste)
+                _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
+                if _msg_ajuste:
+                    st.success(_msg_ajuste)
 
-            with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
-                st.caption(
-                    "Arraste uma COLETA ou ENTREGA para cima ou para baixo, ou solte-a dentro de outra parada. "
-                    "O ajuste fica salvo no Supabase e continua valendo quando o Trello atualizar a rota."
-                )
-                _payload_editor, _altura_editor = construir_editor_arrastavel_rota(
-                    route_steps, p_saida, carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
-                )
-                _evento_drag = renderizar_editor_arrastavel_rota(
-                    _payload_editor, _altura_editor, key=f"editor_drag_rota_{DATA_REF_ROTA_STR}"
-                )
-                if isinstance(_evento_drag, dict) and _evento_drag.get("nonce"):
-                    _nonce_drag = str(_evento_drag.get("nonce"))
-                    if _nonce_drag != st.session_state.get("_ultimo_evento_drag_rota"):
-                        st.session_state["_ultimo_evento_drag_rota"] = _nonce_drag
-                        try:
-                            _movimento_drag_ok = registrar_movimento_manual_rota(
-                                DATA_REF_ROTA_STR, route_steps,
-                                _evento_drag.get("demanda_id", ""),
-                                _evento_drag.get("acao", ""),
-                                _evento_drag.get("destino", ""),
-                                int(_evento_drag.get("ordem", 0) or 0), p_saida,
-                            )
-                            if _movimento_drag_ok:
-                                # Reflete a mudança imediatamente no roteiro atual, antes mesmo
-                                # do recálculo viário completo. Assim editor, cartões e rota não
-                                # ficam divergentes após o drop.
-                                _rota_pos_drag = aplicar_movimento_manual_route_steps_imediato(
-                                    route_steps,
+                with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
+                    st.caption(
+                        "Arraste uma COLETA ou ENTREGA para cima ou para baixo, ou solte-a dentro de outra parada. "
+                        "O ajuste fica salvo no Supabase e continua valendo quando o Trello atualizar a rota."
+                    )
+                    _payload_editor, _altura_editor = construir_editor_arrastavel_rota(
+                        route_steps, p_saida, carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                    )
+                    _evento_drag = renderizar_editor_arrastavel_rota(
+                        _payload_editor, _altura_editor, key=f"editor_drag_rota_{DATA_REF_ROTA_STR}"
+                    )
+                    if isinstance(_evento_drag, dict) and _evento_drag.get("nonce"):
+                        _nonce_drag = str(_evento_drag.get("nonce"))
+                        if _nonce_drag != st.session_state.get("_ultimo_evento_drag_rota"):
+                            st.session_state["_ultimo_evento_drag_rota"] = _nonce_drag
+                            try:
+                                _movimento_drag_ok = registrar_movimento_manual_rota(
+                                    DATA_REF_ROTA_STR, route_steps,
                                     _evento_drag.get("demanda_id", ""),
                                     _evento_drag.get("acao", ""),
                                     _evento_drag.get("destino", ""),
-                                    int(_evento_drag.get("ordem", 0) or 0),
-                                    p_saida,
+                                    int(_evento_drag.get("ordem", 0) or 0), p_saida,
                                 )
-                                _ajustes_pos_drag = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
-                                _rota_pos_drag = consolidar_coletas_base_na_preparacao(
-                                    _rota_pos_drag, _ajustes_pos_drag, p_saida
-                                )
-                                _rota_pos_drag = aplicar_ordem_manual_route_steps(
-                                    _rota_pos_drag, _ajustes_pos_drag
-                                )
-                                st.session_state["route_steps"] = _rota_pos_drag
-                                try:
-                                    execute_db(
-                                        "UPDATE rota_ativa SET json_route=:route WHERE id=1 AND data_rota=:data",
-                                        {
-                                            "route": json.dumps(_rota_pos_drag, ensure_ascii=False),
-                                            "data": DATA_REF_ROTA_STR,
-                                        },
+                                if _movimento_drag_ok:
+                                    # Reflete a mudança imediatamente no roteiro atual, antes mesmo
+                                    # do recálculo viário completo. Assim editor, cartões e rota não
+                                    # ficam divergentes após o drop.
+                                    _rota_pos_drag = aplicar_movimento_manual_route_steps_imediato(
+                                        route_steps,
+                                        _evento_drag.get("demanda_id", ""),
+                                        _evento_drag.get("acao", ""),
+                                        _evento_drag.get("destino", ""),
+                                        int(_evento_drag.get("ordem", 0) or 0),
+                                        p_saida,
                                     )
-                                except Exception:
-                                    pass
-                                st.session_state["_recalcular_rota_automatico"] = True
-                                st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. Roteiro, horários e mapa foram atualizados com o ajuste manual."
-                                st.rerun()
-                            else:
-                                st.warning("Não foi possível aplicar esse movimento. Atualize a rota e tente novamente.")
-                        except Exception as _erro_drag_rota:
-                            st.warning(f"Não foi possível mover essa demanda agora: {_erro_drag_rota}")
-                if st.button("♻️ Limpar ajustes manuais e voltar ao automático", key="limpar_ajustes_rota_manual"):
-                    limpar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
-                    st.session_state["_recalcular_rota_automatico"] = True
-                    st.session_state["_mensagem_ajuste_rota"] = "♻️ Ajustes manuais removidos. A rota voltou para o planejamento automático."
-                    st.rerun()
+                                    _ajustes_pos_drag = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                                    _rota_pos_drag = consolidar_coletas_base_na_preparacao(
+                                        _rota_pos_drag, _ajustes_pos_drag, p_saida
+                                    )
+                                    _rota_pos_drag = aplicar_ordem_manual_route_steps(
+                                        _rota_pos_drag, _ajustes_pos_drag
+                                    )
+                                    st.session_state["route_steps"] = _rota_pos_drag
+                                    try:
+                                        execute_db(
+                                            "UPDATE rota_ativa SET json_route=:route WHERE id=1 AND data_rota=:data",
+                                            {
+                                                "route": json.dumps(_rota_pos_drag, ensure_ascii=False),
+                                                "data": DATA_REF_ROTA_STR,
+                                            },
+                                        )
+                                    except Exception:
+                                        pass
+                                    st.session_state["_recalcular_rota_automatico"] = True
+                                    st.session_state["_mensagem_ajuste_rota"] = "✅ Demanda movida. Roteiro, horários e mapa foram atualizados com o ajuste manual."
+                                    st.rerun()
+                                else:
+                                    st.warning("Não foi possível aplicar esse movimento. Atualize a rota e tente novamente.")
+                            except Exception as _erro_drag_rota:
+                                st.warning(f"Não foi possível mover essa demanda agora: {_erro_drag_rota}")
+                    if st.button("♻️ Limpar ajustes manuais e voltar ao automático", key="limpar_ajustes_rota_manual"):
+                        limpar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
+                        st.session_state["_recalcular_rota_automatico"] = True
+                        st.session_state["_mensagem_ajuste_rota"] = "♻️ Ajustes manuais removidos. A rota voltou para o planejamento automático."
+                        st.rerun()
             
-            st.markdown("#### 🧭 Sequência operacional")
-            renderizar_resumo_paradas_torre(route_steps, estado_carga_torre, p_saida)
-
-            texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: das 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
+                texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: das 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
-            num_parada = 1
-            with st.expander("📦 Ver coletas, entregas, materiais e comprovantes", expanded=False):
+                num_parada = 1
                 for i, step in enumerate(route_steps):
                     if step['type'] == 'lunch':
                         st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
@@ -9590,29 +9656,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                             obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
 
                             with st.container(border=True):
-                                if eh_coleta_torre:
-                                    if card_id_torre in estado_carga_torre.get("ids_coletados", set()):
-                                        status_acao_torre, classe_status_torre = "✓ COLETADO", "loaded"
-                                    else:
-                                        status_acao_torre, classe_status_torre = "A COLETAR", "collect"
-                                else:
-                                    if card_id_torre in estado_carga_torre.get("ids_entregues", set()):
-                                        status_acao_torre, classe_status_torre = "✓ ENTREGUE", "done"
-                                    elif card_id_torre in estado_carga_torre.get("ids_coletados", set()):
-                                        status_acao_torre, classe_status_torre = "NO VEÍCULO • A ENTREGAR", "loaded"
-                                    else:
-                                        status_acao_torre, classe_status_torre = "A ENTREGAR", "deliver"
-
                                 st.markdown(
                                     f"""
-                                    <div style="display:flex;justify-content:space-between;align-items:center;gap:9px;
-                                                padding:9px 10px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
+                                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;
+                                                padding:9px 11px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
                                                 border-radius:9px;background:{fundo_torre};">
-                                        <div style="min-width:0;">
-                                            <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
-                                            <span class="tower-action-status {classe_status_torre}" style="margin-top:5px;">{status_acao_torre}</span>
-                                        </div>
-                                        <div style="font-weight:800;color:#e4e8f4;text-align:right;font-size:11px;">🏗️ {obra_torre_html}</div>
+                                        <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
+                                        <div style="font-weight:800;color:#e4e8f4;text-align:right;">🏗️ {obra_torre_html}</div>
                                     </div>
                                     """,
                                     unsafe_allow_html=True,
@@ -9661,243 +9711,226 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         texto_whatsapp += "\n"
                         if not is_start: num_parada += 1
 
-            horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
-            horario_dyn_fim = format_mins_to_time(final_dyn_min)
+                horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
+                horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
-            st.success(f"📍 **Planejamento original (considerando a saída no horário):** término às {horario_base_fim}.")
-            if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
-                st.info(f"🟢 **Previsão real atualizada:** término às {horario_dyn_fim} (dentro do expediente).")
-            else:
-                st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
+                st.success(f"📍 **Planejamento original (considerando a saída no horário):** término às {horario_base_fim}.")
+                if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
+                    st.info(f"🟢 **Previsão real atualizada:** término às {horario_dyn_fim} (dentro do expediente).")
+                else:
+                    st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
 
-            st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
-            if valor_km_veiculo_proprio is not None:
-                custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
-                tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
-                custo_estimado_txt = f"R$ {custo_estimado_veiculo_proprio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-                valor_km_txt = f"R$ {valor_km_veiculo_proprio:.2f}/km".replace('.', ',')
-                st.info(
-                    f"💰 **Custeio estimado — {tipo_veiculo_proprio}:** "
-                    f"{custo_estimado_txt} (**{valor_km_txt}**)."
-                )
-
-            if len(route_steps) > 1:
-                waypts_addr = []
-                for s in route_steps:
-                    if s['type'] != 'lunch':
-                        addr = enderecos_dict.get(s['destino'], "")
-                        waypts_addr.append(urllib.parse.quote(addr) if addr and not addr.startswith("http") else f"{locais_dict[s['destino']][0]},{locais_dict[s['destino']][1]}")
-                link_maps = f"https://www.google.com/maps/dir/?api=1&origin={waypts_addr[0]}&destination={waypts_addr[-1]}&travelmode=driving"
-                if len(waypts_addr) > 2: link_maps += f"&waypoints={'|'.join(waypts_addr[1:-1][:9])}"
-                texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
-
-            st.divider()
-            @fragmento_independente
-            def formulario_fechamento_rota():
-                with st.form("fechamento_km_rota"):
-                    st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
-                    total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
-                    acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
-                    
-                    if acoes_concluidas < total_acoes:
-                        st.warning(
-                            f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
-                            f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
-                            f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
-                        )
-                    else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
-                        
-                    km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
-                    veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
-                    if st.form_submit_button("Registrar quilometragem no painel de custos"):
-                        execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
-                        carregar_registro_km_df.clear()
-                        st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
-
-            formulario_fechamento_rota()
-
-            url_geral, _ = obter_webhook_teams("Geral / Logística")
-
-            @fragmento_independente
-            def compartilhamento_rota():
-                if url_geral:
-                    if st.button("📢 Enviar roteiro ao grupo geral (Teams)", use_container_width=True):
-                        resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
-                        enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
-                        if enviado: st.success("✅ Roteiro enviado!")
-                        else: st.error(f"Erro ao enviar: {detalhe}")
-
-                st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
-
-            compartilhamento_rota()
-
-        with col_dir:
-            st.markdown("""<div class="tower-map-title"><h3>🗺️ Mapa da rota</h3><span style="color:#4ade80;font-size:10px;font-weight:800;">● VISÃO OPERACIONAL</span></div>""", unsafe_allow_html=True)
-            # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="CartoDB positron")
-
-            # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
-            # existem somente para impedir que um número fique escondido por outro.
-            pontos_reais_mapa = []
-            if p_saida in locais_dict:
-                pontos_reais_mapa.append([float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])])
-            for i, step in enumerate(route_steps):
-                if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
-                    _lat_real, _lon_real = locais_dict[step['destino']]
-                    pontos_reais_mapa.append([float(_lat_real), float(_lon_real)])
-
-            def _escala_visual_mapa(pontos):
-                if len(pontos) < 2:
-                    return 0.85
-                lat_ref = sum(p[0] for p in pontos) / len(pontos)
-                span_lat_km = (max(p[0] for p in pontos) - min(p[0] for p in pontos)) * 111.0
-                span_lon_km = (max(p[1] for p in pontos) - min(p[1] for p in pontos)) * 111.0 * max(math.cos(math.radians(lat_ref)), 0.2)
-                span_km = max(span_lat_km, span_lon_km, 1.0)
-                # Em um mapa de ~450 px, 30–34 px de marcador equivalem a cerca
-                # de 6–8% da largura útil. Esse limite cresce junto com o zoom geral.
-                return max(0.75, min(2.20, span_km * 0.065))
-
-            distancia_visual_min = _escala_visual_mapa(pontos_reais_mapa)
-            marcadores_posicionados = []
-
-            def apply_offset(lat, lon):
-                """Mantém cada número visível, deslocando somente o ícone quando necessário."""
-                lat, lon = float(lat), float(lon)
-                if not marcadores_posicionados:
-                    marcadores_posicionados.append((lat, lon))
-                    return lat, lon
-
-                conflito = any(
-                    calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_visual_min
-                    for p_lat, p_lon in marcadores_posicionados
-                )
-                if not conflito:
-                    marcadores_posicionados.append((lat, lon))
-                    return lat, lon
-
-                # Espalha os pontos em anéis ao redor da posição real. Como o
-                # fit_bounds usa as coordenadas verdadeiras, esse afastamento não
-                # faz o mapa dar zoom para fora novamente.
-                for tentativa in range(1, 49):
-                    anel = 1 + (tentativa - 1) // 12
-                    angulo = math.radians(((tentativa - 1) % 12) * 30 + anel * 11)
-                    raio_km = distancia_visual_min * (0.82 + 0.42 * (anel - 1))
-                    dlat = (raio_km / 111.0) * math.sin(angulo)
-                    dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
-                    candidato = (lat + dlat, lon + dlon)
-                    if all(
-                        calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= distancia_visual_min * 0.92
-                        for p_lat, p_lon in marcadores_posicionados
-                    ):
-                        marcadores_posicionados.append(candidato)
-                        return candidato
-
-                # Contingência para aglomerações muito grandes.
-                raio_km = distancia_visual_min * 1.8
-                dlat = raio_km / 111.0
-                candidato = (lat - dlat, lon + dlat)
-                marcadores_posicionados.append(candidato)
-                return candidato
-
-            p_num = 1
-            pos_base_visual = None
-            if p_saida in locais_dict:
-                pos_base_visual = apply_offset(*locais_dict[p_saida])
-
-            # Traçado primeiro: fica por baixo dos marcadores e permanece visível.
-            geometria_rota = st.session_state.get('geometria_rota') or []
-            geometria_viaria = bool(st.session_state.get('geometria_viaria', False))
-            coords_ordem_real = []
-            if p_saida in locais_dict:
-                coords_ordem_real.append(locais_dict[p_saida])
-            coords_ordem_real.extend([
-                locais_dict[s['destino']] for s in route_steps
-                if s.get('destino') in locais_dict and s.get('type') != 'lunch'
-            ])
-            # Repara geometrias antigas gravadas com eixos invertidos pelo OSRM.
-            geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
-            if len(geometria_rota) < 2:
-                geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
-                geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
-            if len(geometria_rota) < 2 and len(coords_ordem_real) > 1:
-                geometria_rota = [list(map(float, p)) for p in coords_ordem_real]
-                geometria_viaria = False
-
-            # Mantém a versão reparada em memória; ao recalcular a rota ela também
-            # será gravada corretamente no banco.
-            st.session_state['geometria_rota'] = geometria_rota
-            st.session_state['geometria_viaria'] = geometria_viaria
-
-            if len(geometria_rota) > 1:
-                # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
-                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.82).add_to(m)
-                folium.PolyLine(
-                    geometria_rota,
-                    color="#2563EB", weight=5.5, opacity=0.98,
-                    dash_array=None if geometria_viaria else "9,7",
-                    tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
-                ).add_to(m)
-
-            for i, step in enumerate(route_steps):
-                if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
-                    lat_orig, lon_orig = map(float, locais_dict[step['destino']])
-                    lat, lon = apply_offset(lat_orig, lon_orig)
-                    deslocado = calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01
-                    if deslocado:
-                        folium.PolyLine(
-                            [[lat_orig, lon_orig], [lat, lon]],
-                            color="#475569", weight=2.0, opacity=0.90, dash_array="4,5",
-                            tooltip="O círculo foi afastado; a ponta da linha é o local real",
-                        ).add_to(m)
-                        folium.CircleMarker(
-                            [lat_orig, lon_orig], radius=3, color="#475569", weight=1,
-                            fill=True, fill_opacity=0.9, tooltip=f"Posição real — {step['destino']}"
-                        ).add_to(m)
-
-                    acoes = [a[0] for a in step.get('actions', [])]
-                    tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-                    fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
-                    detalhes_popup = []
-                    for _acao_popup, _tarefa_popup in step.get('actions', []) or []:
-                        _cid_popup = str(_tarefa_popup.get('id', '') or '')
-                        _mat_popup = _resumo_material_carga(_tarefa_popup, limite=70)
-                        if _acao_popup == "COLETAR":
-                            _status_popup = "COLETADO" if _cid_popup in estado_carga_torre.get("ids_coletados", set()) else "A COLETAR"
-                            _icone_popup = "📦"
-                        else:
-                            if _cid_popup in estado_carga_torre.get("ids_entregues", set()): _status_popup = "ENTREGUE"
-                            elif _cid_popup in estado_carga_torre.get("ids_coletados", set()): _status_popup = "NO VEÍCULO / A ENTREGAR"
-                            else: _status_popup = "A ENTREGAR"
-                            _icone_popup = "📬"
-                        detalhes_popup.append(f"{_icone_popup} <b>{html_escape(_status_popup)}</b> — {html_escape(_mat_popup)}")
-                    popup_html = (
-                        f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>"
-                        f"Previsão: {html_escape(str(step.get('dyn_chegada', step.get('chegada', ''))))}<br>"
-                        + "<br>".join(detalhes_popup)
+                st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
+                if valor_km_veiculo_proprio is not None:
+                    custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
+                    tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
+                    custo_estimado_txt = f"R$ {custo_estimado_veiculo_proprio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+                    valor_km_txt = f"R$ {valor_km_veiculo_proprio:.2f}/km".replace('.', ',')
+                    st.info(
+                        f"💰 **Custeio estimado — {tipo_veiculo_proprio}:** "
+                        f"{custo_estimado_txt} (**{valor_km_txt}**)."
                     )
-                    folium.Marker(
-                        [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
-                        z_index_offset=1200 + p_num,
-                        icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{p_num}</div>''')
+
+                if len(route_steps) > 1:
+                    waypts_addr = []
+                    for s in route_steps:
+                        if s['type'] != 'lunch':
+                            addr = enderecos_dict.get(s['destino'], "")
+                            waypts_addr.append(urllib.parse.quote(addr) if addr and not addr.startswith("http") else f"{locais_dict[s['destino']][0]},{locais_dict[s['destino']][1]}")
+                    link_maps = f"https://www.google.com/maps/dir/?api=1&origin={waypts_addr[0]}&destination={waypts_addr[-1]}&travelmode=driving"
+                    if len(waypts_addr) > 2: link_maps += f"&waypoints={'|'.join(waypts_addr[1:-1][:9])}"
+                    texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
+
+                st.divider()
+                @fragmento_independente
+                def formulario_fechamento_rota():
+                    with st.form("fechamento_km_rota"):
+                        st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
+                        total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
+                        acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
+                    
+                        if acoes_concluidas < total_acoes:
+                            st.warning(
+                                f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
+                                f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
+                                f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
+                            )
+                        else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
+                        
+                        km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
+                        veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
+                        if st.form_submit_button("Registrar quilometragem no painel de custos"):
+                            execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
+                            carregar_registro_km_df.clear()
+                            st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
+
+                formulario_fechamento_rota()
+
+                url_geral, _ = obter_webhook_teams("Geral / Logística")
+
+                @fragmento_independente
+                def compartilhamento_rota():
+                    if url_geral:
+                        if st.button("📢 Enviar roteiro ao grupo geral (Teams)", use_container_width=True):
+                            resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
+                            enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
+                            if enviado: st.success("✅ Roteiro enviado!")
+                            else: st.error(f"Erro ao enviar: {detalhe}")
+
+                    st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
+
+                compartilhamento_rota()
+
+            with col_dir:
+                st.subheader("🗺️ Mapa da rota")
+                # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
+                m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
+
+                # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
+                # existem somente para impedir que um número fique escondido por outro.
+                pontos_reais_mapa = []
+                if p_saida in locais_dict:
+                    pontos_reais_mapa.append([float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])])
+                for i, step in enumerate(route_steps):
+                    if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+                        _lat_real, _lon_real = locais_dict[step['destino']]
+                        pontos_reais_mapa.append([float(_lat_real), float(_lon_real)])
+
+                def _escala_visual_mapa(pontos):
+                    if len(pontos) < 2:
+                        return 0.85
+                    lat_ref = sum(p[0] for p in pontos) / len(pontos)
+                    span_lat_km = (max(p[0] for p in pontos) - min(p[0] for p in pontos)) * 111.0
+                    span_lon_km = (max(p[1] for p in pontos) - min(p[1] for p in pontos)) * 111.0 * max(math.cos(math.radians(lat_ref)), 0.2)
+                    span_km = max(span_lat_km, span_lon_km, 1.0)
+                    # Em um mapa de ~450 px, 30–34 px de marcador equivalem a cerca
+                    # de 6–8% da largura útil. Esse limite cresce junto com o zoom geral.
+                    return max(0.75, min(2.20, span_km * 0.065))
+
+                distancia_visual_min = _escala_visual_mapa(pontos_reais_mapa)
+                marcadores_posicionados = []
+
+                def apply_offset(lat, lon):
+                    """Mantém cada número visível, deslocando somente o ícone quando necessário."""
+                    lat, lon = float(lat), float(lon)
+                    if not marcadores_posicionados:
+                        marcadores_posicionados.append((lat, lon))
+                        return lat, lon
+
+                    conflito = any(
+                        calcular_distancia_km(lat, lon, p_lat, p_lon) < distancia_visual_min
+                        for p_lat, p_lon in marcadores_posicionados
+                    )
+                    if not conflito:
+                        marcadores_posicionados.append((lat, lon))
+                        return lat, lon
+
+                    # Espalha os pontos em anéis ao redor da posição real. Como o
+                    # fit_bounds usa as coordenadas verdadeiras, esse afastamento não
+                    # faz o mapa dar zoom para fora novamente.
+                    for tentativa in range(1, 49):
+                        anel = 1 + (tentativa - 1) // 12
+                        angulo = math.radians(((tentativa - 1) % 12) * 30 + anel * 11)
+                        raio_km = distancia_visual_min * (0.82 + 0.42 * (anel - 1))
+                        dlat = (raio_km / 111.0) * math.sin(angulo)
+                        dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
+                        candidato = (lat + dlat, lon + dlon)
+                        if all(
+                            calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= distancia_visual_min * 0.92
+                            for p_lat, p_lon in marcadores_posicionados
+                        ):
+                            marcadores_posicionados.append(candidato)
+                            return candidato
+
+                    # Contingência para aglomerações muito grandes.
+                    raio_km = distancia_visual_min * 1.8
+                    dlat = raio_km / 111.0
+                    candidato = (lat - dlat, lon + dlat)
+                    marcadores_posicionados.append(candidato)
+                    return candidato
+
+                p_num = 1
+                pos_base_visual = None
+                if p_saida in locais_dict:
+                    pos_base_visual = apply_offset(*locais_dict[p_saida])
+
+                # Traçado primeiro: fica por baixo dos marcadores e permanece visível.
+                geometria_rota = st.session_state.get('geometria_rota') or []
+                geometria_viaria = bool(st.session_state.get('geometria_viaria', False))
+                coords_ordem_real = []
+                if p_saida in locais_dict:
+                    coords_ordem_real.append(locais_dict[p_saida])
+                coords_ordem_real.extend([
+                    locais_dict[s['destino']] for s in route_steps
+                    if s.get('destino') in locais_dict and s.get('type') != 'lunch'
+                ])
+                # Repara geometrias antigas gravadas com eixos invertidos pelo OSRM.
+                geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
+                if len(geometria_rota) < 2:
+                    geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
+                    geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
+                if len(geometria_rota) < 2 and len(coords_ordem_real) > 1:
+                    geometria_rota = [list(map(float, p)) for p in coords_ordem_real]
+                    geometria_viaria = False
+
+                # Mantém a versão reparada em memória; ao recalcular a rota ela também
+                # será gravada corretamente no banco.
+                st.session_state['geometria_rota'] = geometria_rota
+                st.session_state['geometria_viaria'] = geometria_viaria
+
+                if len(geometria_rota) > 1:
+                    # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
+                    folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.82).add_to(m)
+                    folium.PolyLine(
+                        geometria_rota,
+                        color="#2563EB", weight=5.5, opacity=0.98,
+                        dash_array=None if geometria_viaria else "9,7",
+                        tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
                     ).add_to(m)
-                    p_num += 1
 
-            if len(pontos_reais_mapa) > 1:
-                m.fit_bounds(pontos_reais_mapa, padding=(45, 45), max_zoom=14)
-            if p_saida in locais_dict and pos_base_visual is not None:
-                folium.Marker(
-                    [pos_base_visual[0], pos_base_visual[1]],
-                    popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
-                    z_index_offset=2500,
-                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
-                ).add_to(m)
+                for i, step in enumerate(route_steps):
+                    if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+                        lat_orig, lon_orig = map(float, locais_dict[step['destino']])
+                        lat, lon = apply_offset(lat_orig, lon_orig)
+                        deslocado = calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01
+                        if deslocado:
+                            folium.PolyLine(
+                                [[lat_orig, lon_orig], [lat, lon]],
+                                color="#475569", weight=2.0, opacity=0.90, dash_array="4,5",
+                                tooltip="O círculo foi afastado; a ponta da linha é o local real",
+                            ).add_to(m)
+                            folium.CircleMarker(
+                                [lat_orig, lon_orig], radius=3, color="#475569", weight=1,
+                                fill=True, fill_opacity=0.9, tooltip=f"Posição real — {step['destino']}"
+                            ).add_to(m)
 
-            st_folium(
-                m, height=650, use_container_width=True, returned_objects=[],
-                key=f"mapa_rota_{DATA_REF_ROTA_STR}",
-            )
-            legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
-            st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
+                        acoes = [a[0] for a in step.get('actions', [])]
+                        tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
+                        fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
+                        popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
+                        folium.Marker(
+                            [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
+                            z_index_offset=1200 + p_num,
+                            icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{p_num}</div>''')
+                        ).add_to(m)
+                        p_num += 1
+
+                if len(pontos_reais_mapa) > 1:
+                    m.fit_bounds(pontos_reais_mapa, padding=(45, 45), max_zoom=14)
+                if p_saida in locais_dict and pos_base_visual is not None:
+                    folium.Marker(
+                        [pos_base_visual[0], pos_base_visual[1]],
+                        popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
+                        z_index_offset=2500,
+                        icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
+                    ).add_to(m)
+
+                st_folium(
+                    m, height=540, use_container_width=True, returned_objects=[],
+                    key=f"mapa_rota_{DATA_REF_ROTA_STR}",
+                )
+                legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
+                st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
