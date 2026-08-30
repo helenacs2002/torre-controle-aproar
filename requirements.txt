@@ -1,7 +1,9 @@
-streamlit
+streamlit>=1.40
 pandas
+requests
 folium
 streamlit-folium
-
-SQLAlchemy
+sqlalchemy>=2.0
 psycopg2-binary
+openpyxl
+tzdata

@@ -1,16 +1,11 @@
-"""Rota limpa /davi para o App do Motorista da Aproar.
+"""Página mobile do motorista, disponível em /davi."""
 
-Este arquivo deve ficar em pages/davi.py no mesmo repositório do app.py.
-Ele reaproveita exatamente o mesmo código/estado do app principal, apenas ativando
-o modo do motorista sem expor ?davi=true na URL.
-"""
 from pathlib import Path
 import runpy
 
-APP_PRINCIPAL = Path(__file__).resolve().parents[1] / "app.py"
 
 runpy.run_path(
-    str(APP_PRINCIPAL),
-    init_globals={"APROAR_DAVI_MODE": True},
+    str(Path(__file__).parents[1] / "app.py"),
     run_name="__main__",
+    init_globals={"APROAR_DAVI_MODE": True},
 )

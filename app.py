@@ -106,49 +106,321 @@ def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
 
-# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM E DASHBOARD CORPORATIVO) ---
+# --- DESIGN SYSTEM APROAR — TORRE + APP DO MOTORISTA -------------------------
 def aplicar_estilo_customizado():
+    """Aplica o mesmo sistema visual à Torre e à página /davi."""
     st.markdown("""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        html, body, [class*="css"], .stMarkdown, .stText, p, div, h1, h2, h3, h4, h5, h6 { font-family: 'Inter', sans-serif !important; color: #e4e8f4; }
-        /* Ícones do Streamlit usam uma fonte própria. Forçar Inter nos spans
-           fazia nomes como keyboard_arrow_right aparecerem como texto. */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        :root {
+            --ap-bg: #070913;
+            --ap-bg-soft: #0a0e1b;
+            --ap-surface: #0f1526;
+            --ap-surface-2: #131b30;
+            --ap-surface-3: #18223a;
+            --ap-line: rgba(148, 163, 184, .16);
+            --ap-line-strong: rgba(96, 165, 250, .28);
+            --ap-text: #f4f7fb;
+            --ap-muted: #94a3b8;
+            --ap-blue: #2563eb;
+            --ap-blue-2: #3b82f6;
+            --ap-green: #22c55e;
+            --ap-amber: #f59e0b;
+            --ap-red: #ef4444;
+            --ap-radius-sm: 10px;
+            --ap-radius: 16px;
+            --ap-radius-lg: 22px;
+            --ap-shadow: 0 18px 45px rgba(0, 0, 0, .28);
+        }
+
+        html, body, [class*="css"], .stMarkdown, .stText, p, div,
+        h1, h2, h3, h4, h5, h6, label, button, input, textarea {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        }
+        html, body, [data-testid="stAppViewContainer"] { background: var(--ap-bg) !important; }
+        [data-testid="stAppViewContainer"] {
+            color: var(--ap-text);
+            background-image:
+                radial-gradient(circle at 84% 2%, rgba(37,99,235,.13), transparent 30rem),
+                radial-gradient(circle at 8% 36%, rgba(14,165,233,.06), transparent 28rem),
+                linear-gradient(180deg, #070913 0%, #080b15 100%) !important;
+        }
+        .main .block-container {
+            max-width: 1500px;
+            padding: 1.15rem 2.35rem 4rem;
+        }
+        p, li, label, .stCaption { color: #cbd5e1; }
+        h1, h2, h3, h4, h5, h6 { color: var(--ap-text) !important; letter-spacing: -.025em; }
+        a { color: #93c5fd; }
+
         span[data-testid="stIconMaterial"], .material-symbols-rounded, .material-symbols-outlined {
             font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
             font-weight: normal !important; font-style: normal !important;
             letter-spacing: normal !important; text-transform: none !important;
             white-space: nowrap !important; word-wrap: normal !important;
         }
-        [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
-        [data-testid="stSidebar"] { background-color: #0b0e1e !important; border-right: 1px solid rgba(64,116,146,.15) !important; }
-        /* A rota /davi usa uma página técnica do Streamlit; escondemos a navegação
-           multipágina nativa para manter apenas o menu corporativo da Torre. */
+
+        [data-testid="stHeader"] {
+            background: rgba(7, 9, 19, .72) !important;
+            border-bottom: 1px solid rgba(148,163,184,.08);
+            backdrop-filter: blur(18px);
+        }
+        [data-testid="stSidebar"] {
+            background:
+                radial-gradient(circle at 20% 0%, rgba(37,99,235,.13), transparent 18rem),
+                #0a0e1b !important;
+            border-right: 1px solid var(--ap-line) !important;
+        }
+        [data-testid="stSidebar"] .block-container { padding-top: 1.25rem; }
         [data-testid="stSidebarNav"] { display: none !important; }
-        [data-testid="stHeader"] { background-color: rgba(7, 9, 19, 0.8) !important; backdrop-filter: blur(8px); }
-        /* Evita que a tela inteira escureça enquanto apenas um trecho é atualizado. */
         [data-stale="true"] { opacity: 1 !important; }
-        button[kind="primary"], [data-testid="baseButton-primary"] { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; color: #ffffff !important; border-radius: 8px !important; border: none !important; font-weight: 600 !important; box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3); transition: all 0.2s ease-in-out; padding: 10px 20px !important; }
-        button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(37, 99, 235, 0.5); }
-        button[kind="primary"]:disabled { background: #1e293b !important; color: #64748b !important; box-shadow: none !important; transform: none !important; cursor: not-allowed !important; }
-        .stTabs [data-baseweb="tab-list"] { gap: 12px; background-color: rgba(18, 21, 48, 0.6); padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(64,116,146,.15); }
-        .stTabs [data-baseweb="tab"] { background-color: transparent; border-radius: 8px; color: #8da0b8; padding: 10px 18px; font-weight: 500; transition: all 0.2s ease; border: none !important; }
-        .stTabs [data-baseweb="tab"]:hover { color: #ffffff; background-color: rgba(255,255,255,0.05); }
-        .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4); }
-        div[data-testid="stMetric"] { background-color: rgba(25, 30, 56, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(64, 116, 146, 0.25); padding: 20px 25px; border-radius: 14px; box-shadow: 0 8px 20px rgba(0,0,0,0.15); transition: transform 0.2s ease; }
-        div[data-testid="stMetric"]:hover { transform: translateY(-3px); border-color: rgba(37, 99, 235, 0.5); }
-        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] { background-color: rgba(18, 21, 48, 0.4) !important; border-radius: 14px !important; padding: 24px !important; border: 1px solid rgba(64,116,146,.2) !important; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div { background-color: rgba(13, 16, 37, 0.8) !important; border: 1px solid rgba(64,116,146,.3) !important; color: #e4e8f4 !important; border-radius: 8px !important; transition: border-color 0.2s; }
-        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within { border-color: #2563eb !important; box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3) !important; }
-        [data-testid="stDataFrame"] { background-color: rgba(18, 21, 48, 0.6) !important; border: 1px solid rgba(64,116,146,.2) !important; border-radius: 12px !important; overflow: hidden; }
-        /* Folium/Leaflet deve ocupar toda a coluna; evita o bloco escuro sobrando à direita. */
-        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe { width: 100% !important; max-width: 100% !important; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #070913; }
-        ::-webkit-scrollbar-thumb { background: #2563eb; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #1d4ed8; }
+        .aproar-sidebar-brand {
+            display:flex; align-items:center; gap:11px; margin:0 0 8px; padding:12px;
+            border:1px solid var(--ap-line); border-radius:14px; background:rgba(19,27,48,.64);
+        }
+        .aproar-sidebar-brand span {
+            display:grid; place-items:center; width:36px; height:36px; border-radius:11px;
+            color:#fff; font-size:15px; font-weight:900; background:linear-gradient(145deg,#3b82f6,#1d4ed8);
+            box-shadow:0 8px 18px rgba(37,99,235,.28);
+        }
+        .aproar-sidebar-brand strong { display:block; color:#f8fafc; font-size:13px; }
+        .aproar-sidebar-brand small { display:block; margin-top:2px; color:#94a3b8; font-size:10px; }
+
+        /* Cabeçalho corporativo */
+        .aproar-shell-header {
+            display: flex; align-items: center; justify-content: space-between; gap: 22px;
+            margin: 0 0 22px; padding: 18px 20px;
+            background: linear-gradient(135deg, rgba(19,27,48,.92), rgba(10,14,27,.94));
+            border: 1px solid var(--ap-line); border-radius: var(--ap-radius-lg);
+            box-shadow: var(--ap-shadow); overflow: hidden; position: relative;
+        }
+        .aproar-shell-header::after {
+            content: ''; position: absolute; inset: auto -70px -105px auto;
+            width: 240px; height: 240px; border-radius: 50%;
+            background: rgba(37,99,235,.14); filter: blur(15px); pointer-events: none;
+        }
+        .aproar-brand { display:flex; align-items:center; gap:14px; min-width:0; z-index:1; }
+        .aproar-brand-mark {
+            width: 46px; height: 46px; flex: 0 0 46px; display:grid; place-items:center;
+            border-radius: 14px; background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+            box-shadow: 0 10px 24px rgba(37,99,235,.34); color:#fff;
+            font-weight:900; font-size:19px; letter-spacing:-.08em;
+        }
+        .aproar-eyebrow { color:#60a5fa; font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+        .aproar-title { color:var(--ap-text); font-size:22px; line-height:1.14; font-weight:800; margin-top:3px; }
+        .aproar-subtitle { color:var(--ap-muted); font-size:12px; margin-top:4px; }
+        .aproar-header-meta { display:flex; align-items:center; gap:10px; z-index:1; }
+        .aproar-meta-chip {
+            display:flex; align-items:center; gap:8px; min-height:38px; padding:0 12px;
+            color:#cbd5e1; font-size:12px; font-weight:700; white-space:nowrap;
+            background:rgba(255,255,255,.035); border:1px solid var(--ap-line); border-radius:999px;
+        }
+        .aproar-meta-chip.primary { color:#bfdbfe; border-color:rgba(96,165,250,.28); background:rgba(37,99,235,.11); }
+        .aproar-dot { width:7px; height:7px; border-radius:50%; background:var(--ap-green); box-shadow:0 0 0 4px rgba(34,197,94,.12); }
+
+        /* Navegação principal */
+        [data-testid="stSegmentedControl"] { margin: 0 0 20px; }
+        [data-testid="stSegmentedControl"] > div {
+            gap: 5px !important; padding: 6px !important; overflow-x: auto;
+            background: rgba(15,21,38,.86) !important; border: 1px solid var(--ap-line) !important;
+            border-radius: 15px !important; box-shadow: 0 10px 28px rgba(0,0,0,.16);
+        }
+        [data-testid="stSegmentedControl"] button {
+            min-height: 41px !important; border-radius: 10px !important; color: var(--ap-muted) !important;
+            font-size: 12.5px !important; font-weight: 700 !important; white-space: nowrap;
+        }
+        [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+            color: #fff !important; background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+            box-shadow: 0 7px 18px rgba(37,99,235,.28);
+        }
+
+        /* Botões */
+        .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
+            min-height: 42px; border-radius: 11px !important; font-weight: 700 !important;
+            border: 1px solid rgba(148,163,184,.22) !important;
+            background: rgba(19,27,48,.82) !important; color: #e2e8f0 !important;
+            transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease !important;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            transform: translateY(-1px); border-color: rgba(96,165,250,.55) !important;
+            box-shadow: 0 8px 20px rgba(0,0,0,.20);
+        }
+        button[kind="primary"], [data-testid="baseButton-primary"] {
+            min-height: 44px; padding: 10px 20px !important; border: 0 !important;
+            border-radius: 11px !important; color: #fff !important; font-weight: 800 !important;
+            background: linear-gradient(135deg, #2f74f5, #1d4ed8) !important;
+            box-shadow: 0 10px 24px rgba(37,99,235,.28) !important;
+        }
+        button[kind="primary"]:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(37,99,235,.36) !important; }
+        button:disabled { opacity:.48 !important; transform:none !important; box-shadow:none !important; }
+
+        /* Cards, métricas e formulários */
+        div[data-testid="stMetric"] {
+            min-height: 112px; padding: 18px 19px; border-radius: var(--ap-radius) !important;
+            background: linear-gradient(145deg, rgba(19,27,48,.92), rgba(12,17,31,.94)) !important;
+            border: 1px solid var(--ap-line) !important; box-shadow: 0 12px 30px rgba(0,0,0,.18);
+        }
+        div[data-testid="stMetric"] label { color:var(--ap-muted) !important; font-weight:700; }
+        div[data-testid="stMetric"] [data-testid="stMetricValue"] { color:var(--ap-text) !important; font-weight:800; letter-spacing:-.04em; }
+        div[data-testid="stMetric"] [data-testid="stMetricDelta"] { font-weight:700; }
+        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {
+            padding: 20px !important; border-radius: var(--ap-radius) !important;
+            background: rgba(15,21,38,.80) !important; border: 1px solid var(--ap-line) !important;
+            box-shadow: 0 12px 30px rgba(0,0,0,.14);
+        }
+        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div,
+        div[data-baseweb="textarea"] > div, [data-testid="stNumberInput"] > div > div {
+            min-height: 44px; color:var(--ap-text) !important; border-radius:11px !important;
+            background:#0d1322 !important; border:1px solid rgba(148,163,184,.22) !important;
+            transition:border-color .16s ease, box-shadow .16s ease;
+        }
+        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within,
+        div[data-baseweb="textarea"] > div:focus-within {
+            border-color:#3b82f6 !important; box-shadow:0 0 0 3px rgba(37,99,235,.14) !important;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            min-height:120px; border-radius:14px !important; border:1.5px dashed rgba(96,165,250,.45) !important;
+            background:rgba(37,99,235,.055) !important;
+        }
+
+        /* Tabelas, abas, expansores e mensagens */
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+            overflow:hidden; border-radius:14px !important; border:1px solid var(--ap-line) !important;
+            background:#0d1322 !important; box-shadow:0 12px 28px rgba(0,0,0,.14);
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap:5px; padding:6px; border-radius:14px; border:1px solid var(--ap-line);
+            background:rgba(15,21,38,.82); overflow-x:auto;
+        }
+        .stTabs [data-baseweb="tab"] { min-height:40px; padding:8px 15px; color:var(--ap-muted); font-weight:700; border-radius:9px; }
+        .stTabs [aria-selected="true"] { color:#fff !important; background:rgba(37,99,235,.9) !important; }
+        [data-testid="stExpander"] {
+            overflow:hidden; border:1px solid var(--ap-line) !important; border-radius:14px !important;
+            background:rgba(15,21,38,.74) !important;
+        }
+        [data-testid="stAlert"] { border-radius:13px !important; border:1px solid var(--ap-line) !important; }
+        hr { border-color:var(--ap-line) !important; }
+        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe {
+            width:100% !important; max-width:100% !important; border-radius:16px;
+        }
+
+        /* ETA compartilhado */
+        .aproar-eta-card {
+            display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:18px;
+            margin: 10px 0 22px; padding:17px 19px; border-radius:16px;
+            background:linear-gradient(145deg,rgba(19,27,48,.94),rgba(12,17,31,.96));
+            border:1px solid var(--ap-line); box-shadow:0 12px 30px rgba(0,0,0,.18);
+        }
+        .aproar-eta-label { color:var(--ap-muted); font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+        .aproar-eta-value { color:var(--ap-text); font-size:22px; font-weight:800; margin-top:3px; letter-spacing:-.04em; }
+        .aproar-eta-side.right { text-align:right; }
+        .aproar-eta-route { color:#60a5fa; font-size:20px; }
+
+        ::-webkit-scrollbar { width:9px; height:9px; }
+        ::-webkit-scrollbar-track { background:#070913; }
+        ::-webkit-scrollbar-thumb { background:#283752; border:2px solid #070913; border-radius:999px; }
+        ::-webkit-scrollbar-thumb:hover { background:#3b82f6; }
+
+        @media (max-width: 900px) {
+            .main .block-container { padding: .9rem 1rem 5rem; }
+            .aproar-shell-header { align-items:flex-start; padding:16px; }
+            .aproar-header-meta { flex-wrap:wrap; justify-content:flex-end; }
+        }
+        @media (max-width: 640px) {
+            .main .block-container { padding:.7rem .78rem 5.5rem; }
+            .aproar-shell-header { border-radius:18px; margin-bottom:14px; }
+            .aproar-brand-mark { width:42px; height:42px; flex-basis:42px; }
+            .aproar-title { font-size:18px; }
+            .aproar-subtitle { display:none; }
+            .aproar-header-meta { display:none; }
+            .aproar-eta-card { grid-template-columns:1fr auto 1fr; gap:9px; padding:14px; }
+            .aproar-eta-route { font-size:16px; }
+            .aproar-eta-value { font-size:19px; }
+            div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] { padding:15px !important; }
+        }
     </style>
     """, unsafe_allow_html=True)
+
+
+def renderizar_cabecalho_torre():
+    st.markdown(f"""
+        <header class="aproar-shell-header">
+            <div class="aproar-brand">
+                <div class="aproar-brand-mark">A</div>
+                <div>
+                    <div class="aproar-eyebrow">APROAR LOGÍSTICA</div>
+                    <div class="aproar-title">Torre de Controle</div>
+                    <div class="aproar-subtitle">Planejamento, monitoramento e execução em uma única operação</div>
+                </div>
+            </div>
+            <div class="aproar-header-meta">
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR}</div>
+                <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
+            </div>
+        </header>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_cabecalho_motorista():
+    hora = AGORA_REAL.hour
+    saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
+    st.markdown(f"""
+        <header class="aproar-driver-header">
+            <div class="aproar-driver-topline">
+                <div class="aproar-driver-brand"><span>A</span> APROAR</div>
+                <div class="aproar-driver-live"><i></i> ROTA ATIVA</div>
+            </div>
+            <div class="aproar-driver-greeting">{saudacao}, <strong>Davi</strong></div>
+            <div class="aproar-driver-date">Rota oficial • {DATA_REF_ROTA_STR}</div>
+        </header>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=None, locais=None):
+    paradas = [
+        (indice, etapa) for indice, etapa in enumerate(route_steps or [])
+        if etapa.get("type") == "stop" and not (indice == 0)
+    ]
+    concluidas = sum(1 for _, etapa in paradas if etapa.get("is_concluded"))
+    proxima = next(((indice, etapa) for indice, etapa in paradas if not etapa.get("is_concluded")), None)
+    destino = str(proxima[1].get("destino", "Rota concluída")) if proxima else "Rota concluída"
+    chegada = str(proxima[1].get("dyn_chegada", "--:--")) if proxima else format_mins_to_time(final_dyn_min)
+    numero = (paradas.index(proxima) + 1) if proxima in paradas else len(paradas)
+    progresso = int(round((concluidas / max(1, len(paradas))) * 100))
+    link_gps = ""
+    endereco = str((enderecos or {}).get(destino, "") or "")
+    coordenadas = (locais or {}).get(destino, [None, None])
+    if endereco.startswith("http"):
+        link_gps = endereco
+    elif endereco:
+        link_gps = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco)}"
+    elif len(coordenadas) >= 2 and coordenadas[0] is not None:
+        link_gps = f"https://www.google.com/maps/dir/?api=1&destination={coordenadas[0]},{coordenadas[1]}"
+    botao_gps = (
+        f'<a class="driver-gps-link" href="{html_escape(link_gps, quote=True)}" target="_blank" rel="noopener">ABRIR GPS&nbsp; ↗</a>'
+        if link_gps else ""
+    )
+    st.markdown(f"""
+        <section class="aproar-driver-summary" id="rota">
+            <div class="aproar-driver-kpis">
+                <div class="driver-kpi"><span>PARADAS</span><strong>{len(paradas)}</strong><small>{concluidas} concluídas</small></div>
+                <div class="driver-kpi"><span>DISTÂNCIA</span><strong>{float(total_km or 0):.1f}</strong><small>quilômetros</small></div>
+                <div class="driver-kpi"><span>CONCLUSÃO</span><strong>{format_mins_to_time(final_dyn_min)}</strong><small>previsão atual</small></div>
+            </div>
+            <div class="driver-progress"><span style="width:{progresso}%"></span></div>
+            <div class="driver-next-stop">
+                <div class="driver-stop-index">{numero}</div>
+                <div class="driver-stop-copy">
+                    <span>PRÓXIMA PARADA</span>
+                    <strong>{html_escape(destino)}</strong>
+                    <small>Chegada prevista <b>{html_escape(chegada)}</b></small>
+                </div>
+                {botao_gps}
+            </div>
+        </section>
+    """, unsafe_allow_html=True)
+
 
 aplicar_estilo_customizado()
 
@@ -2476,16 +2748,17 @@ def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     valor_referencia = DATA_REF_ROTA_STR if rota_futura else hora_atual_str
 
     st.markdown(f'''
-    <div style="background: linear-gradient(145deg, rgba(18,21,48,0.8), rgba(13,16,37,0.9)); padding: 15px 25px; border-radius: 12px; border: 1px solid rgba(64,116,146,.3); display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; box-shadow: 0 8px 20px rgba(0,0,0,0.2);">
-       <div style="font-size: 14px; color: #8da0b8; text-align: left;">
-            {rotulo_referencia}<br>
-            <b style="color: #e4e8f4; font-size: 20px;">{valor_referencia}</b>
-       </div>
-       <div style="font-size: 14px; color: #8da0b8; text-align: right;">
-            <span style="font-size: 20px;">🏁</span> Término previsto:<br>
-            <b style="color: {cor_previsao}; font-size: 20px;">{nova_previsao_str}</b>
-       </div>
-    </div>
+        <div class="aproar-eta-card">
+            <div class="aproar-eta-side">
+                <div class="aproar-eta-label">{rotulo_referencia.replace('📅 ', '').replace('🕒 ', '')}</div>
+                <div class="aproar-eta-value">{valor_referencia}</div>
+            </div>
+            <div class="aproar-eta-route">→</div>
+            <div class="aproar-eta-side right">
+                <div class="aproar-eta-label">Término previsto</div>
+                <div class="aproar-eta-value" style="color:{cor_previsao};">{nova_previsao_str}</div>
+            </div>
+        </div>
     ''', unsafe_allow_html=True)
 
 # =====================================================================
@@ -2824,14 +3097,119 @@ if modo_davi:
         <style>
             [data-testid="stSidebar"] {display: none !important;}
             [data-testid="stHeader"] {display: none !important;}
-            .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 100% !important;}
+            [data-testid="stToolbar"] {display:none !important;}
+            [data-testid="stAppViewContainer"] {
+                background-image:
+                    radial-gradient(circle at 100% 0%, rgba(37,99,235,.17), transparent 25rem),
+                    linear-gradient(180deg,#070b14 0%,#080b14 100%) !important;
+            }
+            .main .block-container {
+                width:100%; max-width:720px !important;
+                padding:14px 14px 92px !important;
+            }
+            .aproar-driver-header {
+                position:relative; overflow:hidden; margin:0 0 12px; padding:18px 18px 20px;
+                border:1px solid rgba(96,165,250,.20); border-radius:22px;
+                background:linear-gradient(145deg,rgba(15,27,48,.98),rgba(9,14,27,.98));
+                box-shadow:0 20px 45px rgba(0,0,0,.26);
+            }
+            .aproar-driver-header::after {
+                content:''; position:absolute; width:190px; height:190px; border-radius:50%;
+                right:-82px; bottom:-125px; background:rgba(37,99,235,.24); filter:blur(8px);
+            }
+            .aproar-driver-topline { display:flex; align-items:center; justify-content:space-between; gap:12px; position:relative; z-index:1; }
+            .aproar-driver-brand { display:flex; align-items:center; gap:9px; color:#f8fafc; font-size:14px; font-weight:900; letter-spacing:.12em; }
+            .aproar-driver-brand span {
+                display:grid; place-items:center; width:30px; height:30px; border-radius:9px;
+                background:linear-gradient(145deg,#3b82f6,#1d4ed8); color:#fff; letter-spacing:-.06em;
+                box-shadow:0 8px 18px rgba(37,99,235,.35);
+            }
+            .aproar-driver-live {
+                display:flex; align-items:center; gap:7px; color:#bbf7d0; font-size:10px; font-weight:800;
+                letter-spacing:.08em; padding:7px 9px; border:1px solid rgba(34,197,94,.22);
+                border-radius:999px; background:rgba(34,197,94,.08);
+            }
+            .aproar-driver-live i { width:7px; height:7px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 4px rgba(34,197,94,.10); }
+            .aproar-driver-greeting { position:relative; z-index:1; margin-top:24px; color:#f8fafc; font-size:27px; font-weight:700; letter-spacing:-.045em; }
+            .aproar-driver-greeting strong { color:#60a5fa; font-weight:800; }
+            .aproar-driver-date { position:relative; z-index:1; margin-top:5px; color:#94a3b8; font-size:12.5px; font-weight:600; }
+
+            .aproar-driver-summary { margin:6px 0 12px; }
+            .aproar-driver-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+            .driver-kpi {
+                min-width:0; padding:13px 11px 12px; border-radius:15px;
+                background:linear-gradient(145deg,rgba(18,27,47,.96),rgba(12,18,32,.98));
+                border:1px solid rgba(148,163,184,.15); box-shadow:0 10px 24px rgba(0,0,0,.15);
+            }
+            .driver-kpi span { display:block; color:#64748b; font-size:8.5px; font-weight:900; letter-spacing:.10em; }
+            .driver-kpi strong { display:block; margin-top:5px; color:#f8fafc; font-size:20px; line-height:1; font-weight:800; letter-spacing:-.04em; }
+            .driver-kpi small { display:block; overflow:hidden; margin-top:5px; color:#94a3b8; font-size:9.5px; white-space:nowrap; text-overflow:ellipsis; }
+            .driver-progress { height:4px; margin:10px 3px 12px; overflow:hidden; border-radius:999px; background:#172036; }
+            .driver-progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#22c55e); }
+            .driver-next-stop {
+                display:grid; grid-template-columns:42px minmax(0,1fr) auto; align-items:center; gap:12px;
+                padding:15px; border-radius:17px; border:1px solid rgba(96,165,250,.25);
+                background:linear-gradient(135deg,rgba(37,99,235,.12),rgba(15,23,42,.82));
+                box-shadow:0 12px 28px rgba(0,0,0,.17);
+            }
+            .driver-stop-index {
+                display:grid; place-items:center; width:42px; height:42px; border-radius:14px;
+                background:linear-gradient(145deg,#3b82f6,#1d4ed8); color:#fff; font-size:17px; font-weight:900;
+                box-shadow:0 9px 20px rgba(37,99,235,.30);
+            }
+            .driver-stop-copy { min-width:0; }
+            .driver-stop-copy > span { display:block; color:#60a5fa; font-size:9px; font-weight:900; letter-spacing:.11em; }
+            .driver-stop-copy > strong { display:block; overflow:hidden; margin-top:3px; color:#f8fafc; font-size:17px; white-space:nowrap; text-overflow:ellipsis; }
+            .driver-stop-copy small { display:block; margin-top:4px; color:#94a3b8; font-size:11px; }
+            .driver-stop-copy small b { color:#60a5fa; }
+            .driver-gps-link {
+                display:flex; align-items:center; justify-content:center; min-height:42px; padding:0 13px;
+                color:#fff !important; font-size:10.5px; font-weight:900; white-space:nowrap; text-decoration:none !important;
+                border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8);
+                box-shadow:0 9px 20px rgba(37,99,235,.28);
+            }
+
+            .aproar-section-anchor { scroll-margin-top:12px; }
+            .aproar-section-kicker { color:#60a5fa; font-size:10px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+            .aproar-section-title { margin:3px 0 2px; color:#f8fafc; font-size:21px; font-weight:800; letter-spacing:-.035em; }
+            .aproar-section-help { margin:0 0 10px; color:#94a3b8; font-size:12px; }
+            .aproar-eta-card { margin:10px 0 14px; }
+            [data-testid="stExpander"] { margin:6px 0 14px; box-shadow:0 12px 28px rgba(0,0,0,.16); }
+            [data-testid="stExpander"] details > summary { min-height:52px; font-weight:800; }
+            [data-testid="stCameraInput"] { border-radius:15px; overflow:hidden; }
+            [data-testid="stFileUploader"] { margin-top:4px; }
+            iframe[title*="streamlit_folium"] { min-height:390px; border:1px solid rgba(148,163,184,.16); }
+
+            .aproar-driver-bottom-nav {
+                position:fixed; z-index:999999; left:50%; bottom:10px; transform:translateX(-50%);
+                width:min(94%,680px); display:grid; grid-template-columns:repeat(3,1fr); gap:5px;
+                padding:7px; border:1px solid rgba(148,163,184,.18); border-radius:18px;
+                background:rgba(11,16,29,.94); box-shadow:0 18px 42px rgba(0,0,0,.48);
+                backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+            }
+            .aproar-driver-bottom-nav a {
+                display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+                min-height:50px; border-radius:12px; color:#94a3b8 !important; font-size:10px; font-weight:800;
+                text-decoration:none !important;
+            }
+            .aproar-driver-bottom-nav a:first-child { color:#bfdbfe !important; background:rgba(37,99,235,.14); }
+            .aproar-driver-bottom-nav b { font-size:18px; line-height:1; }
+
+            @media (max-width:380px) {
+                .main .block-container { padding-left:10px !important; padding-right:10px !important; }
+                .aproar-driver-header { padding:15px; }
+                .aproar-driver-greeting { font-size:24px; }
+                .driver-kpi { padding:12px 8px; }
+                .driver-kpi strong { font-size:18px; }
+                .driver-next-stop { grid-template-columns:40px minmax(0,1fr); }
+                .driver-gps-link { grid-column:1 / -1; }
+            }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown("<h2 style='text-align: center; color: #e4e8f4; margin-bottom: 0;'>📱 App do Motorista</h2>", unsafe_allow_html=True)
-    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px; color: #8da0b8;'>Rota oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
+    renderizar_cabecalho_motorista()
 
-    if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"): st.rerun()
+    if st.button("↻  ATUALIZAR ROTA", use_container_width=True): st.rerun()
 
     erro_checkin_mobile = ""
     try:
@@ -2928,6 +3306,7 @@ if modo_davi:
     
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
+    renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos_dict, locais_dict)
     renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
 
@@ -2936,7 +3315,13 @@ if modo_davi:
     # O cartão em que o motorista para vira a parada ativa do comprovante.
     # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
     # ---------------------------------------------------------------
-    st.markdown("<div id='comprovante'></div>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="aproar-section-anchor" id="comprovante">
+            <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
+            <div class="aproar-section-title">Comprovante digital</div>
+            <div class="aproar-section-help">Recebedor, materiais e fotos vinculados à parada ativa</div>
+        </div>
+    """, unsafe_allow_html=True)
 
     if "davi_comprovantes_estado" not in st.session_state:
         st.session_state["davi_comprovantes_estado"] = {}
@@ -2990,7 +3375,7 @@ if modo_davi:
         foco_comprovante = None
 
     if entregas_por_etapa:
-        with st.expander("📸 COMPROVANTE DA ENTREGA", expanded=True):
+        with st.expander("COMPROVANTE DA ENTREGA", expanded=True):
             st.caption("↔️ Não precisa escolher a demanda aqui. Deslize o roteiro e pare na parada desejada; ela é selecionada automaticamente.")
 
             if not persistencia_comprovantes_ok:
@@ -3217,8 +3602,13 @@ if modo_davi:
                         st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
 
 
-    st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro passo a passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
-    st.caption("Deslize para o lado para avançar pelas etapas da rota.")
+    st.markdown(f"""
+        <div class="aproar-section-anchor" id="roteiro">
+            <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
+            <div class="aproar-section-title">Roteiro passo a passo</div>
+            <div class="aproar-section-help">{total_km:.1f} km • deslize para avançar entre as etapas</div>
+        </div>
+    """, unsafe_allow_html=True)
     cartoes_mobile = []
     numero_parada_mobile = 1
 
@@ -3342,26 +3732,26 @@ if modo_davi:
         <style>
             * { box-sizing: border-box; }
             html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Inter, Arial, sans-serif; }
-            .barra { display:flex; justify-content:space-between; align-items:center; margin:0 4px 8px; color:#8da0b8; font-size:13px; }
+            .barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 2px 10px; color:#94a3b8; font-size:11px; font-weight:700; }
             .resumo-topo { display:flex; align-items:center; gap:6px; }
-            .feitas { color:#86efac; font-weight:800; background:rgba(22,163,74,.13); border:1px solid rgba(34,197,94,.28); padding:6px 9px; border-radius:999px; }
-            .contador { color:#e4e8f4; font-weight:800; background:#151a31; border:1px solid #2b3654; padding:6px 10px; border-radius:999px; }
+            .feitas { color:#bbf7d0; font-weight:900; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.23); padding:6px 9px; border-radius:999px; }
+            .contador { color:#dbeafe; font-weight:900; background:rgba(37,99,235,.11); border:1px solid rgba(96,165,250,.24); padding:6px 10px; border-radius:999px; }
             .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
             .trilho::-webkit-scrollbar { display:none; }
-            .cartao { flex:0 0 calc(100% - 8px); height:430px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#121530,#0d1025); border:1px solid #303a59; border-radius:18px; box-shadow:0 10px 28px rgba(0,0,0,.32); }
-            .cartao.preparacao { border-color:#2563eb; }
-            .cartao.almoco { border-color:#f59e0b; }
-            .cartao.retorno { border-color:#16a34a; }
-            .cartao.feita { border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.18),0 10px 28px rgba(0,0,0,.32); }
+            .cartao { flex:0 0 calc(100% - 6px); height:432px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:20px; box-shadow:0 18px 38px rgba(0,0,0,.34); }
+            .cartao.preparacao { border-color:rgba(59,130,246,.48); }
+            .cartao.almoco { border-color:rgba(245,158,11,.48); }
+            .cartao.retorno { border-color:rgba(34,197,94,.48); }
+            .cartao.feita { border-color:rgba(34,197,94,.62); box-shadow:0 0 0 2px rgba(34,197,94,.12),0 18px 38px rgba(0,0,0,.34); }
             .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
-            .cartao.selecionada { box-shadow:0 0 0 2px rgba(37,99,235,.32),0 10px 28px rgba(0,0,0,.32); }
-            .topo-card { padding:18px 18px 13px; border-bottom:1px solid rgba(141,160,184,.18); }
+            .cartao.selecionada { box-shadow:0 0 0 2px rgba(59,130,246,.26),0 20px 42px rgba(0,0,0,.38); }
+            .topo-card { padding:18px 18px 14px; border-bottom:1px solid rgba(148,163,184,.13); background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 60%); }
             .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
             .almoco .selo { background:#92400e; color:#fef3c7; }
             .retorno .selo { background:#166534; color:#dcfce7; }
-            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; }
+            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; letter-spacing:-.035em; }
             .meta { color:#8da0b8; font-size:12px; line-height:1.45; }
-            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 8px; }
+            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 9px; scrollbar-width:thin; scrollbar-color:#334155 transparent; }
             .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
             .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
             .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
@@ -3385,13 +3775,13 @@ if modo_davi:
             .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
             .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
-            .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
-            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
+            .rodape-card { display:grid; gap:8px; padding:11px 14px 14px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
+            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid rgba(34,197,94,.48); background:rgba(22,163,74,.08); color:#bbf7d0; font-size:12.5px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
-            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
+            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
-            .controle { border:1px solid #303a59; background:#151a31; color:#e4e8f4; border-radius:10px; padding:10px 8px; font-weight:800; cursor:pointer; }
+            .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
             .controle:disabled { opacity:.35; }
             .pontos { display:flex; gap:5px; justify-content:center; max-width:130px; overflow:hidden; }
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
@@ -3518,7 +3908,13 @@ if modo_davi:
         st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
-    st.markdown("#### 🗺️ Visão geral da rota")
+    st.markdown("""
+        <div class="aproar-section-anchor" id="mapa-rota">
+            <div class="aproar-section-kicker">VISÃO GERAL</div>
+            <div class="aproar-section-title">Mapa da rota</div>
+            <div class="aproar-section-help">Trajeto, sequência e localização das paradas</div>
+        </div>
+    """, unsafe_allow_html=True)
     m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
     pontos_reais_mobile = []
     if p_saida in locais_dict:
@@ -3615,9 +4011,15 @@ if modo_davi:
         ).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
-    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos<br><span style='font-size:11px;'>Azul = trajeto • cinza pontilhado = marcador deslocado para ficar legível</span></div>", unsafe_allow_html=True)
-    st.divider()
-    st.caption("Central de Logística APROAR")
+    st.markdown("<div style='text-align:center;font-size:11px;margin:8px 0 18px;color:#64748b;'><b style='color:#94a3b8;'>LEGENDA</b> &nbsp; 🟡 Coleta &nbsp; 🟢 Entrega &nbsp; 🏁 Início<br>Azul = trajeto • cinza = ajuste visual do marcador</div>", unsafe_allow_html=True)
+    st.markdown("""
+        <nav class="aproar-driver-bottom-nav" aria-label="Navegação do motorista">
+            <a href="#rota"><b>⌂</b><span>Resumo</span></a>
+            <a href="#roteiro"><b>↗</b><span>Roteiro</span></a>
+            <a href="#mapa-rota"><b>⌖</b><span>Mapa</span></a>
+        </nav>
+    """, unsafe_allow_html=True)
+    st.caption("Central de Logística APROAR • rota sincronizada com a Torre")
     st.stop()
 
 # =====================================================================
@@ -7019,10 +7421,7 @@ def loop_automacoes_background(processar_rastreador=True):
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
-try:
-    with open("logo.png", "rb") as image_file: encoded_string = base64.b64encode(image_file.read()).decode()
-    st.markdown(f'<div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;"><img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;"><h1 style="margin: 0; padding: 0; line-height: 1.2; color: #e4e8f4;">TORRE DE CONTROLE LOGÍSTICO</h1></div>', unsafe_allow_html=True)
-except: st.title("🚚 TORRE DE CONTROLE LOGÍSTICO")
+renderizar_cabecalho_torre()
 
 # NAVEGAÇÃO PRIMEIRO: nenhuma consulta de rede/banco deve bloquear a troca de módulo.
 MODULOS_PRINCIPAIS = [
@@ -7048,7 +7447,12 @@ modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
-    st.header("⚙️ Painel de operações")
+    st.markdown("""
+        <div class="aproar-sidebar-brand">
+            <span>A</span>
+            <div><strong>Painel de operações</strong><small>Configuração e sincronização</small></div>
+        </div>
+    """, unsafe_allow_html=True)
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     # Sincronização automática leve: Trello + baixas + Teams a cada 2 minutos.
     # O primeiro carregamento NÃO consulta o Trello, para a página abrir rápido.
