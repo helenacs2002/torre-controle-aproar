@@ -377,11 +377,10 @@ def _html_logo_aproar(classe_css):
 
 
 def renderizar_cabecalho_torre():
-    logo = _html_logo_aproar("aproar-logo-main")
+    """Cabeçalho compacto da Torre, inspirado no painel map-first."""
     st.markdown(f"""
-        <header class="aproar-shell-header">
+        <header class="aproar-shell-header torre-mapfirst-header">
             <div class="aproar-brand">
-                {logo}
                 <div>
                     <div class="aproar-eyebrow">CENTRAL LOGÍSTICA</div>
                     <div class="aproar-title">Torre de Controle</div>
@@ -7464,42 +7463,272 @@ def loop_automacoes_background(processar_rastreador=True):
         # Rastreador não pode derrubar o restante do sistema; tenta novamente no próximo ciclo.
         pass
 
+
+# =====================================================================
+# DESIGN MAP-FIRST — TORRE DE CONTROLE
+# =====================================================================
+def aplicar_estilo_torre_map_first():
+    """Aproxima a Torre do conceito visual aprovado sem alterar o App do Davi."""
+    st.markdown("""
+    <style>
+        [data-testid="stSidebar"] { width: 252px !important; min-width:252px !important; }
+        [data-testid="stSidebar"] > div:first-child { width:252px !important; }
+        [data-testid="stSidebar"] .block-container { padding: 1.05rem .85rem 2rem !important; }
+        .main .block-container { max-width: 1740px !important; padding: 1rem 1.4rem 4rem !important; }
+        .torre-mapfirst-header { margin-bottom: 14px !important; padding: 15px 18px !important; }
+        .torre-mapfirst-header .aproar-title { font-size: 25px !important; }
+        .torre-mapfirst-header .aproar-subtitle { font-size: 11.5px !important; }
+
+        .torre-side-brand { padding: 10px 8px 14px; border-bottom:1px solid rgba(148,163,184,.12); margin-bottom:10px; }
+        .torre-side-brand .aproar-logo-sidebar { width:132px; height:44px; margin-bottom:8px; }
+        .torre-side-brand small { color:#60a5fa; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.13em; }
+        .torre-side-brand strong { display:block; color:#f8fafc; font-family:'Sora',sans-serif!important; font-size:18px; margin-top:2px; }
+        .torre-nav-title { color:#64748b; font-size:9.5px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; margin:12px 4px 5px; }
+        [data-testid="stSidebar"] div[role="radiogroup"] { gap:4px !important; }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label {
+            padding:8px 9px !important; border-radius:10px !important; min-height:38px;
+            border:1px solid transparent; transition:.15s ease; color:#cbd5e1 !important;
+        }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:rgba(37,99,235,.10); border-color:rgba(96,165,250,.16); }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
+            background:linear-gradient(135deg,rgba(37,99,235,.88),rgba(29,78,216,.72)) !important;
+            border-color:rgba(96,165,250,.45) !important; box-shadow:0 8px 20px rgba(37,99,235,.22);
+        }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label p { font-size:12px !important; font-weight:800 !important; color:inherit !important; }
+
+        .tower-kpi-bar {
+            display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px;
+            margin:4px 0 12px; padding:10px; border:1px solid rgba(148,163,184,.15);
+            border-radius:16px; background:linear-gradient(145deg,#101827,#0b111d); box-shadow:0 14px 30px rgba(0,0,0,.22);
+        }
+        .tower-kpi-item { min-width:0; padding:9px 12px; border-right:1px solid rgba(148,163,184,.12); }
+        .tower-kpi-item:last-child { border-right:0; }
+        .tower-kpi-item span { display:block; color:#94a3b8; font-size:9.5px; text-transform:uppercase; letter-spacing:.08em; font-weight:900; }
+        .tower-kpi-item strong { display:block; margin-top:4px; color:#f8fafc; font-family:'Sora',sans-serif!important; font-size:20px; letter-spacing:-.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .tower-kpi-item small { display:block; margin-top:3px; color:#64748b; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .tower-kpi-item.good strong, .tower-kpi-item.good small { color:#4ade80; }
+        .tower-kpi-item.warn strong { color:#fbbf24; }
+        .tower-kpi-item.blue strong { color:#60a5fa; }
+
+        .tower-cargo-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0 0 14px; }
+        .tower-cargo-card { border-radius:15px; padding:13px 14px; background:rgba(15,21,38,.87); border:1px solid rgba(148,163,184,.16); min-height:118px; }
+        .tower-cargo-card.loaded { border-color:rgba(59,130,246,.34); background:linear-gradient(145deg,rgba(37,99,235,.10),rgba(15,21,38,.90)); }
+        .tower-cargo-card.collect { border-color:rgba(245,158,11,.30); }
+        .tower-cargo-card.deliver { border-color:rgba(34,197,94,.30); }
+        .tower-cargo-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+        .tower-cargo-head strong { color:#f8fafc; font-size:12px; letter-spacing:.01em; }
+        .tower-cargo-count { display:grid;place-items:center;min-width:27px;height:27px;padding:0 8px;border-radius:999px;background:rgba(255,255,255,.07);color:#e2e8f0;font-weight:900;font-size:12px; }
+        .tower-cargo-list { display:flex; flex-direction:column; gap:7px; }
+        .tower-cargo-row { padding:7px 8px; border-radius:9px; background:rgba(255,255,255,.035); border:1px solid rgba(148,163,184,.08); }
+        .tower-cargo-row b { display:block; color:#e2e8f0; font-size:10.5px; line-height:1.3; }
+        .tower-cargo-row small { display:block; color:#7f8ea3; font-size:9.5px; margin-top:2px; line-height:1.25; }
+        .tower-cargo-empty { color:#64748b; font-size:10.5px; padding:7px 2px; }
+
+        .tower-stop-list { display:flex; flex-direction:column; gap:7px; margin:3px 0 11px; }
+        .tower-stop { display:grid; grid-template-columns:30px 1fr auto; gap:9px; align-items:center; padding:9px 10px; border-radius:11px; background:rgba(255,255,255,.035); border:1px solid rgba(148,163,184,.10); }
+        .tower-stop-num { width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:#17233a;color:#93c5fd;border:1px solid rgba(96,165,250,.34);font-weight:900;font-size:10px; }
+        .tower-stop.done .tower-stop-num { background:rgba(22,163,74,.18);color:#86efac;border-color:rgba(74,222,128,.4); }
+        .tower-stop.current { border-color:rgba(59,130,246,.4); background:rgba(37,99,235,.08); }
+        .tower-stop-copy b { display:block;color:#f8fafc;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .tower-stop-copy small { display:block;color:#7f8ea3;font-size:9.5px;margin-top:2px; }
+        .tower-stop-time { color:#cbd5e1;font-weight:900;font-size:10.5px;white-space:nowrap; }
+
+        .tower-map-title { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 8px; }
+        .tower-map-title h3 { margin:0 !important; font-size:18px !important; }
+        iframe[title*="streamlit_folium"] { border:1px solid rgba(148,163,184,.18) !important; box-shadow:0 16px 34px rgba(0,0,0,.22); }
+        div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:13px !important; }
+        .tower-action-status { display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:9.5px;font-weight:900;letter-spacing:.03em;white-space:nowrap; }
+        .tower-action-status.loaded { color:#bfdbfe;background:rgba(37,99,235,.17);border:1px solid rgba(96,165,250,.30); }
+        .tower-action-status.collect { color:#fde68a;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.28); }
+        .tower-action-status.deliver { color:#bbf7d0;background:rgba(34,197,94,.13);border:1px solid rgba(34,197,94,.27); }
+        .tower-action-status.done { color:#d1fae5;background:rgba(22,163,74,.22);border:1px solid rgba(74,222,128,.34); }
+
+        @media(max-width:1100px){.tower-kpi-bar{grid-template-columns:repeat(3,minmax(0,1fr));}.tower-cargo-grid{grid-template-columns:1fr;}.tower-kpi-item:nth-child(3){border-right:0;}}
+        @media(max-width:700px){.tower-kpi-bar{grid-template-columns:repeat(2,minmax(0,1fr));}.tower-kpi-item{border-right:0;}}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def construir_estado_carga_rota(route_steps, dict_concluidos, dict_checkins, df_paradas, p_saida, hora_inicio_real):
+    """Reconstrói o estado físico da carga: a coletar, no veículo, a entregar e entregue."""
+    registros = {}
+    try:
+        agora_min = AGORA_REAL.hour * 60 + AGORA_REAL.minute
+        inicio_min = parse_time_to_mins(str(hora_inicio_real or HORA_INICIO_ROTA_DAVI))
+        preparacao_executada = DATA_REF_ROTA_DATE < AGORA_REAL.date() or (DATA_REF_ROTA_DATE == AGORA_REAL.date() and agora_min >= inicio_min)
+    except Exception:
+        preparacao_executada = False
+
+    for indice, step in enumerate(route_steps or []):
+        if step.get("type") != "stop":
+            continue
+        local = str(step.get("destino", "") or "")
+        eh_preparacao = indice == 0 and canonicalizar_ponto_rota(local) == canonicalizar_ponto_rota(p_saida)
+        visitada = indice in (dict_checkins or {})
+        if not visitada and not eh_preparacao:
+            try:
+                real = obter_status_rastreio_local(df_paradas, local, DATA_REF_ROTA_STR)
+                visitada = bool(real and real.get("saida"))
+            except Exception:
+                pass
+        coleta_realizada_na_etapa = (eh_preparacao and (preparacao_executada or indice in (dict_checkins or {}))) or visitada
+
+        for acao, tarefa in step.get("actions", []) or []:
+            card_id = str(tarefa.get("id", "") or "").strip()
+            if not card_id:
+                continue
+            rec = registros.setdefault(card_id, {
+                "id": card_id, "tarefa": dict(tarefa), "tem_coleta": False, "tem_entrega": False,
+                "coletado": False, "entregue": card_id in (dict_concluidos or {}),
+                "local_coleta": "", "local_entrega": "", "hora_coleta": "", "hora_entrega": "",
+            })
+            if len(str(tarefa.get("Materiais", "") or "")) >= len(str(rec["tarefa"].get("Materiais", "") or "")):
+                rec["tarefa"] = dict(tarefa)
+            if acao == "COLETAR":
+                rec["tem_coleta"] = True
+                rec["local_coleta"] = local
+                if coleta_realizada_na_etapa:
+                    rec["coletado"] = True
+                    rec["hora_coleta"] = str((dict_checkins or {}).get(indice, {}).get("hora", "") or "")
+            elif acao == "ENTREGAR":
+                rec["tem_entrega"] = True
+                rec["local_entrega"] = local
+
+    for card_id, rec in registros.items():
+        if card_id in (dict_concluidos or {}):
+            rec["entregue"] = True
+            rec["coletado"] = True
+            rec["hora_entrega"] = str((dict_concluidos or {}).get(card_id, "") or "")
+        elif not rec["tem_coleta"]:
+            origem = canonicalizar_ponto_rota(rec["tarefa"].get("Origem", ""))
+            if origem == canonicalizar_ponto_rota(p_saida) and preparacao_executada:
+                rec["coletado"] = True
+
+    valores = list(registros.values())
+    return {
+        "registros": registros,
+        "ids_coletados": {r["id"] for r in valores if r["coletado"]},
+        "ids_entregues": {r["id"] for r in valores if r["entregue"]},
+        "no_veiculo": [r for r in valores if r["coletado"] and r["tem_entrega"] and not r["entregue"]],
+        "a_coletar": [r for r in valores if r["tem_coleta"] and not r["coletado"] and not r["entregue"]],
+        "a_entregar": [r for r in valores if r["tem_entrega"] and not r["entregue"]],
+        "entregues": [r for r in valores if r["entregue"]],
+    }
+
+
+def _resumo_material_carga(tarefa, limite=92):
+    materiais = _separar_materiais_comprovante((tarefa or {}).get("Materiais", ""))
+    texto = " • ".join(materiais) if materiais else "Material não informado"
+    return texto if len(texto) <= limite else texto[:limite-1].rstrip() + "…"
+
+
+def renderizar_painel_carga_torre(estado):
+    def bloco(lista, vazio, mostrar_status=False):
+        if not lista:
+            return f'<div class="tower-cargo-empty">{html_escape(vazio)}</div>'
+        linhas = []
+        for rec in lista[:6]:
+            t = rec.get("tarefa", {})
+            obra = str(t.get("Obra", "Demanda") or "Demanda")
+            mat = _resumo_material_carga(t)
+            local = rec.get("local_entrega") or str(t.get("Destino", "") or "")
+            prefixo = "NO VEÍCULO • " if mostrar_status and rec.get("coletado") else ("AGUARDANDO COLETA • " if mostrar_status else "")
+            linhas.append(f'<div class="tower-cargo-row"><b>{html_escape(mat)}</b><small>{html_escape(prefixo + obra)}{(" • " + html_escape(local)) if local else ""}</small></div>')
+        if len(lista) > 6:
+            linhas.append(f'<div class="tower-cargo-empty">+ {len(lista)-6} outros itens</div>')
+        return "".join(linhas)
+
+    no_veiculo, a_coletar, a_entregar = estado.get("no_veiculo", []), estado.get("a_coletar", []), estado.get("a_entregar", [])
+    st.markdown(f"""
+        <div class="tower-cargo-grid">
+            <section class="tower-cargo-card loaded"><div class="tower-cargo-head"><strong>🚚 COLETADO / NO VEÍCULO</strong><span class="tower-cargo-count">{len(no_veiculo)}</span></div><div class="tower-cargo-list">{bloco(no_veiculo, 'Nenhum material pendente está carregado agora.')}</div></section>
+            <section class="tower-cargo-card collect"><div class="tower-cargo-head"><strong>📦 A COLETAR</strong><span class="tower-cargo-count">{len(a_coletar)}</span></div><div class="tower-cargo-list">{bloco(a_coletar, 'Nenhuma coleta pendente.')}</div></section>
+            <section class="tower-cargo-card deliver"><div class="tower-cargo-head"><strong>📬 A ENTREGAR</strong><span class="tower-cargo-count">{len(a_entregar)}</span></div><div class="tower-cargo-list">{bloco(a_entregar, 'Todas as entregas da rota foram concluídas.', True)}</div></section>
+        </div>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_kpis_rota_torre(estado, route_steps, final_dyn_min):
+    registros = estado.get("registros", {})
+    entregues = len(estado.get("entregues", []))
+    total = sum(1 for r in registros.values() if r.get("tem_entrega")) or len(registros)
+    carregados, coletas = len(estado.get("no_veiculo", [])), len(estado.get("a_coletar", []))
+    adiadas = len(st.session_state.get("demandas_adiadas", []) or [])
+    proxima, proxima_hora = "Rota concluída", "--:--"
+    for step in route_steps or []:
+        if step.get("type") != "stop": continue
+        pendente = False
+        for acao, tarefa in step.get("actions", []) or []:
+            cid = str(tarefa.get("id", "") or "")
+            pendente |= acao == "ENTREGAR" and cid not in estado.get("ids_entregues", set())
+            pendente |= acao == "COLETAR" and cid not in estado.get("ids_coletados", set())
+        if pendente:
+            proxima = str(step.get("destino", "Próxima parada") or "Próxima parada")
+            proxima_hora = str(step.get("dyn_chegada", step.get("chegada", "--:--")) or "--:--")
+            break
+    st.markdown(f"""
+        <div class="tower-kpi-bar">
+            <div class="tower-kpi-item"><span>Demandas do dia</span><strong>{total}</strong><small>{max(0,total-entregues)} pendentes</small></div>
+            <div class="tower-kpi-item good"><span>Entregues</span><strong>{entregues}</strong><small>{round(100*entregues/max(1,total))}% concluído</small></div>
+            <div class="tower-kpi-item blue"><span>No veículo</span><strong>{carregados}</strong><small>coletados e não entregues</small></div>
+            <div class="tower-kpi-item warn"><span>A coletar</span><strong>{coletas}</strong><small>{adiadas} p/ próximo planejamento</small></div>
+            <div class="tower-kpi-item blue"><span>Próxima parada</span><strong>{html_escape(proxima_hora)}</strong><small>{html_escape(proxima)}</small></div>
+            <div class="tower-kpi-item good"><span>Término previsto</span><strong>{html_escape(format_mins_to_time(final_dyn_min))}</strong><small>expediente até 17:00</small></div>
+        </div>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_resumo_paradas_torre(route_steps, estado, p_saida):
+    ids_entregues, ids_coletados = estado.get("ids_entregues", set()), estado.get("ids_coletados", set())
+    itens, numero, atual_marcado = [], 0, False
+    for indice, step in enumerate(route_steps or []):
+        if step.get("type") == "lunch": continue
+        if step.get("type") == "return":
+            itens.append(("↩", "Retorno à base", str(step.get("dyn_chegada", "--:--")), "retorno", True, False)); continue
+        eh_inicio = indice == 0 and canonicalizar_ponto_rota(step.get("destino", "")) == canonicalizar_ponto_rota(p_saida)
+        if not eh_inicio: numero += 1
+        acoes = step.get("actions", []) or []
+        pendentes = []
+        for acao, tarefa in acoes:
+            cid = str(tarefa.get("id", "") or "")
+            if acao == "COLETAR" and cid not in ids_coletados: pendentes.append("coleta")
+            elif acao == "ENTREGAR" and cid not in ids_entregues: pendentes.append("entrega")
+        done = bool(acoes) and not pendentes
+        current = not done and not atual_marcado and not eh_inicio
+        if current: atual_marcado = True
+        qc, qe = sum(1 for a,_ in acoes if a == "COLETAR"), sum(1 for a,_ in acoes if a == "ENTREGAR")
+        desc = " • ".join(x for x in [f"{qc} coleta(s)" if qc else "", f"{qe} entrega(s)" if qe else ""] if x)
+        itens.append(("🏁" if eh_inicio else str(numero), str(step.get("destino", "")), str(step.get("dyn_chegada", step.get("chegada", "--:--"))), desc, done, current))
+    html = []
+    for num, local, hora, desc, done, current in itens[:8]:
+        classes = "tower-stop" + (" done" if done else "") + (" current" if current else "")
+        html.append(f'<div class="{classes}"><span class="tower-stop-num">{html_escape(str(num))}</span><div class="tower-stop-copy"><b>{html_escape(local)}</b><small>{html_escape(desc or ("Concluída" if done else "Parada operacional"))}</small></div><span class="tower-stop-time">{html_escape(hora)}</span></div>')
+    if len(itens) > 8: html.append(f'<div class="tower-cargo-empty">+ {len(itens)-8} paradas no restante do roteiro</div>')
+    st.markdown('<div class="tower-stop-list">' + ''.join(html) + '</div>', unsafe_allow_html=True)
+
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
+aplicar_estilo_torre_map_first()
 renderizar_cabecalho_torre()
 
-# NAVEGAÇÃO PRIMEIRO: nenhuma consulta de rede/banco deve bloquear a troca de módulo.
 MODULOS_PRINCIPAIS = [
-    "🗺️ Roteiro do Davi",
-    "📡 Rastreador ao vivo",
-    "📦 Demandas ativas",
-    "📋 Histórico e concluídos",
-    "📍 Endereços",
-    "🚗 Frota e custos",
+    "🗺️ Roteiro do Davi", "📡 Rastreador ao vivo", "📦 Demandas ativas",
+    "📋 Histórico e concluídos", "📍 Endereços", "🚗 Frota e custos",
 ]
-if hasattr(st, "segmented_control"):
-    modulo_principal = st.segmented_control(
-        "Módulo", MODULOS_PRINCIPAIS, default=MODULOS_PRINCIPAIS[0],
-        key="modulo_principal", label_visibility="collapsed",
-    )
-else:
-    modulo_principal = st.radio(
-        "Módulo", MODULOS_PRINCIPAIS, index=0, horizontal=True,
-        key="modulo_principal", label_visibility="collapsed",
-    )
-modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
-
-if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
+if "demandas" not in st.session_state:
+    st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
     logo_sidebar = _html_logo_aproar("aproar-logo-sidebar")
     st.markdown(f"""
-        <div class="aproar-sidebar-brand">
-            {logo_sidebar}
-            <div><strong>Painel de operações</strong><small>Configuração e sincronização</small></div>
-        </div>
+        <div class="torre-side-brand">{logo_sidebar}<small>Central Logística</small><strong>Torre de Controle</strong></div>
+        <div class="torre-nav-title">Navegação</div>
     """, unsafe_allow_html=True)
+    _modulo_anterior = st.session_state.get("modulo_principal", MODULOS_PRINCIPAIS[0])
+    _indice_modulo = MODULOS_PRINCIPAIS.index(_modulo_anterior) if _modulo_anterior in MODULOS_PRINCIPAIS else 0
+    modulo_principal = st.radio("Navegação", MODULOS_PRINCIPAIS, index=_indice_modulo, key="modulo_principal", label_visibility="collapsed") or MODULOS_PRINCIPAIS[0]
+    st.markdown('<div class="torre-nav-title">Operação</div>', unsafe_allow_html=True)
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     # Sincronização automática leve: Trello + baixas + Teams a cada 2 minutos.
     # O primeiro carregamento NÃO consulta o Trello, para a página abrir rápido.
@@ -9058,6 +9287,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
         route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_torre, hora_inicio_real)
 
+        estado_carga_torre = construir_estado_carga_rota(
+            route_steps, dict_concluidos_torre, dict_checkins_torre, df_paradas, p_saida, hora_inicio_real
+        )
+
         # Uma rota que cabia às 08h pode deixar de caber depois de atrasos reais.
         # Se o ETA atual ultrapassar 17h e ainda houver demanda pendente, refazemos
         # automaticamente o restante a partir de AGORA. O motor de planejamento
@@ -9163,7 +9396,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 )
                 st.rerun()
 
-        col_esq, col_dir = st.columns([1.2, 0.8])
+        renderizar_kpis_rota_torre(estado_carga_torre, route_steps, final_dyn_min)
+        renderizar_painel_carga_torre(estado_carga_torre)
+
+        col_esq, col_dir = st.columns([0.38, 0.62], gap="medium")
         with col_esq:
             st.subheader(f"📋 Roteiro de viagem do Davi — {DATA_REF_ROTA_STR}")
             st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
@@ -9275,135 +9511,155 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     st.session_state["_mensagem_ajuste_rota"] = "♻️ Ajustes manuais removidos. A rota voltou para o planejamento automático."
                     st.rerun()
             
+            st.markdown("#### 🧭 Sequência operacional")
+            renderizar_resumo_paradas_torre(route_steps, estado_carga_torre, p_saida)
+
             texto_whatsapp = f"🚚 *ROTEIRO DE LOGÍSTICA - DAVI*\n📅 Data: {DATA_REF_ROTA_STR}\n🕖 Expediente: das 07:00 às 17:00\n🚚 Início da rota do Davi: {hora_inicio_real}\n🚗 Veículo: {veiculo_selecionado.split('(')[0].strip()}\n\n"
             
             num_parada = 1
-            for i, step in enumerate(route_steps):
-                if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
-                    texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
-                    continue
-                if step['type'] == 'return':
-                    st.info(f"🏁 **Retorno à base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
-                    texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
-                    continue
+            with st.expander("📦 Ver coletas, entregas, materiais e comprovantes", expanded=False):
+                for i, step in enumerate(route_steps):
+                    if step['type'] == 'lunch':
+                        st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
+                        texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
+                        continue
+                    if step['type'] == 'return':
+                        st.info(f"🏁 **Retorno à base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
+                        texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
+                        continue
 
-                is_start = (i == 0 and step['destino'] == p_saida)
-                endereco_db = enderecos_dict.get(step['destino'], "")
-                link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
+                    is_start = (i == 0 and step['destino'] == p_saida)
+                    endereco_db = enderecos_dict.get(step['destino'], "")
+                    link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
-                with st.container(border=True):
-                    if is_start:
-                        st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
-                        st.caption(f"🕖 Preparação planejada: **{step['chegada']} às {step['saida']}**")
-                        texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
-                    else:
-                        status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
-                        st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
-                        st.caption(f"{status_tempo} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
+                    with st.container(border=True):
+                        if is_start:
+                            st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
+                            st.caption(f"🕖 Preparação planejada: **{step['chegada']} às {step['saida']}**")
+                            texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
+                        else:
+                            status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
+                            st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
+                            st.caption(f"{status_tempo} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
 
-                        status_real = obter_status_rastreio_local(df_paradas, step['destino'], DATA_REF_ROTA_STR)
-                        if status_real:
-                            if status_real.get('aberta'):
-                                texto_real = f"📍 Chegada real: **{status_real['chegada']}**"
-                                if status_real.get('duracao'):
-                                    texto_real += f"  •  ⏱️ No local há **{status_real['duracao']}**"
-                                st.markdown(texto_real)
-                            else:
-                                st.markdown(
-                                    f"📍 Chegada: **{status_real['chegada']}**  •  "
-                                    f"🚚 Saída: **{status_real['saida']}**  •  "
-                                    f"⏱️ Permanência: **{status_real['duracao']}**"
-                                )
-
-                        texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n🧭 *GPS:* {link_parada}\n"
-
-                    checkin_davi = dict_checkins_torre.get(i)
-                    if checkin_davi:
-                        st.markdown(
-                            f"<span class='davi-etapa-feita'></span>"
-                            f"<span class='selo-davi-feita'>✓ Feita pelo Davi às {html_escape(checkin_davi['hora'])}</span>",
-                            unsafe_allow_html=True,
-                        )
-                    
-                    # Uma visita ao endereço tem uma única permanência estimada.
-                    # Várias demandas no mesmo local compartilham esse tempo.
-                    if not is_start and step.get('actions'):
-                        tempo_parada_torre = int(round(float(step.get('tempo_local', 0) or 0)))
-                        fonte_parada_torre = str(step.get('tempo_local_fonte', 'média operacional') or 'média operacional')
-                        st.caption(
-                            f"⏱️ **Permanência estimada no local: {tempo_parada_torre} min** • {fonte_parada_torre}. "
-                            f"{len(step.get('actions', []))} {plural_pt(len(step.get('actions', [])), 'demanda desta parada compartilha', 'demandas desta parada compartilham')} esse período."
-                        )
-
-                    for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
-                        eh_coleta_torre = acao == "COLETAR"
-                        icone_torre = "📦" if eh_coleta_torre else "📬"
-                        rotulo_torre = "COLETA" if eh_coleta_torre else "ENTREGA"
-                        card_id_torre = str(t.get('id', ''))
-                        concluida = card_id_torre in dict_concluidos_torre
-                        materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
-
-                        cor_torre = "#22c55e" if not eh_coleta_torre else "#f59e0b"
-                        fundo_torre = "rgba(34,197,94,.10)" if not eh_coleta_torre else "rgba(245,158,11,.10)"
-                        texto_cor_torre = "#bbf7d0" if not eh_coleta_torre else "#fde68a"
-                        obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
-
-                        with st.container(border=True):
-                            st.markdown(
-                                f"""
-                                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;
-                                            padding:9px 11px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
-                                            border-radius:9px;background:{fundo_torre};">
-                                    <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
-                                    <div style="font-weight:800;color:#e4e8f4;text-align:right;">🏗️ {obra_torre_html}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
-                            if materiais_torre:
-                                for material_torre in materiais_torre:
-                                    st.markdown(f"• {material_torre}")
-                            else:
-                                st.caption("Material não informado")
-
-                            if concluida:
-                                st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
-
-                            # Para entregas, exibe o comprovante e permite reabri-lo sem apagar as fotos.
-                            if not eh_coleta_torre and card_id_torre:
-                                chave_comp_torre = _nome_seguro_comprovante(card_id_torre, 40)
-                                estado_comp_torre = comprovantes_torre.get(chave_comp_torre, {})
-                                fotos_comp_torre = estado_comp_torre.get("fotos", []) or []
-                                if estado_comp_torre.get("finalizado"):
-                                    recebedor_comp_torre = str(estado_comp_torre.get("recebedor", "") or "").strip()
-                                    info_comp = f"📸 Comprovante finalizado • {len(fotos_comp_torre)} {plural_pt(len(fotos_comp_torre), 'foto', 'fotos')}"
-                                    if recebedor_comp_torre:
-                                        info_comp += f" • Recebedor: {recebedor_comp_torre}"
-                                    st.caption(info_comp)
-                                    if st.button(
-                                        "↩️ Reabrir comprovante",
-                                        key=f"reabrir_comprovante_torre_{DATA_REF_ROTA_STR}_{card_id_torre}_{i}_{indice_demanda}",
-                                        help="Reabre a entrega no App do Davi sem apagar as fotos já enviadas.",
-                                    ):
-                                        try:
-                                            definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, card_id_torre, False)
-                                            st.success("✅ Comprovante reaberto. As fotos existentes foram preservadas.")
-                                            st.rerun()
-                                        except Exception as erro_reabrir:
-                                            st.error(f"Não foi possível reabrir o comprovante: {erro_reabrir}")
-                                elif fotos_comp_torre:
-                                    qtd_fotos_comp = len(fotos_comp_torre)
-                                    st.caption(
-                                        f"📸 Comprovante em aberto • {qtd_fotos_comp} "
-                                        f"{plural_pt(qtd_fotos_comp, 'foto já enviada', 'fotos já enviadas')}"
+                            status_real = obter_status_rastreio_local(df_paradas, step['destino'], DATA_REF_ROTA_STR)
+                            if status_real:
+                                if status_real.get('aberta'):
+                                    texto_real = f"📍 Chegada real: **{status_real['chegada']}**"
+                                    if status_real.get('duracao'):
+                                        texto_real += f"  •  ⏱️ No local há **{status_real['duracao']}**"
+                                    st.markdown(texto_real)
+                                else:
+                                    st.markdown(
+                                        f"📍 Chegada: **{status_real['chegada']}**  •  "
+                                        f"🚚 Saída: **{status_real['saida']}**  •  "
+                                        f"⏱️ Permanência: **{status_real['duracao']}**"
                                     )
 
-                        texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
+                            texto_whatsapp += f"📍 *PARADA {num_parada}: {step['destino']}* ({step['dyn_chegada']} às {step['dyn_saida']})\n🧭 *GPS:* {link_parada}\n"
+
+                        checkin_davi = dict_checkins_torre.get(i)
+                        if checkin_davi:
+                            st.markdown(
+                                f"<span class='davi-etapa-feita'></span>"
+                                f"<span class='selo-davi-feita'>✓ Feita pelo Davi às {html_escape(checkin_davi['hora'])}</span>",
+                                unsafe_allow_html=True,
+                            )
                     
-                    texto_whatsapp += "\n"
-                    if not is_start: num_parada += 1
+                        # Uma visita ao endereço tem uma única permanência estimada.
+                        # Várias demandas no mesmo local compartilham esse tempo.
+                        if not is_start and step.get('actions'):
+                            tempo_parada_torre = int(round(float(step.get('tempo_local', 0) or 0)))
+                            fonte_parada_torre = str(step.get('tempo_local_fonte', 'média operacional') or 'média operacional')
+                            st.caption(
+                                f"⏱️ **Permanência estimada no local: {tempo_parada_torre} min** • {fonte_parada_torre}. "
+                                f"{len(step.get('actions', []))} {plural_pt(len(step.get('actions', [])), 'demanda desta parada compartilha', 'demandas desta parada compartilham')} esse período."
+                            )
+
+                        for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
+                            eh_coleta_torre = acao == "COLETAR"
+                            icone_torre = "📦" if eh_coleta_torre else "📬"
+                            rotulo_torre = "COLETA" if eh_coleta_torre else "ENTREGA"
+                            card_id_torre = str(t.get('id', ''))
+                            concluida = card_id_torre in dict_concluidos_torre
+                            materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
+
+                            cor_torre = "#22c55e" if not eh_coleta_torre else "#f59e0b"
+                            fundo_torre = "rgba(34,197,94,.10)" if not eh_coleta_torre else "rgba(245,158,11,.10)"
+                            texto_cor_torre = "#bbf7d0" if not eh_coleta_torre else "#fde68a"
+                            obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
+
+                            with st.container(border=True):
+                                if eh_coleta_torre:
+                                    if card_id_torre in estado_carga_torre.get("ids_coletados", set()):
+                                        status_acao_torre, classe_status_torre = "✓ COLETADO", "loaded"
+                                    else:
+                                        status_acao_torre, classe_status_torre = "A COLETAR", "collect"
+                                else:
+                                    if card_id_torre in estado_carga_torre.get("ids_entregues", set()):
+                                        status_acao_torre, classe_status_torre = "✓ ENTREGUE", "done"
+                                    elif card_id_torre in estado_carga_torre.get("ids_coletados", set()):
+                                        status_acao_torre, classe_status_torre = "NO VEÍCULO • A ENTREGAR", "loaded"
+                                    else:
+                                        status_acao_torre, classe_status_torre = "A ENTREGAR", "deliver"
+
+                                st.markdown(
+                                    f"""
+                                    <div style="display:flex;justify-content:space-between;align-items:center;gap:9px;
+                                                padding:9px 10px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
+                                                border-radius:9px;background:{fundo_torre};">
+                                        <div style="min-width:0;">
+                                            <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
+                                            <span class="tower-action-status {classe_status_torre}" style="margin-top:5px;">{status_acao_torre}</span>
+                                        </div>
+                                        <div style="font-weight:800;color:#e4e8f4;text-align:right;font-size:11px;">🏗️ {obra_torre_html}</div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+
+                                if materiais_torre:
+                                    for material_torre in materiais_torre:
+                                        st.markdown(f"• {material_torre}")
+                                else:
+                                    st.caption("Material não informado")
+
+                                if concluida:
+                                    st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
+
+                                # Para entregas, exibe o comprovante e permite reabri-lo sem apagar as fotos.
+                                if not eh_coleta_torre and card_id_torre:
+                                    chave_comp_torre = _nome_seguro_comprovante(card_id_torre, 40)
+                                    estado_comp_torre = comprovantes_torre.get(chave_comp_torre, {})
+                                    fotos_comp_torre = estado_comp_torre.get("fotos", []) or []
+                                    if estado_comp_torre.get("finalizado"):
+                                        recebedor_comp_torre = str(estado_comp_torre.get("recebedor", "") or "").strip()
+                                        info_comp = f"📸 Comprovante finalizado • {len(fotos_comp_torre)} {plural_pt(len(fotos_comp_torre), 'foto', 'fotos')}"
+                                        if recebedor_comp_torre:
+                                            info_comp += f" • Recebedor: {recebedor_comp_torre}"
+                                        st.caption(info_comp)
+                                        if st.button(
+                                            "↩️ Reabrir comprovante",
+                                            key=f"reabrir_comprovante_torre_{DATA_REF_ROTA_STR}_{card_id_torre}_{i}_{indice_demanda}",
+                                            help="Reabre a entrega no App do Davi sem apagar as fotos já enviadas.",
+                                        ):
+                                            try:
+                                                definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, card_id_torre, False)
+                                                st.success("✅ Comprovante reaberto. As fotos existentes foram preservadas.")
+                                                st.rerun()
+                                            except Exception as erro_reabrir:
+                                                st.error(f"Não foi possível reabrir o comprovante: {erro_reabrir}")
+                                    elif fotos_comp_torre:
+                                        qtd_fotos_comp = len(fotos_comp_torre)
+                                        st.caption(
+                                            f"📸 Comprovante em aberto • {qtd_fotos_comp} "
+                                            f"{plural_pt(qtd_fotos_comp, 'foto já enviada', 'fotos já enviadas')}"
+                                        )
+
+                            texto_whatsapp += f" - {'✅ ' if concluida else ''}{acao.capitalize()}: {t['Materiais']} (Obra: {t['Obra']})\n"
+                    
+                        texto_whatsapp += "\n"
+                        if not is_start: num_parada += 1
 
             horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
@@ -9476,9 +9732,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             compartilhamento_rota()
 
         with col_dir:
-            st.subheader("🗺️ Mapa da rota")
+            st.markdown("""<div class="tower-map-title"><h3>🗺️ Mapa da rota</h3><span style="color:#4ade80;font-size:10px;font-weight:800;">● VISÃO OPERACIONAL</span></div>""", unsafe_allow_html=True)
             # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
+            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="CartoDB positron")
 
             # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
             # existem somente para impedir que um número fique escondido por outro.
@@ -9601,7 +9857,24 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
                     fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
-                    popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
+                    detalhes_popup = []
+                    for _acao_popup, _tarefa_popup in step.get('actions', []) or []:
+                        _cid_popup = str(_tarefa_popup.get('id', '') or '')
+                        _mat_popup = _resumo_material_carga(_tarefa_popup, limite=70)
+                        if _acao_popup == "COLETAR":
+                            _status_popup = "COLETADO" if _cid_popup in estado_carga_torre.get("ids_coletados", set()) else "A COLETAR"
+                            _icone_popup = "📦"
+                        else:
+                            if _cid_popup in estado_carga_torre.get("ids_entregues", set()): _status_popup = "ENTREGUE"
+                            elif _cid_popup in estado_carga_torre.get("ids_coletados", set()): _status_popup = "NO VEÍCULO / A ENTREGAR"
+                            else: _status_popup = "A ENTREGAR"
+                            _icone_popup = "📬"
+                        detalhes_popup.append(f"{_icone_popup} <b>{html_escape(_status_popup)}</b> — {html_escape(_mat_popup)}")
+                    popup_html = (
+                        f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>"
+                        f"Previsão: {html_escape(str(step.get('dyn_chegada', step.get('chegada', ''))))}<br>"
+                        + "<br>".join(detalhes_popup)
+                    )
                     folium.Marker(
                         [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
                         z_index_offset=1200 + p_num,
@@ -9620,7 +9893,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 ).add_to(m)
 
             st_folium(
-                m, height=540, use_container_width=True, returned_objects=[],
+                m, height=650, use_container_width=True, returned_objects=[],
                 key=f"mapa_rota_{DATA_REF_ROTA_STR}",
             )
             legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
