@@ -111,7 +111,7 @@ def aplicar_estilo_customizado():
     """Aplica o mesmo sistema visual à Torre e à página /davi."""
     st.markdown("""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap');
 
         :root {
             --ap-bg: #070913;
@@ -136,7 +136,11 @@ def aplicar_estilo_customizado():
 
         html, body, [class*="css"], .stMarkdown, .stText, p, div,
         h1, h2, h3, h4, h5, h6, label, button, input, textarea {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        }
+        h1, h2, h3, h4, h5, h6, .aproar-title, .aproar-driver-greeting,
+        [data-testid="stMetricValue"], .driver-kpi strong, .driver-stop-copy > strong {
+            font-family:'Sora', 'Manrope', sans-serif !important;
         }
         html, body, [data-testid="stAppViewContainer"] { background: var(--ap-bg) !important; }
         [data-testid="stAppViewContainer"] {
@@ -186,6 +190,10 @@ def aplicar_estilo_customizado():
         }
         .aproar-sidebar-brand strong { display:block; color:#f8fafc; font-size:13px; }
         .aproar-sidebar-brand small { display:block; margin-top:2px; color:#94a3b8; font-size:10px; }
+        .aproar-logo-sidebar {
+            display:block; width:94px; height:35px; flex:0 0 94px;
+            object-fit:contain; object-position:left center;
+        }
 
         /* Cabeçalho corporativo */
         .aproar-shell-header {
@@ -201,14 +209,24 @@ def aplicar_estilo_customizado():
             background: rgba(37,99,235,.14); filter: blur(15px); pointer-events: none;
         }
         .aproar-brand { display:flex; align-items:center; gap:14px; min-width:0; z-index:1; }
+        .aproar-logo-main {
+            display:block; width:146px; max-width:22vw; height:48px;
+            object-fit:contain; object-position:left center;
+            filter:drop-shadow(0 8px 18px rgba(0,0,0,.24));
+        }
         .aproar-brand-mark {
             width: 46px; height: 46px; flex: 0 0 46px; display:grid; place-items:center;
             border-radius: 14px; background: linear-gradient(145deg, #3b82f6, #1d4ed8);
             box-shadow: 0 10px 24px rgba(37,99,235,.34); color:#fff;
             font-weight:900; font-size:19px; letter-spacing:-.08em;
         }
+        .aproar-logo-fallback {
+            display:flex !important; align-items:center; justify-content:flex-start;
+            color:#f8fafc; font-family:'Sora', sans-serif !important;
+            font-size:14px; font-weight:800; letter-spacing:.09em;
+        }
         .aproar-eyebrow { color:#60a5fa; font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
-        .aproar-title { color:var(--ap-text); font-size:22px; line-height:1.14; font-weight:800; margin-top:3px; }
+        .aproar-title { color:var(--ap-text); font-size:21px; line-height:1.14; font-weight:700; margin-top:2px; letter-spacing:-.035em; }
         .aproar-subtitle { color:var(--ap-muted); font-size:12px; margin-top:4px; }
         .aproar-header-meta { display:flex; align-items:center; gap:10px; z-index:1; }
         .aproar-meta-chip {
@@ -228,7 +246,7 @@ def aplicar_estilo_customizado():
         }
         [data-testid="stSegmentedControl"] button {
             min-height: 41px !important; border-radius: 10px !important; color: var(--ap-muted) !important;
-            font-size: 12.5px !important; font-weight: 700 !important; white-space: nowrap;
+            font-size: 12.5px !important; font-weight: 700 !important; letter-spacing:-.01em; white-space: nowrap;
         }
         [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
             color: #fff !important; background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
@@ -331,6 +349,7 @@ def aplicar_estilo_customizado():
             .main .block-container { padding:.7rem .78rem 5.5rem; }
             .aproar-shell-header { border-radius:18px; margin-bottom:14px; }
             .aproar-brand-mark { width:42px; height:42px; flex-basis:42px; }
+            .aproar-logo-main { width:112px; max-width:34vw; height:42px; }
             .aproar-title { font-size:18px; }
             .aproar-subtitle { display:none; }
             .aproar-header-meta { display:none; }
@@ -343,13 +362,28 @@ def aplicar_estilo_customizado():
     """, unsafe_allow_html=True)
 
 
+def _html_logo_aproar(classe_css):
+    """Carrega logo.png ao lado do app.py e devolve uma imagem pronta para o HTML."""
+    try:
+        caminho_logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        with open(caminho_logo, "rb") as arquivo_logo:
+            conteudo_logo = base64.b64encode(arquivo_logo.read()).decode("ascii")
+        return (
+            f'<img class="{html_escape(classe_css, quote=True)}" '
+            f'src="data:image/png;base64,{conteudo_logo}" alt="Aproar">'
+        )
+    except (OSError, ValueError):
+        return f'<div class="{html_escape(classe_css, quote=True)} aproar-logo-fallback">APROAR</div>'
+
+
 def renderizar_cabecalho_torre():
+    logo = _html_logo_aproar("aproar-logo-main")
     st.markdown(f"""
         <header class="aproar-shell-header">
             <div class="aproar-brand">
-                <div class="aproar-brand-mark">A</div>
+                {logo}
                 <div>
-                    <div class="aproar-eyebrow">APROAR LOGÍSTICA</div>
+                    <div class="aproar-eyebrow">CENTRAL LOGÍSTICA</div>
                     <div class="aproar-title">Torre de Controle</div>
                     <div class="aproar-subtitle">Planejamento, monitoramento e execução em uma única operação</div>
                 </div>
@@ -365,10 +399,11 @@ def renderizar_cabecalho_torre():
 def renderizar_cabecalho_motorista():
     hora = AGORA_REAL.hour
     saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
+    logo = _html_logo_aproar("aproar-logo-driver")
     st.markdown(f"""
         <header class="aproar-driver-header">
             <div class="aproar-driver-topline">
-                <div class="aproar-driver-brand"><span>A</span> APROAR</div>
+                <div class="aproar-driver-brand">{logo}</div>
                 <div class="aproar-driver-live"><i></i> ROTA ATIVA</div>
             </div>
             <div class="aproar-driver-greeting">{saudacao}, <strong>Davi</strong></div>
@@ -3119,10 +3154,10 @@ if modo_davi:
             }
             .aproar-driver-topline { display:flex; align-items:center; justify-content:space-between; gap:12px; position:relative; z-index:1; }
             .aproar-driver-brand { display:flex; align-items:center; gap:9px; color:#f8fafc; font-size:14px; font-weight:900; letter-spacing:.12em; }
-            .aproar-driver-brand span {
-                display:grid; place-items:center; width:30px; height:30px; border-radius:9px;
-                background:linear-gradient(145deg,#3b82f6,#1d4ed8); color:#fff; letter-spacing:-.06em;
-                box-shadow:0 8px 18px rgba(37,99,235,.35);
+            .aproar-logo-driver {
+                display:block; width:112px; max-width:38vw; height:34px;
+                object-fit:contain; object-position:left center;
+                filter:drop-shadow(0 8px 16px rgba(0,0,0,.25));
             }
             .aproar-driver-live {
                 display:flex; align-items:center; gap:7px; color:#bbf7d0; font-size:10px; font-weight:800;
@@ -3730,8 +3765,10 @@ if modo_davi:
         html_carrossel = """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
         <style>
+            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
             * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Inter, Arial, sans-serif; }
+            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Manrope, Arial, sans-serif; }
+            h1, h2, h3, strong, .obra { font-family:Sora, Manrope, Arial, sans-serif; }
             .barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 2px 10px; color:#94a3b8; font-size:11px; font-weight:700; }
             .resumo-topo { display:flex; align-items:center; gap:6px; }
             .feitas { color:#bbf7d0; font-weight:900; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.23); padding:6px 9px; border-radius:999px; }
@@ -5191,6 +5228,15 @@ def _obter_componente_drag_rota():
     os.makedirs(pasta, exist_ok=True)
     index_path = os.path.join(pasta, "index.html")
     frontend = '<!doctype html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n*{box-sizing:border-box}\nhtml,body{margin:0;padding:0;height:100vh;overflow:hidden;background:#070913;color:#e5e7eb;font-family:Inter,Arial,sans-serif}\n#app{height:100vh;overflow-y:auto;overflow-x:hidden;padding:0 6px 0 0;scrollbar-gutter:stable}\n#app::-webkit-scrollbar{width:9px}\n#app::-webkit-scrollbar-track{background:#0b1020;border-radius:8px}\n#app::-webkit-scrollbar-thumb{background:#475569;border-radius:8px;border:2px solid #0b1020}\n#app::-webkit-scrollbar-thumb:hover{background:#64748b}\n.aviso{font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.45}\n.secao{border:1px solid #263452;background:#0b1020;border-radius:12px;margin:0 0 10px;overflow:hidden}\n.secao-head{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:#11182d;border-bottom:1px solid #263452;font-size:13px}\n.secao-head span{color:#9fb1ca;font-weight:700}\n.zona{min-height:62px;padding:8px;transition:.12s ease}\n.zona.over{outline:2px dashed #60a5fa;outline-offset:-4px;background:#0f1c37}\n.demanda{padding:9px 10px;margin:5px 0;border-radius:9px;border:1px solid #334155;background:#10182b;cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.18);user-select:none}\n.demanda:active{cursor:grabbing}\n.demanda.dragging{opacity:.28}\n.demanda.coleta{border-left:5px solid #f59e0b}\n.demanda.entrega{border-left:5px solid #22c55e}\n.top{display:flex;align-items:center;gap:7px;font-size:12px}\n.handle{font-size:18px;color:#93c5fd;line-height:1}\n.manual{margin-left:auto;background:#1d4ed8;color:#dbeafe;padding:2px 6px;border-radius:999px;font-size:10px}\n.obra{font-size:12.5px;font-weight:800;margin-top:3px;color:#f1f5f9}\n.mat{font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.vazio{font-size:11px;color:#64748b;text-align:center;padding:12px;border:1px dashed #334155;border-radius:8px}\n</style>\n</head>\n<body><div id="app"></div>\n<script>\nconst app=document.getElementById(\'app\');\nlet arrastado=null;\nlet argsAtuais={};\nfunction post(type, extra={}){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type:type},extra),\'*\');}\nfunction ready(){post(\'streamlit:componentReady\',{apiVersion:1});}\nfunction setValue(value){post(\'streamlit:setComponentValue\',{value:value,dataType:\'json\'});}\nfunction setHeight(){\n  const desejada=Number(argsAtuais.requested_height||0);\n  const altura=Math.max(360,desejada>0?desejada:720);\n  post(\'streamlit:setFrameHeight\',{height:altura});\n}\nfunction el(tag, cls, texto){const n=document.createElement(tag);if(cls)n.className=cls;if(texto!==undefined&&texto!==null)n.textContent=String(texto);return n;}\nfunction habilitarCard(card){\n  card.addEventListener(\'dragstart\',e=>{arrastado=card;card.classList.add(\'dragging\');e.dataTransfer.effectAllowed=\'move\';try{e.dataTransfer.setData(\'text/plain\',card.dataset.id||\'demanda\');}catch(_){}});\n  card.addEventListener(\'dragend\',()=>{card.classList.remove(\'dragging\');document.querySelectorAll(\'.zona\').forEach(z=>z.classList.remove(\'over\'));arrastado=null;});\n}\nfunction habilitarZona(zona){\n  zona.addEventListener(\'dragenter\',e=>{e.preventDefault();zona.classList.add(\'over\');});\n  zona.addEventListener(\'dragover\',e=>{e.preventDefault();zona.classList.add(\'over\');e.dataTransfer.dropEffect=\'move\';});\n  zona.addEventListener(\'dragleave\',e=>{if(!zona.contains(e.relatedTarget))zona.classList.remove(\'over\');});\n  zona.addEventListener(\'drop\',e=>{\n    e.preventDefault();e.stopPropagation();zona.classList.remove(\'over\');if(!arrastado)return;\n    const outros=[...zona.querySelectorAll(\'.demanda\')].filter(x=>x!==arrastado);let indice=outros.length;\n    for(let i=0;i<outros.length;i++){const r=outros[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){indice=i;break;}}\n    zona.querySelectorAll(\'.vazio\').forEach(v=>v.remove());\n    if(indice<outros.length)zona.insertBefore(arrastado,outros[indice]);else zona.appendChild(arrastado);\n    setValue({nonce:String(Date.now())+\'-\'+Math.random().toString(36).slice(2),demanda_id:arrastado.dataset.id||\'\',acao:arrastado.dataset.acao||\'\',destino:zona.dataset.destino||\'\',ordem:indice});\n    setTimeout(setHeight,20);\n  });\n}\nfunction render(args){\n  argsAtuais=args||{};app.replaceChildren();\n  app.appendChild(el(\'div\',\'aviso\',\'Arraste pelo ⠿. Solte dentro de outra parada para mudar o local da ação; solte acima ou abaixo para mudar a ordem. Role dentro deste painel para ver todas as paradas. O Trello não é alterado.\'));\n  const secoes=((argsAtuais.payload||{}).secoes)||[];\n  secoes.forEach(sec=>{\n    const section=el(\'section\',\'secao\');const head=el(\'div\',\'secao-head\');head.appendChild(el(\'b\',\'\',sec.rotulo||\'\'));head.appendChild(el(\'span\',\'\',sec.local||\'\'));section.appendChild(head);\n    const zona=el(\'div\',\'zona\');zona.dataset.destino=sec.local||\'\';const cards=sec.cards||[];\n    if(!cards.length)zona.appendChild(el(\'div\',\'vazio\',\'Solte uma demanda aqui\'));\n    cards.forEach(c=>{const card=el(\'div\',\'demanda \'+(c.acao===\'COLETAR\'?\'coleta\':\'entrega\'));card.draggable=true;card.dataset.id=c.id||\'\';card.dataset.acao=c.acao||\'\';const top=el(\'div\',\'top\');top.appendChild(el(\'span\',\'handle\',\'⠿\'));top.appendChild(el(\'b\',\'\',c.acao===\'COLETAR\'?\'📦 COLETA\':\'📬 ENTREGA\'));if(c.manual)top.appendChild(el(\'span\',\'manual\',\'manual\'));card.appendChild(top);card.appendChild(el(\'div\',\'obra\',c.obra||\'Demanda\'));card.appendChild(el(\'div\',\'mat\',c.materiais||\'\'));habilitarCard(card);zona.appendChild(card);});\n    habilitarZona(zona);section.appendChild(zona);app.appendChild(section);\n  });\n  setTimeout(setHeight,0);\n}\nwindow.addEventListener(\'message\',e=>{const d=e.data||{};if(d.type===\'streamlit:render\')render(d.args||{});});\nready();\n</script></body></html>\n'
+    frontend = frontend.replace(
+        "<style>\n",
+        "<style>\n@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');\n",
+        1,
+    ).replace(
+        "font-family:Inter,Arial,sans-serif",
+        "font-family:Manrope,Arial,sans-serif",
+        1,
+    )
     with open(index_path, "w", encoding="utf-8") as arquivo:
         arquivo.write(frontend)
 
@@ -7447,9 +7493,10 @@ modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
-    st.markdown("""
+    logo_sidebar = _html_logo_aproar("aproar-logo-sidebar")
+    st.markdown(f"""
         <div class="aproar-sidebar-brand">
-            <span>A</span>
+            {logo_sidebar}
             <div><strong>Painel de operações</strong><small>Configuração e sincronização</small></div>
         </div>
     """, unsafe_allow_html=True)
