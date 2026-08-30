@@ -7503,6 +7503,102 @@ def aplicar_estilo_torre_mock_aprovado():
     ''', unsafe_allow_html=True)
 
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def obter_clima_fortaleza():
+    # Clima atual de Fortaleza, sem chave de API; nunca exibe temperatura inventada.
+    try:
+        resposta = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": -3.7319,
+                "longitude": -38.5267,
+                "current": "temperature_2m,weather_code",
+                "timezone": "America/Fortaleza",
+            },
+            timeout=5,
+        )
+        resposta.raise_for_status()
+        atual = resposta.json().get("current", {}) or {}
+        temperatura = atual.get("temperature_2m")
+        codigo = int(atual.get("weather_code", -1))
+        descricoes = {
+            0: ("☀️", "Céu limpo"), 1: ("🌤️", "Predomínio de sol"),
+            2: ("⛅", "Parcialmente nublado"), 3: ("☁️", "Nublado"),
+            45: ("🌫️", "Neblina"), 48: ("🌫️", "Neblina"),
+            51: ("🌦️", "Garoa leve"), 53: ("🌦️", "Garoa"), 55: ("🌧️", "Garoa intensa"),
+            61: ("🌦️", "Chuva leve"), 63: ("🌧️", "Chuva"), 65: ("🌧️", "Chuva forte"),
+            80: ("🌦️", "Pancadas leves"), 81: ("🌧️", "Pancadas de chuva"), 82: ("⛈️", "Pancadas fortes"),
+            95: ("⛈️", "Trovoadas"), 96: ("⛈️", "Trovoadas"), 99: ("⛈️", "Trovoadas fortes"),
+        }
+        icone, descricao = descricoes.get(codigo, ("🌤️", "Fortaleza"))
+        if temperatura is None:
+            return {"temperatura": None, "icone": icone, "descricao": descricao}
+        return {"temperatura": round(float(temperatura)), "icone": icone, "descricao": descricao}
+    except Exception:
+        return {"temperatura": None, "icone": "🌤️", "descricao": "Fortaleza"}
+
+
+def _tc_unidade_obra(tarefa, local=""):
+    # Separa unidade e obra para a leitura operacional da carga.
+    tarefa = tarefa or {}
+    obra_bruta = str(tarefa.get("Obra", "") or "").strip()
+    titulo = str(tarefa.get("_Titulo_Trello", "") or "").strip()
+    unidade = str(tarefa.get("Unidade", "") or "").strip()
+    if not unidade:
+        unidade = (
+            identificar_unidade_empresa(obra_bruta, permitir_contexto=True)
+            or identificar_unidade_empresa(titulo, permitir_contexto=True)
+            or identificar_unidade_empresa(tarefa.get("Destino", ""))
+            or identificar_unidade_empresa(tarefa.get("Origem", ""))
+            or identificar_unidade_empresa(local)
+        )
+    codigo = ""
+    for fonte in (obra_bruta, titulo):
+        achou = re.search(r"(?i)(?:\bOBRA\s*[-:#]?\s*)?(APR[A-Z0-9._-]*\d[A-Z0-9._-]*|\d+(?:\.\d+)?)", fonte)
+        if achou:
+            codigo = achou.group(1).upper()
+            break
+    obra = codigo or obra_bruta
+    if obra and unidade and _chave_busca_unidade(obra) == _chave_busca_unidade(unidade):
+        obra = ""
+    return unidade or "Unidade não identificada", obra or "Obra não informada"
+
+
+def _tc_html_detalhes_carga(estado):
+    # Drawer clicável dentro do mapa com o estado físico da carga.
+    def cards(lista, status):
+        if not lista:
+            return '<div class="tc-drawer-empty">Nenhum item nesta situação.</div>'
+        saida=[]
+        for rec in lista:
+            t=rec.get("tarefa", {}) or {}
+            unidade, obra=_tc_unidade_obra(t, rec.get("local_entrega") or rec.get("local_coleta") or "")
+            mat=_tc_resumo_material(t, 160)
+            coleta=str(rec.get("local_coleta", "") or "")
+            entrega=str(rec.get("local_entrega", "") or "")
+            traj=[]
+            if coleta: traj.append(f"Coleta: {html_escape(coleta)}")
+            if entrega: traj.append(f"Entrega: {html_escape(entrega)}")
+            traj_html=' &nbsp;•&nbsp; '.join(traj)
+            saida.append(f'''<article class="tc-load-item"><div class="tc-load-status">{html_escape(status)}</div><b>{html_escape(mat)}</b><small><strong>Unidade:</strong> {html_escape(unidade)} &nbsp;•&nbsp; <strong>Obra:</strong> {html_escape(obra)}</small><small>{traj_html}</small></article>''')
+        return ''.join(saida)
+    return f'''
+      <aside id="tc-details-drawer" class="tc-details-drawer" aria-hidden="true">
+        <div class="tc-drawer-head"><div><small>CONTROLE DE CARGA</small><h3>Coletas e entregas do Davi</h3></div><button type="button" onclick="tcToggleDetails(false)">✕</button></div>
+        <div class="tc-drawer-tabs">
+          <button type="button" class="active" onclick="tcTab('vehicle',this)">🚚 No veículo <b>{len(estado.get('no_veiculo',[]))}</b></button>
+          <button type="button" onclick="tcTab('collect',this)">📦 A coletar <b>{len(estado.get('a_coletar',[]))}</b></button>
+          <button type="button" onclick="tcTab('deliver',this)">📬 A entregar <b>{len(estado.get('a_entregar',[]))}</b></button>
+        </div>
+        <div class="tc-drawer-body">
+          <section data-tab="vehicle">{cards(estado.get('no_veiculo',[]),'COLETADO • NO VEÍCULO')}</section>
+          <section data-tab="collect" hidden>{cards(estado.get('a_coletar',[]),'A COLETAR')}</section>
+          <section data-tab="deliver" hidden>{cards(estado.get('a_entregar',[]),'A ENTREGAR')}</section>
+        </div>
+      </aside>
+    '''
+
 def _tc_parse_hora(valor):
     try:
         h, m = map(int, str(valor).split(':')[:2])
@@ -7607,19 +7703,24 @@ def _tc_html_rota(route_steps, estado, p_saida, hora_inicio_real, enderecos_dict
             continue
         n += 1
         pend = False
+        resumo_acoes=[]
         for acao, tarefa in step.get('actions', []) or []:
             cid = str(tarefa.get('id','') or '')
             if (acao == 'COLETAR' and cid not in ids_c) or (acao == 'ENTREGAR' and cid not in ids_e):
                 pend = True
+            unidade, obra = _tc_unidade_obra(tarefa, step.get('destino',''))
+            resumo_acoes.append((unidade,obra))
         done = bool(step.get('actions')) and not pend
         current = (not done and not current_set)
         if current: current_set = True
-        end = str((enderecos_dict or {}).get(step.get('destino',''),'') or '')
-        if end.startswith('http') or not end:
-            qc = sum(1 for a,_ in step.get('actions',[]) if a=='COLETAR')
-            qe = sum(1 for a,_ in step.get('actions',[]) if a=='ENTREGAR')
-            end = ' • '.join(x for x in [f'{qc} coleta' if qc else '', f'{qe} entrega' if qe else ''] if x) or 'Parada operacional'
-        cards.append({'n':n,'destino':str(step.get('destino','')),'hora':str(step.get('dyn_chegada',step.get('chegada','--:--'))),'end':end,'done':done,'current':current})
+        if resumo_acoes:
+            unidade, obra = resumo_acoes[0]
+            detalhe = f"{unidade} • Obra {obra}"
+            if len(resumo_acoes) > 1:
+                detalhe += f" • +{len(resumo_acoes)-1} demanda(s)"
+        else:
+            detalhe = 'Parada operacional'
+        cards.append({'n':n,'destino':str(step.get('destino','')),'hora':str(step.get('dyn_chegada',step.get('chegada','--:--'))),'detalhe':detalhe,'done':done,'current':current})
     total = len(cards); concl = sum(1 for c in cards if c['done']); prog = round(100*concl/max(1,total))
     proxima = next((c for c in cards if c['current']), None)
     mins = None
@@ -7631,20 +7732,22 @@ def _tc_html_rota(route_steps, estado, p_saida, hora_inicio_real, enderecos_dict
         cls = 'done' if c['done'] else 'current' if c['current'] else ''
         bullet = '✓' if c['done'] else c['n']
         status = 'Concluída' if c['done'] else 'Previsão'
-        rows.append(f'''<div class="tc-stop {cls}"><span class="tc-bullet">{bullet}</span><div class="tc-stop-copy"><b>{c['n']}. {html_escape(c['destino'])}</b><small>{html_escape(c['end'])}</small></div><div class="tc-stop-time"><b>{html_escape(c['hora'])}</b><small>{status}</small></div></div>''')
+        rows.append(f'''<div class="tc-stop {cls}"><span class="tc-bullet">{bullet}</span><div class="tc-stop-copy"><b>{c['n']}. {html_escape(c['destino'])}</b><small>{html_escape(c['detalhe'])}</small></div><div class="tc-stop-time"><b>{html_escape(c['hora'])}</b><small>{status}</small></div></div>''')
     extra = f'<div class="tc-more">+ {len(cards)-4} parada(s) no restante do roteiro</div>' if len(cards)>4 else ''
     pill = f'<div class="tc-current-pill">🚚 Em trânsito • Chegada em {mins} min</div>' if proxima and mins is not None else ('<div class="tc-current-pill">🚚 Em trânsito</div>' if proxima else '')
     return f'''
-      <section class="tc-overlay tc-route-card">
-        <div class="tc-card-title"><h3>🧾 Roteiro do Davi</h3><span>⌃ &nbsp; ✕</span></div>
-        <div class="tc-meta">🕖 Expediente: 07:00 às 17:00<br>◷ Início da rota: {html_escape(str(hora_inicio_real))}</div>
-        <div class="tc-progress-head"><span>Progresso da rota</span><b>{prog}%</b></div><div class="tc-progress"><i style="width:{prog}%"></i></div>
-        <div class="tc-progress-caption">{concl} de {max(1,total)} paradas concluídas</div>
-        <div class="tc-carga-mini"><span>🚚 {len(estado.get('no_veiculo',[]))} no veículo</span><span>📦 {len(estado.get('a_coletar',[]))} a coletar</span><span>📬 {len(estado.get('a_entregar',[]))} a entregar</span></div>
-        {''.join(rows)}{extra}{pill}<div class="tc-fake-button">Ver detalhes da rota &nbsp; ›</div>
+      <section id="tc-route-card" class="tc-overlay tc-route-card">
+        <div class="tc-card-title"><h3>🧾 Roteiro do Davi</h3><button class="tc-icon-button" type="button" onclick="tcCollapseRoute()" title="Recolher roteiro">⌃</button></div>
+        <div class="tc-route-content">
+          <div class="tc-meta">🕖 Expediente: 07:00 às 17:00<br>◷ Início da rota: {html_escape(str(hora_inicio_real))}</div>
+          <div class="tc-progress-head"><span>Progresso da rota</span><b>{prog}%</b></div><div class="tc-progress"><i style="width:{prog}%"></i></div>
+          <div class="tc-progress-caption">{concl} de {max(1,total)} paradas concluídas</div>
+          <div class="tc-carga-mini"><span>🚚 {len(estado.get('no_veiculo',[]))} no veículo</span><span>📦 {len(estado.get('a_coletar',[]))} a coletar</span><span>📬 {len(estado.get('a_entregar',[]))} a entregar</span></div>
+          {''.join(rows)}{extra}{pill}
+          <button class="tc-details-button" type="button" onclick="tcToggleDetails(true)">Ver detalhes da rota &nbsp; ›</button>
+        </div>
       </section>
     '''
-
 
 def _tc_rastreador_resumo(route_steps, df_paradas, estado, enderecos_dict, locais_dict):
     # Usa a última posição real da Protege quando disponível; caso contrário mostra a próxima parada.
@@ -7664,22 +7767,21 @@ def _tc_rastreador_resumo(route_steps, df_paradas, estado, enderecos_dict, locai
 
 def _tc_html_tracker(route_steps, df_paradas, estado, enderecos_dict, locais_dict, final_dyn_min):
     r = _tc_rastreador_resumo(route_steps, df_paradas, estado, enderecos_dict, locais_dict)
-    try: link=f"https://www.google.com/maps?q={float(r['lat'])},{float(r['lon'])}" if r.get('lat') is not None else '#'
-    except Exception: link='#'
     adiadas=len(st.session_state.get('demandas_adiadas',[]) or [])
     if adiadas: aviso=f'{adiadas} demandas ficaram para o próximo planejamento por prioridade, capacidade ou falta de tempo hábil até as 17h.'
     elif final_dyn_min > LIMITE_EXPEDIENTE_DAVI_MIN: aviso='A previsão atual ultrapassa o expediente. O sistema recalcula o restante para respeitar o limite das 17h.'
     else: aviso='Operação dentro do previsto. Novas demandas ainda podem ser aproveitadas se couberem até as 17h.'
+    pode_centralizar = r.get('lat') is not None and r.get('lon') is not None
     return f'''
-      <section class="tc-overlay tc-tracker-card"><div class="tc-card-title"><h3>Rastreador ao vivo</h3><span>✕</span></div>
+      <section id="tc-tracker-card" class="tc-overlay tc-tracker-card"><div class="tc-card-title"><h3>Rastreador ao vivo</h3><button class="tc-icon-button" type="button" onclick="tcToggleTracker()">✕</button></div>
         <div class="tc-live-box"><i></i><div><small>Veículo em operação</small><b>{html_escape(r['veiculo'])}</b></div></div>
         <div class="tc-location"><b>Localização atual</b><p>{html_escape(r['local'])}<br>{html_escape(r['atualizacao'])}</p></div>
         <div class="tc-tracker-metrics"><div><small>Velocidade</small><b>{html_escape(r['vel'])}</b></div><div><small>Bateria/GPS</small><b class="green">{html_escape(r['bateria'])}</b></div><div><small>Sinal GPS</small><b class="green">{html_escape(r['gps'])}</b></div></div>
-        <a class="tc-blue-btn" href="{html_escape(link,quote=True)}" target="_blank">🧭 Ver no mapa</a>
+        <button class="tc-blue-btn" type="button" onclick="tcCenterVehicle()" {'disabled' if not pode_centralizar else ''}>🧭 Ver no mapa</button>
       </section>
+      <button id="tc-tracker-reopen" class="tc-tracker-reopen" type="button" onclick="tcToggleTracker()" hidden>📡 Rastreador</button>
       <section class="tc-overlay tc-limit-card"><div class="tc-limit-icon">⚠️</div><div><b>Limite do expediente</b><p>{html_escape(aviso)}</p></div></section>
     '''
-
 
 def _tc_html_kpis(estado, route_steps, final_dyn_min):
     total = sum(1 for r in estado.get('registros',{}).values() if r.get('tem_entrega')) or len(estado.get('registros',{}))
@@ -7704,9 +7806,11 @@ def _tc_html_kpis(estado, route_steps, final_dyn_min):
 
 
 def renderizar_torre_mock_aprovado(route_steps, locais_dict, enderecos_dict, p_saida, estado, df_paradas, hora_inicio_real, final_dyn_min):
-    # Folium é usado como mapa real; os cards HTML ficam por cima do mapa no mesmo iframe.
-    m=folium.Map(location=[-3.7319,-38.5267],zoom_start=12,tiles='CartoDB positron',zoom_control=False,control_scale=False)
-    folium.TileLayer('OpenStreetMap',name='Mapa').add_to(m)
+    # Mapa real + controles funcionais dentro do mesmo iframe do mock.
+    m=folium.Map(location=[-3.7319,-38.5267],zoom_start=12,tiles=None,zoom_control=False,control_scale=False)
+    layer_light=folium.TileLayer('CartoDB positron',name='Claro',control=False).add_to(m)
+    layer_osm=folium.TileLayer('OpenStreetMap',name='Ruas',control=False).add_to(m)
+    layer_dark=folium.TileLayer('CartoDB dark_matter',name='Escuro',control=False).add_to(m)
     pontos=[]
     if p_saida in locais_dict: pontos.append([float(locais_dict[p_saida][0]),float(locais_dict[p_saida][1])])
     for i,s in enumerate(route_steps or []):
@@ -7723,54 +7827,84 @@ def renderizar_torre_mock_aprovado(route_steps, locais_dict, enderecos_dict, p_s
         if s.get('type')!='stop' or s.get('destino') not in locais_dict: continue
         if i==0 and canonicalizar_ponto_rota(s.get('destino',''))==canonicalizar_ponto_rota(p_saida): continue
         lat,lon=map(float,locais_dict[s['destino']]); acts=s.get('actions',[]) or []
-        temc=any(a=='COLETAR' for a,_ in acts); teme=any(a=='ENTREGAR' for a,_ in acts); cor='#f59e0b' if temc else '#2563eb'
+        temc=any(a=='COLETAR' for a,_ in acts); cor='#f59e0b' if temc else '#2563eb'
         detalhes=[]
         for ac,t in acts:
-            cid=str(t.get('id','') or ''); mat=_tc_resumo_material(t)
+            cid=str(t.get('id','') or ''); mat=_tc_resumo_material(t,130); unidade,obra=_tc_unidade_obra(t,s.get('destino',''))
             if ac=='COLETAR': stat='COLETADO' if cid in estado.get('ids_coletados',set()) else 'A COLETAR'; ico='📦'
             else:
                 if cid in estado.get('ids_entregues',set()): stat='ENTREGUE'
                 elif cid in estado.get('ids_coletados',set()): stat='NO VEÍCULO / A ENTREGAR'
                 else: stat='A ENTREGAR'
                 ico='📬'
-            detalhes.append(f'{ico} <b>{html_escape(stat)}</b> — {html_escape(mat)}')
-        pop=f"<b>Parada {n}: {html_escape(str(s['destino']))}</b><br>Previsão: {html_escape(str(s.get('dyn_chegada',s.get('chegada',''))))}<br>"+'<br>'.join(detalhes)
+            detalhes.append(f'{ico} <b>{html_escape(stat)}</b> — {html_escape(mat)}<br><span style="color:#5d6b7c">Unidade: {html_escape(unidade)} • Obra: {html_escape(obra)}</span>')
+        pop=f"<b>Parada {n}: {html_escape(str(s['destino']))}</b><br>Previsão: {html_escape(str(s.get('dyn_chegada',s.get('chegada',''))))}<br><br>"+'<br><br>'.join(detalhes)
         icon=f'<div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:{cor};border:3px solid #fff;color:#fff;font:bold 15px Arial;box-shadow:0 4px 12px rgba(0,0,0,.24)">{n}</div>'
-        folium.Marker([lat,lon],popup=folium.Popup(pop,max_width=340),tooltip=f"Parada {n} — {s['destino']}",icon=folium.DivIcon(html=icon)).add_to(m); n+=1
+        folium.Marker([lat,lon],popup=folium.Popup(pop,max_width=390),tooltip=f"Parada {n} — {s['destino']}",icon=folium.DivIcon(html=icon)).add_to(m); n+=1
     pos=st.session_state.get('_ultima_posicao_davi') or {}
+    vehicle_lat=vehicle_lon=None
     try:
-        plat,plon=float(pos.get('Latitude')),float(pos.get('Longitude')); pontos.append([plat,plon])
+        vehicle_lat,vehicle_lon=float(pos.get('Latitude')),float(pos.get('Longitude')); pontos.append([vehicle_lat,vehicle_lon])
         truck='<div style="width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#1d4ed8;border:4px solid #fff;color:#fff;font-size:19px;box-shadow:0 5px 16px rgba(0,0,0,.25)">🚚</div>'
-        folium.Marker([plat,plon],tooltip='Davi — posição atual',icon=folium.DivIcon(html=truck),z_index_offset=9000).add_to(m)
+        folium.Marker([vehicle_lat,vehicle_lon],tooltip='Davi — posição atual',icon=folium.DivIcon(html=truck),z_index_offset=9000).add_to(m)
     except Exception: pass
     if len(pontos)>1: m.fit_bounds(pontos,padding=(35,35),max_zoom=14)
 
+    clima=obter_clima_fortaleza()
+    temp_txt=f"{clima['temperatura']}°C" if clima.get('temperatura') is not None else "--°C"
+    weather_icon=clima.get('icone','🌤️'); weather_desc=clima.get('descricao','Fortaleza')
+    locais_busca={}
+    for nome,coord in (locais_dict or {}).items():
+        try: locais_busca[str(nome)]=[float(coord[0]),float(coord[1])]
+        except Exception: pass
+    map_name=m.get_name(); light_name=layer_light.get_name(); osm_name=layer_osm.get_name(); dark_name=layer_dark.get_name()
+    locais_json=json.dumps(locais_busca,ensure_ascii=False).replace('</','<\\/')
+    vehicle_json=json.dumps([vehicle_lat,vehicle_lon] if vehicle_lat is not None else None)
+
     css=r'''<style>
-      html,body{margin:0!important;padding:0!important;width:100%;height:100%;overflow:hidden;font-family:Inter,Manrope,Arial,sans-serif;background:#e9edf2}.folium-map{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;z-index:1!important}.leaflet-control-attribution{font-size:8px!important;opacity:.38}
-      .tc-top-search{position:absolute;z-index:9900;top:22px;left:22px;width:300px;height:48px;background:rgba(255,255,255,.96);border:1px solid rgba(15,23,42,.07);border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,.12);display:flex;align-items:center;padding:0 15px;color:#64748b;font-size:13px}.tc-top-right{position:absolute;z-index:9900;top:22px;right:22px;display:flex;gap:10px}.tc-top-btn,.tc-weather{height:48px;border-radius:14px;background:rgba(255,255,255,.96);border:1px solid rgba(15,23,42,.07);box-shadow:0 8px 24px rgba(15,23,42,.10);display:flex;align-items:center;gap:8px;padding:0 14px;color:#111827;font-weight:800;font-size:12px}.tc-weather{font-weight:600}.tc-weather b{font-size:17px}.tc-weather small{display:block;color:#64748b;font-weight:500}
-      .tc-overlay{position:absolute;z-index:9950;background:linear-gradient(180deg,rgba(17,24,39,.97),rgba(8,14,25,.97));border:1px solid rgba(148,163,184,.18);border-radius:16px;color:#f8fafc;box-shadow:0 18px 34px rgba(2,6,23,.30)}.tc-route-card{top:87px;left:22px;width:286px;padding:15px}.tc-tracker-card{top:87px;right:22px;width:272px;padding:15px}.tc-limit-card{top:418px;right:22px;width:272px;padding:13px 15px;display:flex;gap:9px;align-items:flex-start}.tc-card-title{display:flex;align-items:center;justify-content:space-between}.tc-card-title h3{margin:0;font-size:16px}.tc-card-title span{color:#94a3b8;font-size:15px}.tc-meta{margin:12px 0 13px;color:#aebbd0;font-size:11px;line-height:1.5}.tc-progress-head{display:flex;justify-content:space-between;color:#e7edf7;font-size:12px;font-weight:800}.tc-progress{height:7px;border-radius:20px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:7px}.tc-progress i{display:block;height:100%;background:#3478f6}.tc-progress-caption{margin:7px 0 9px;color:#b9c5d6;font-size:11px}.tc-carga-mini{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}.tc-carga-mini span{background:rgba(37,99,235,.14);border:1px solid rgba(96,165,250,.18);border-radius:999px;padding:3px 6px;color:#cfe1ff;font-size:8px;font-weight:800}.tc-stop{display:grid;grid-template-columns:23px minmax(0,1fr) auto;gap:9px;align-items:start;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)}.tc-bullet{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;border:2px solid #41699f;color:#d7e7ff;font-size:9px;font-weight:900}.tc-stop.done .tc-bullet{background:#25b86a;border-color:#25b86a;color:#fff}.tc-stop.current .tc-bullet{background:#2563eb;border-color:#79a7ff;color:#fff}.tc-stop-copy{min-width:0}.tc-stop-copy b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tc-stop-copy small{display:block;color:#9fb0c8;font-size:9px;line-height:1.3;margin-top:3px;max-height:25px;overflow:hidden}.tc-stop-time{text-align:right}.tc-stop-time b{display:block;font-size:10px}.tc-stop-time small{display:block;color:#8fa3bd;font-size:8px;margin-top:3px}.tc-stop.done .tc-stop-time small{color:#47da85}.tc-stop.current .tc-stop-time small{color:#6ba0ff}.tc-current-pill{margin-top:9px;border-radius:9px;padding:7px 8px;background:#1d3f7f;color:#dceaff;font-size:9px;font-weight:800}.tc-more{padding:8px 0;color:#8fa2b9;font-size:9px}.tc-fake-button{margin-top:10px;height:35px;border:1px solid rgba(148,163,184,.18);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800}
-      .tc-live-box{margin-top:12px;padding:10px;border:1px solid rgba(148,163,184,.14);border-radius:11px;display:flex;gap:8px;align-items:center}.tc-live-box i{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}.tc-live-box small{display:block;color:#a6b5c8;font-size:9px}.tc-live-box b{display:block;font-size:10px;margin-top:2px}.tc-location{margin-top:13px}.tc-location>b{font-size:11px}.tc-location p{margin:5px 0 0;color:#c4cedd;font-size:10px;line-height:1.45}.tc-tracker-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(148,163,184,.12)}.tc-tracker-metrics div{border-right:1px solid rgba(148,163,184,.12)}.tc-tracker-metrics div:last-child{border-right:0}.tc-tracker-metrics small{display:block;color:#879ab2;font-size:8px}.tc-tracker-metrics b{display:block;margin-top:5px;font-size:11px}.green{color:#39d77c!important}.tc-blue-btn{height:36px;margin-top:12px;border-radius:8px;background:#245bd9;color:#fff!important;text-decoration:none!important;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}.tc-limit-icon{font-size:14px}.tc-limit-card b{font-size:10px}.tc-limit-card p{margin:5px 0 0;color:#c1ccdb;font-size:9px;line-height:1.45}
-      .tc-map-controls{position:absolute;z-index:9960;right:22px;top:535px;display:flex;flex-direction:column;gap:9px}.tc-map-controls button{width:40px;height:40px;border:0;border-radius:10px;background:rgba(255,255,255,.96);box-shadow:0 7px 18px rgba(15,23,42,.15);font-size:21px;color:#111827;cursor:pointer}.tc-map-controls .small{font-size:16px}
-      .tc-bottom-kpis{position:absolute;z-index:9970;left:12px;right:12px;bottom:12px;min-height:96px;padding:10px 14px;border-radius:15px;background:linear-gradient(180deg,rgba(18,27,42,.97),rgba(10,17,29,.97));border:1px solid rgba(148,163,184,.18);box-shadow:0 16px 34px rgba(2,6,23,.28);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));color:#fff}.tc-bottom-kpis>div{min-width:0;padding:3px 12px;border-right:1px solid rgba(148,163,184,.13);display:flex;flex-direction:column;justify-content:center}.tc-bottom-kpis>div:last-child{border-right:0}.tc-bottom-kpis span{color:#c7d2e1;font-size:9px}.tc-bottom-kpis b{font-size:23px;margin-top:5px;white-space:nowrap}.tc-bottom-kpis small{color:#aab9cc;font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      html,body{margin:0!important;padding:0!important;width:100%;height:100%;overflow:hidden;font-family:Inter,Manrope,Arial,sans-serif;background:#e9edf2}.folium-map{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;z-index:1!important;pointer-events:auto!important}.leaflet-control-attribution{font-size:8px!important;opacity:.38}
+      button,input{font:inherit}.tc-top-search{position:absolute;z-index:9900;top:22px;left:22px;width:300px;height:48px;background:rgba(255,255,255,.97);border:1px solid rgba(15,23,42,.07);border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,.12);display:flex;align-items:center;padding:0 13px;color:#64748b}.tc-top-search span{font-size:15px;margin-right:7px}.tc-top-search input{width:100%;border:0;outline:0;background:transparent;color:#334155;font-size:12px}.tc-top-right{position:absolute;z-index:9900;top:22px;right:22px;display:flex;gap:10px}.tc-top-btn,.tc-weather{height:48px;border-radius:14px;background:rgba(255,255,255,.97);border:1px solid rgba(15,23,42,.07);box-shadow:0 8px 24px rgba(15,23,42,.10);display:flex;align-items:center;gap:8px;padding:0 14px;color:#111827;font-weight:800;font-size:12px}.tc-top-btn{cursor:pointer}.tc-weather{font-weight:600}.tc-weather b{font-size:17px}.tc-weather small{display:block;color:#64748b;font-weight:500;max-width:130px}.tc-layer-menu{position:absolute;z-index:10020;right:146px;top:76px;width:130px;padding:7px;border-radius:11px;background:#fff;box-shadow:0 12px 28px rgba(15,23,42,.2)}.tc-layer-menu button{width:100%;border:0;background:transparent;padding:8px;border-radius:7px;text-align:left;cursor:pointer;color:#334155;font-size:11px}.tc-layer-menu button:hover{background:#eef4ff}
+      .tc-overlay{position:absolute;z-index:9950;background:linear-gradient(180deg,rgba(17,24,39,.97),rgba(8,14,25,.97));border:1px solid rgba(148,163,184,.18);border-radius:16px;color:#f8fafc;box-shadow:0 18px 34px rgba(2,6,23,.30);pointer-events:auto}.tc-route-card{top:87px;left:22px;width:286px;padding:15px}.tc-route-card.collapsed .tc-route-content{display:none}.tc-route-card.collapsed{width:205px}.tc-tracker-card{top:87px;right:22px;width:272px;padding:15px}.tc-limit-card{top:418px;right:22px;width:272px;padding:13px 15px;display:flex;gap:9px;align-items:flex-start}.tc-card-title{display:flex;align-items:center;justify-content:space-between}.tc-card-title h3{margin:0;font-size:16px}.tc-icon-button{border:0;background:transparent;color:#94a3b8;font-size:15px;cursor:pointer;padding:4px 6px;border-radius:6px}.tc-icon-button:hover{background:rgba(255,255,255,.08);color:#fff}.tc-meta{margin:12px 0 13px;color:#aebbd0;font-size:11px;line-height:1.5}.tc-progress-head{display:flex;justify-content:space-between;color:#e7edf7;font-size:12px;font-weight:800}.tc-progress{height:7px;border-radius:20px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:7px}.tc-progress i{display:block;height:100%;background:#3478f6}.tc-progress-caption{margin:7px 0 9px;color:#b9c5d6;font-size:11px}.tc-carga-mini{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}.tc-carga-mini span{background:rgba(37,99,235,.14);border:1px solid rgba(96,165,250,.18);border-radius:999px;padding:3px 6px;color:#cfe1ff;font-size:8px;font-weight:800}.tc-stop{display:grid;grid-template-columns:23px minmax(0,1fr) auto;gap:9px;align-items:start;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)}.tc-bullet{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;border:2px solid #41699f;color:#d7e7ff;font-size:9px;font-weight:900}.tc-stop.done .tc-bullet{background:#25b86a;border-color:#25b86a;color:#fff}.tc-stop.current .tc-bullet{background:#2563eb;border-color:#79a7ff;color:#fff}.tc-stop-copy{min-width:0}.tc-stop-copy b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tc-stop-copy small{display:block;color:#9fb0c8;font-size:9px;line-height:1.3;margin-top:3px;max-height:27px;overflow:hidden}.tc-stop-time{text-align:right}.tc-stop-time b{display:block;font-size:10px}.tc-stop-time small{display:block;color:#8fa3bd;font-size:8px;margin-top:3px}.tc-stop.done .tc-stop-time small{color:#47da85}.tc-stop.current .tc-stop-time small{color:#6ba0ff}.tc-current-pill{margin-top:9px;border-radius:9px;padding:7px 8px;background:#1d3f7f;color:#dceaff;font-size:9px;font-weight:800}.tc-more{padding:8px 0;color:#8fa2b9;font-size:9px}.tc-details-button{margin-top:10px;width:100%;height:35px;border:1px solid rgba(148,163,184,.18);border-radius:9px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;cursor:pointer}.tc-details-button:hover{background:rgba(255,255,255,.06)}
+      .tc-live-box{margin-top:12px;padding:10px;border:1px solid rgba(148,163,184,.14);border-radius:11px;display:flex;gap:8px;align-items:center}.tc-live-box i{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}.tc-live-box small{display:block;color:#a6b5c8;font-size:9px}.tc-live-box b{display:block;font-size:10px;margin-top:2px}.tc-location{margin-top:13px}.tc-location>b{font-size:11px}.tc-location p{margin:5px 0 0;color:#c4cedd;font-size:10px;line-height:1.45}.tc-tracker-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(148,163,184,.12)}.tc-tracker-metrics div{border-right:1px solid rgba(148,163,184,.12)}.tc-tracker-metrics div:last-child{border-right:0}.tc-tracker-metrics small{display:block;color:#879ab2;font-size:8px}.tc-tracker-metrics b{display:block;margin-top:5px;font-size:11px}.green{color:#39d77c!important}.tc-blue-btn{width:100%;border:0;height:36px;margin-top:12px;border-radius:8px;background:#245bd9;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;cursor:pointer}.tc-blue-btn:disabled{opacity:.5;cursor:not-allowed}.tc-limit-icon{font-size:14px}.tc-limit-card b{font-size:10px}.tc-limit-card p{margin:5px 0 0;color:#c1ccdb;font-size:9px;line-height:1.45}.tc-tracker-reopen{position:absolute;z-index:10010;top:90px;right:22px;border:0;border-radius:10px;background:#111827;color:#fff;padding:9px 12px;font-size:10px;font-weight:800;box-shadow:0 8px 20px rgba(0,0,0,.22);cursor:pointer}
+      .tc-map-controls{position:absolute;z-index:9960;right:22px;top:535px;display:flex;flex-direction:column;gap:9px}.tc-map-controls button{width:40px;height:40px;border:0;border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 7px 18px rgba(15,23,42,.15);font-size:21px;color:#111827;cursor:pointer}.tc-map-controls .small{font-size:16px}.tc-map-controls button:hover,.tc-top-btn:hover{background:#eff6ff}
+      .tc-bottom-kpis{position:absolute;z-index:9970;left:12px;right:12px;bottom:12px;min-height:96px;padding:10px 14px;border-radius:15px;background:linear-gradient(180deg,rgba(18,27,42,.97),rgba(10,17,29,.97));border:1px solid rgba(148,163,184,.18);box-shadow:0 16px 34px rgba(2,6,23,.28);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));color:#fff;pointer-events:auto}.tc-bottom-kpis>div{min-width:0;padding:3px 12px;border-right:1px solid rgba(148,163,184,.13);display:flex;flex-direction:column;justify-content:center}.tc-bottom-kpis>div:last-child{border-right:0}.tc-bottom-kpis span{color:#c7d2e1;font-size:9px}.tc-bottom-kpis b{font-size:23px;margin-top:5px;white-space:nowrap}.tc-bottom-kpis small{color:#aab9cc;font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .tc-details-drawer{position:absolute;z-index:10050;left:50%;top:50%;transform:translate(-50%,-50%);width:min(720px,calc(100% - 80px));max-height:650px;background:#0d1727;border:1px solid rgba(148,163,184,.25);border-radius:17px;box-shadow:0 24px 70px rgba(2,6,23,.48);color:#fff;display:none;overflow:hidden}.tc-details-drawer.open{display:block}.tc-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:15px 17px;border-bottom:1px solid rgba(148,163,184,.14)}.tc-drawer-head small{color:#60a5fa;font-size:8px;font-weight:900;letter-spacing:.13em}.tc-drawer-head h3{margin:3px 0 0;font-size:16px}.tc-drawer-head button{border:0;background:transparent;color:#94a3b8;font-size:17px;cursor:pointer}.tc-drawer-tabs{display:flex;gap:5px;padding:9px 12px;border-bottom:1px solid rgba(148,163,184,.12);background:#0b1321}.tc-drawer-tabs button{border:1px solid rgba(148,163,184,.14);background:transparent;color:#aab8ca;border-radius:8px;padding:7px 10px;font-size:9px;font-weight:800;cursor:pointer}.tc-drawer-tabs button.active{background:#1d4ed8;color:#fff;border-color:#3b82f6}.tc-drawer-body{padding:12px;max-height:490px;overflow:auto}.tc-load-item{padding:11px 12px;margin-bottom:8px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.11)}.tc-load-item>b{display:block;font-size:11px;margin:5px 0}.tc-load-item small{display:block;color:#9cadc2;font-size:9px;line-height:1.5}.tc-load-status{display:inline-block;padding:3px 6px;border-radius:999px;background:rgba(37,99,235,.18);color:#bfdbfe;font-size:8px;font-weight:900}.tc-drawer-empty{padding:18px;text-align:center;color:#94a3b8;font-size:10px}
       @media(max-width:1100px){.tc-tracker-card,.tc-limit-card{display:none}.tc-route-card{width:275px}.tc-bottom-kpis{grid-template-columns:repeat(3,1fr)}.tc-top-right{display:none}}
     </style>'''
-    top='''<div class="tc-top-search">⌕ &nbsp; Buscar endereço, demanda ou local...</div><div class="tc-top-right"><div class="tc-top-btn">▰ &nbsp; Camadas</div><div class="tc-weather">🌤️ <div><b>22°C</b><small>Parcialmente nublado</small></div></div></div><div class="tc-map-controls"><button onclick="window._tc_in&&window._tc_in()">+</button><button onclick="window._tc_out&&window._tc_out()">−</button><button class="small" onclick="location.reload()">◎</button><button class="small">▱</button></div>'''
-    js='''<script>setTimeout(function(){try{var el=document.querySelector('.folium-map');var map=el&&window[el.id];if(map){window._tc_in=function(){map.zoomIn()};window._tc_out=function(){map.zoomOut()}}}catch(e){}},600);</script>'''
-    m.get_root().header.add_child(folium.Element(css)); m.get_root().html.add_child(folium.Element(top+_tc_html_rota(route_steps,estado,p_saida,hora_inicio_real,enderecos_dict)+_tc_html_tracker(route_steps,df_paradas,estado,enderecos_dict,locais_dict,final_dyn_min)+_tc_html_kpis(estado,route_steps,final_dyn_min)+js))
+    datalist=''.join(f'<option value="{html_escape(nome,quote=True)}"></option>' for nome in locais_busca.keys())
+    top=f'''<div class="tc-top-search"><span>⌕</span><input id="tc-search-input" list="tc-search-list" placeholder="Buscar endereço, demanda ou local..." onkeydown="if(event.key==='Enter')tcSearch()"><datalist id="tc-search-list">{datalist}</datalist></div><div class="tc-top-right"><button type="button" class="tc-top-btn" onclick="tcToggleLayers()">▰ &nbsp; Camadas</button><div class="tc-weather">{weather_icon} <div><b>{html_escape(temp_txt)}</b><small>{html_escape(weather_desc)} • Fortaleza</small></div></div></div><div id="tc-layer-menu" class="tc-layer-menu" hidden><button onclick="tcLayer('light')">◻ Claro</button><button onclick="tcLayer('osm')">▤ Ruas</button><button onclick="tcLayer('dark')">◼ Escuro</button></div><div class="tc-map-controls"><button type="button" onclick="tcZoom(1)">+</button><button type="button" onclick="tcZoom(-1)">−</button><button class="small" type="button" onclick="tcCenterVehicle()">◎</button><button class="small" type="button" onclick="tcFullscreen()">⛶</button></div>'''
+    js=f'''<script>
+      const TC_LOCAIS={locais_json}; const TC_VEHICLE={vehicle_json}; let tcMap=null;
+      function tcInit(){{try{{tcMap=window['{map_name}']; if(!tcMap) return false; try{{tcMap.removeLayer(window['{osm_name}']);tcMap.removeLayer(window['{dark_name}']);}}catch(e){{}} return true;}}catch(e){{return false;}}}}
+      let tcTries=0; const tcTimer=setInterval(()=>{{tcTries++;if(tcInit()||tcTries>40)clearInterval(tcTimer)}},100);
+      function tcZoom(v){{if(!tcMap)tcInit();if(tcMap) v>0?tcMap.zoomIn():tcMap.zoomOut();}}
+      function tcCenterVehicle(){{if(!tcMap)tcInit();if(!tcMap)return;if(TC_VEHICLE)tcMap.flyTo(TC_VEHICLE,16);else tcMap.flyTo([-3.7319,-38.5267],13);}}
+      function tcFullscreen(){{const el=document.documentElement;const fn=el.requestFullscreen||el.webkitRequestFullscreen;if(fn)fn.call(el);}}
+      function tcToggleLayers(){{const el=document.getElementById('tc-layer-menu');el.hidden=!el.hidden;}}
+      function tcLayer(which){{if(!tcMap)tcInit();if(!tcMap)return;const LAY={{light:window['{light_name}'],osm:window['{osm_name}'],dark:window['{dark_name}']}};Object.values(LAY).forEach(l=>{{try{{tcMap.removeLayer(l)}}catch(e){{}}}});if(LAY[which])LAY[which].addTo(tcMap);document.getElementById('tc-layer-menu').hidden=true;}}
+      function tcNorm(s){{return (s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toUpperCase().trim();}}
+      function tcSearch(){{if(!tcMap)tcInit();const q=tcNorm(document.getElementById('tc-search-input').value);if(!q||!tcMap)return;let found=null;for(const [k,v] of Object.entries(TC_LOCAIS)){{if(tcNorm(k).includes(q)||q.includes(tcNorm(k))){{found=v;break;}}}}if(found)tcMap.flyTo(found,16);else document.getElementById('tc-search-input').animate([{{background:'#fff'}},{{background:'#fee2e2'}},{{background:'#fff'}}],{{duration:500}});}}
+      function tcCollapseRoute(){{document.getElementById('tc-route-card').classList.toggle('collapsed');}}
+      function tcToggleTracker(){{const c=document.getElementById('tc-tracker-card'),r=document.getElementById('tc-tracker-reopen');const hide=!c.hidden;c.hidden=hide;r.hidden=!hide;}}
+      function tcToggleDetails(open){{const d=document.getElementById('tc-details-drawer');d.classList.toggle('open',!!open);d.setAttribute('aria-hidden',open?'false':'true');}}
+      function tcTab(name,btn){{document.querySelectorAll('.tc-drawer-tabs button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.tc-drawer-body section').forEach(s=>s.hidden=s.dataset.tab!==name);}}
+    </script>'''
+    m.get_root().header.add_child(folium.Element(css))
+    m.get_root().html.add_child(folium.Element(top+_tc_html_rota(route_steps,estado,p_saida,hora_inicio_real,enderecos_dict)+_tc_html_tracker(route_steps,df_paradas,estado,enderecos_dict,locais_dict,final_dyn_min)+_tc_html_kpis(estado,route_steps,final_dyn_min)+_tc_html_detalhes_carga(estado)+js))
     st.components.v1.html(m.get_root().render(),height=790,scrolling=False)
 
-
 def renderizar_resumo_carga_torre_mock(estado):
-    # Detalhamento textual acessível abaixo do mock; não polui a tela principal.
+    # Detalhamento também fica disponível fora do mapa para auditoria/copiar dados.
     c1,c2,c3=st.columns(3)
     def bloco(col,titulo,lista):
         with col:
             st.markdown(f'**{titulo} — {len(lista)}**')
             if not lista: st.caption('Nenhum item.')
-            for r in lista[:10]:
+            for r in lista[:12]:
                 t=r.get('tarefa',{}); local=r.get('local_entrega') or r.get('local_coleta') or ''
-                st.markdown(f"• **{_tc_resumo_material(t,100)}**  ")
-                st.caption(f"{t.get('Obra','')}" + (f" • {local}" if local else ''))
+                unidade,obra=_tc_unidade_obra(t,local)
+                st.markdown(f"• **{_tc_resumo_material(t,120)}**")
+                st.caption(f"Unidade: {unidade} • Obra: {obra}" + (f" • Local: {local}" if local else ''))
     bloco(c1,'🚚 NO VEÍCULO',estado.get('no_veiculo',[])); bloco(c2,'📦 A COLETAR',estado.get('a_coletar',[])); bloco(c3,'📬 A ENTREGAR',estado.get('a_entregar',[]))
 
 # =====================================================================
