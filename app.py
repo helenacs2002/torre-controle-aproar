@@ -2542,6 +2542,7 @@ def atualizar_tempos_deslocamento_operacionais(route_steps, start_time_str="08:0
 
     return route_steps
 
+@st.cache_data(ttl=10, show_spinner=False)
 def obter_hora_inicio_rota(data_rota):
     """A rota do Davi é planejada para iniciar às 08:00.
 
@@ -2682,6 +2683,7 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     return route_steps, current_min
 
 
+@st.cache_data(ttl=5, show_spinner=False)
 def carregar_paradas_rastreadas_rota(data_rota, placa=PLACA_DAVI):
     """Carrega as visitas reais do rastreador, mais recentes primeiro."""
     try:
@@ -2696,6 +2698,31 @@ def carregar_paradas_rastreadas_rota(data_rota, placa=PLACA_DAVI):
         )
     except Exception:
         return pd.DataFrame(columns=["id", "local", "hora_chegada", "hora_saida"])
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def carregar_conclusoes_rota(data_rota):
+    """Uma leitura curta alimenta Torre, recálculo e aplicativo do Davi."""
+    try:
+        return get_df(
+            "SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data",
+            {"data": data_rota},
+        )
+    except Exception:
+        return pd.DataFrame(columns=["id", "hora_conclusao"])
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def carregar_rota_publicada_mobile(data_rota):
+    """Evita ler novamente todo o JSON da rota a cada toque no celular."""
+    try:
+        return fetch_one(
+            "SELECT json_route, json_locais, json_geometria, json_enderecos, total_km "
+            "FROM rota_ativa WHERE id = 1 AND data_rota = :data",
+            {"data": data_rota},
+        )
+    except Exception:
+        return None
 
 
 def _normalizar_local_rastreio(valor):
@@ -2815,6 +2842,7 @@ def garantir_tabela_checkins_davi():
     execute_db(SQL_TABELA_CHECKINS_DAVI)
     return True
 
+@st.cache_data(ttl=5, show_spinner=False)
 def carregar_checkins_davi(data_rota):
     rows = fetch_all(
         """
@@ -2861,6 +2889,10 @@ def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
             """,
             {"data": data_rota, "indice": etapa_indice, "destino": destino},
         )
+    try:
+        carregar_checkins_davi.clear()
+    except Exception:
+        pass
 
 
 # =====================================================================
@@ -3278,8 +3310,8 @@ if modo_davi:
     erro_checkin_mobile = ""
     try:
         garantir_tabela_checkins_davi()
-        res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
-        df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+        res = carregar_rota_publicada_mobile(DATA_REF_ROTA_STR)
+        df_mobile = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
     except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, HORA_INICIO_ROTA_DAVI
@@ -4094,38 +4126,38 @@ if modo_davi:
 st.markdown("""
     <style>
         :root {
-            --ap-bg:#080b0b;
-            --ap-bg-soft:#0c1010;
-            --ap-surface:#101414;
-            --ap-surface-2:#151a19;
-            --ap-surface-3:#1a201f;
-            --ap-line:rgba(226,232,240,.13);
-            --ap-line-strong:rgba(226,232,230,.34);
-            --ap-text:#f4f5f4;
-            --ap-muted:#8e9895;
-            --ap-blue:#aeb7b4;
-            --ap-blue-2:#e2e7e5;
-            --ap-green:#3aa978;
-            --ap-amber:#9ba4a1;
-            --ap-red:#c96767;
+            --ap-bg:#070913;
+            --ap-bg-soft:#0a0e1b;
+            --ap-surface:#0f1526;
+            --ap-surface-2:#131b30;
+            --ap-surface-3:#18223a;
+            --ap-line:rgba(148,163,184,.18);
+            --ap-line-strong:rgba(96,165,250,.32);
+            --ap-text:#f4f7fb;
+            --ap-muted:#8e99ad;
+            --ap-blue:#2563eb;
+            --ap-blue-2:#3b82f6;
+            --ap-green:#22c55e;
+            --ap-amber:#f59e0b;
+            --ap-red:#ef4444;
             --ap-radius-sm:4px;
             --ap-radius:6px;
             --ap-radius-lg:8px;
             --ap-shadow:0 14px 34px rgba(0,0,0,.22);
         }
 
-        html, body, [data-testid="stAppViewContainer"] { background:#080b0b !important; }
+        html, body, [data-testid="stAppViewContainer"] { background:var(--ap-bg) !important; }
         [data-testid="stAppViewContainer"] {
-            background-image:linear-gradient(180deg,#090c0c 0%,#070909 100%) !important;
+            background-image:linear-gradient(180deg,#080b18 0%,#060812 100%) !important;
         }
         .main .block-container { max-width:1680px; padding:.85rem 1.25rem 4rem; }
         [data-testid="stHeader"] {
-            background:rgba(8,11,11,.94) !important;
+            background:rgba(7,9,19,.94) !important;
             border-bottom:1px solid var(--ap-line); backdrop-filter:blur(14px);
         }
         [data-testid="stSidebar"] {
             width:292px !important; min-width:292px !important;
-            background:#0a0d0d !important; border-right:1px solid var(--ap-line) !important;
+            background:#0a1020 !important; border-right:1px solid var(--ap-line) !important;
         }
         [data-testid="stSidebar"] .block-container { padding:1rem .9rem 2rem; }
 
@@ -4137,18 +4169,18 @@ st.markdown("""
         .aproar-shell-header::after { display:none; }
         .aproar-brand { gap:20px; }
         .aproar-logo-main { width:170px; height:52px; filter:none; }
-        .aproar-eyebrow { color:var(--ap-muted); font-size:10px; letter-spacing:.17em; }
+        .aproar-eyebrow { color:#60a5fa; font-size:10px; letter-spacing:.17em; }
         .aproar-title {
             margin-top:1px; color:#f6f7f6; font-size:24px; font-weight:700;
             letter-spacing:.015em; text-transform:uppercase;
         }
-        .aproar-subtitle { color:#a3aaa8; font-size:12px; }
+        .aproar-subtitle { color:#8ea0ba; font-size:12px; }
         .aproar-meta-chip {
-            min-height:42px; border-radius:5px; color:#d8dddb;
-            background:#101514; border:1px solid var(--ap-line);
+            min-height:42px; border-radius:5px; color:#dbeafe;
+            background:#101a31; border:1px solid #263759;
         }
-        .aproar-meta-chip.primary { color:#d8dddb; background:#101514; border-color:var(--ap-line); }
-        .aproar-meta-chip:last-child { color:#7be5a9; border-color:rgba(32,201,119,.26); }
+        .aproar-meta-chip.primary { color:#bfdbfe; background:#0f1a31; border-color:#28518d; }
+        .aproar-meta-chip:last-child { color:#7be5a9; border-color:rgba(34,197,94,.28); }
         .aproar-dot { background:var(--ap-green); }
 
         .aproar-sidebar-brand {
@@ -4157,9 +4189,9 @@ st.markdown("""
         }
         .aproar-logo-sidebar { width:118px; height:42px; flex-basis:118px; }
         .aproar-sidebar-brand strong { color:#f4f5f4; font-size:12px; text-transform:uppercase; }
-        .aproar-sidebar-brand small { color:#737e7a; }
+        .aproar-sidebar-brand small { color:#71829e; }
         .aproar-sidebar-section {
-            margin:4px 8px 7px; color:#68716e; font-size:9px; font-weight:800;
+            margin:4px 8px 7px; color:#62738f; font-size:9px; font-weight:800;
             letter-spacing:.16em; text-transform:uppercase;
         }
 
@@ -4169,17 +4201,17 @@ st.markdown("""
             border-radius:4px; background:transparent; color:#aab2af;
             transition:background .14s ease,color .14s ease,border-color .14s ease;
         }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:#141817; color:#fff; }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:#121b30; color:#fff; }
         [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-            color:#f5f7f6; background:linear-gradient(90deg,rgba(226,231,229,.12),rgba(226,231,229,.02));
-            border-left-color:var(--ap-blue-2);
+            color:#fff; background:linear-gradient(90deg,rgba(239,68,68,.20),rgba(239,68,68,.05));
+            border-left-color:var(--ap-red);
         }
         [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child,
         [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child { display:none !important; }
         [data-testid="stSidebar"] div[role="radiogroup"] p { font-size:12px; font-weight:700; }
 
         .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
-            min-height:40px; border-radius:4px !important; background:#121615 !important;
+            min-height:40px; border-radius:4px !important; background:#10172a !important;
             border:1px solid var(--ap-line) !important; box-shadow:none !important;
         }
         .stButton > button:hover, .stDownloadButton > button:hover {
@@ -4187,25 +4219,25 @@ st.markdown("""
         }
         button[kind="primary"], [data-testid="baseButton-primary"],
         section[data-testid="stMain"] .stButton > button[kind="primary"] {
-            min-height:42px; border-radius:4px !important; color:#101413 !important;
-            background:#dadddc !important; border:1px solid #eef1f0 !important; box-shadow:none !important;
+            min-height:42px; border-radius:4px !important; color:#f8fbff !important;
+            background:#2563eb !important; border:1px solid #3b82f6 !important; box-shadow:none !important;
         }
-        button[kind="primary"]:hover { transform:none; color:#080b0a !important; background:#f3f5f4 !important; box-shadow:none !important; }
+        button[kind="primary"]:hover { transform:none; color:#fff !important; background:#2f6fec !important; box-shadow:none !important; }
 
         div[data-testid="stMetric"], div[data-testid="stForm"],
         div[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stExpander"],
         [data-testid="stDataFrame"], [data-testid="stTable"] {
-            border-radius:6px !important; background:#101414 !important;
+            border-radius:6px !important; background:#0f1526 !important;
             border:1px solid var(--ap-line) !important; box-shadow:none !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] { padding:14px !important; }
         [data-testid="stAlert"], [data-testid="stAlert"] > div,
         div[data-baseweb="notification"] {
             border-radius:5px !important; color:#d7dcda !important;
-            background:#141817 !important; border-color:rgba(226,232,230,.18) !important;
+            background:#414916 !important; border-color:#59631d !important;
         }
         .aproar-eta-card {
-            margin:9px 0 14px; border-radius:6px; background:#101414;
+            margin:9px 0 14px; border-radius:6px; background:#10182c;
             border:1px solid var(--ap-line); box-shadow:none;
         }
         .aproar-eta-value { font-size:21px; }
@@ -4236,8 +4268,8 @@ st.markdown("""
             padding:4px 7px; border-radius:4px; font-size:10px; font-weight:900;
             letter-spacing:.08em;
         }
-        .aproar-stop-action.coleta { color:#f0f2f1; background:rgba(226,231,229,.09); border:1px solid rgba(226,231,229,.26); }
-        .aproar-stop-action.entrega { color:#c7cecb; background:rgba(151,162,158,.08); border:1px solid rgba(178,188,184,.22); }
+        .aproar-stop-action.coleta { color:#fbbf24; background:rgba(245,158,11,.10); border:1px solid rgba(245,158,11,.35); }
+        .aproar-stop-action.entrega { color:#4ade80; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.30); }
         .aproar-stop-copy { min-width:0; }
         .aproar-stop-copy strong { display:block; overflow:hidden; color:#f4f5f4; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
         .aproar-stop-copy small { display:block; margin-top:3px; color:#87918e; font-size:10px; }
@@ -4245,7 +4277,7 @@ st.markdown("""
         .aproar-material-table { margin:5px 0; overflow:hidden; border:1px solid var(--ap-line); border-radius:4px; }
         .aproar-material-row {
             display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px;
-            padding:7px 9px; background:#0b0f0f; border-bottom:1px solid rgba(226,232,240,.08);
+            padding:7px 9px; background:#0b1020; border-bottom:1px solid rgba(148,163,184,.10);
         }
         .aproar-material-row:last-child { border-bottom:0; }
         .aproar-material-row span { color:#d6dbd9; font-size:11px; }
@@ -4259,7 +4291,7 @@ st.markdown("""
             display:grid; grid-template-columns:1.35fr .75fr; gap:10px; margin-top:10px;
         }
         .aproar-route-panel, .aproar-fleet-panel {
-            min-width:0; padding:13px 14px; background:#101414;
+            min-width:0; padding:13px 14px; background:#0f1526;
             border:1px solid var(--ap-line); border-radius:6px;
         }
         .aproar-summary-title {
@@ -4293,7 +4325,7 @@ st.markdown("""
 
         ::-webkit-scrollbar-track { background:#080b0b; }
         ::-webkit-scrollbar-thumb { background:#2c3331; border-color:#080b0b; border-radius:2px; }
-        ::-webkit-scrollbar-thumb:hover { background:#aeb7b4; }
+        ::-webkit-scrollbar-thumb:hover { background:#3b82f6; }
 
         @media (max-width:1100px) {
             [data-testid="stSidebar"] { width:250px !important; min-width:250px !important; }
@@ -5508,28 +5540,6 @@ def _obter_componente_drag_rota():
         "font-family:Manrope,Arial,sans-serif",
         1,
     )
-    # O editor vive em um iframe próprio, portanto recebe também a paleta
-    # monocromática APROAR em vez do antigo azul/dourado.
-    for cor_antiga, cor_aproar in {
-        "#070913": "#080b0b",
-        "#0b1020": "#0b0f0f",
-        "#11182d": "#151a19",
-        "#263452": "#303735",
-        "#0f1c37": "#1a201f",
-        "#10182b": "#101414",
-        "#334155": "#3b4340",
-        "#60a5fa": "#dadddc",
-        "#9fb1ca": "#b8c0bd",
-        "#f59e0b": "#dadddc",
-        "#22c55e": "#737d79",
-        "#93c5fd": "#dadddc",
-        "#1d4ed8": "#4b5350",
-        "#dbeafe": "#f1f3f2",
-        "#475569": "#68716e",
-        "#64748b": "#8c9692",
-        "#94a3b8": "#98a29e",
-    }.items():
-        frontend = frontend.replace(cor_antiga, cor_aproar)
     with open(index_path, "w", encoding="utf-8") as arquivo:
         arquivo.write(frontend)
 
@@ -7535,6 +7545,27 @@ def carregar_config_protege():
         return usuario, senha, ",".join(str(v).strip() for v in veiculos) if isinstance(veiculos, (list, tuple)) else str(veiculos).strip()
     except: return "", "", RASTREADOR_VEICULOS_PADRAO
 
+
+@st.cache_resource(show_spinner=False)
+def obter_executor_gps_rota():
+    """Um único trabalhador consulta o GPS sem bloquear a renderização da Torre."""
+    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="aproar-gps-rota")
+
+
+def consultar_gps_rota_em_background(usuario, senha, veiculos, sessao=None, pagina=None):
+    """Consulta/reautentica fora da thread que desenha a página."""
+    if sessao is not None and pagina:
+        try:
+            posicoes = consultar_posicoes_protege(sessao, pagina, veiculos)
+            return {"sessao": sessao, "pagina": pagina, "posicoes": posicoes, "erro": ""}
+        except Exception:
+            pass
+    try:
+        nova_sessao, nova_pagina, posicoes = autenticar_protege(usuario, senha, veiculos)
+        return {"sessao": nova_sessao, "pagina": nova_pagina, "posicoes": posicoes, "erro": ""}
+    except Exception as erro:
+        return {"sessao": None, "pagina": "", "posicoes": [], "erro": str(erro)[:180]}
+
 def loop_automacoes_background(processar_rastreador=True):
     agora_loop = datetime.now(FUSO_LOCAL)
     try:
@@ -7640,6 +7671,10 @@ def loop_automacoes_background(processar_rastreador=True):
                     st.session_state["_teams_ultimo_erro"] = f"{short_name}: {detalhe}"
 
             if novas_entregas > 0:
+                try:
+                    carregar_conclusoes_rota.clear()
+                except Exception:
+                    pass
                 st.toast(
                     f"🔔 {novas_entregas} {plural_pt(novas_entregas, 'nova baixa registrada', 'novas baixas registradas')} no Trello!",
                     icon="✅",
@@ -8656,6 +8691,58 @@ if modulo_principal == "🚗 Frota e custos":
         )
 
 if modulo_principal == "🗺️ Roteiro do Davi":
+    # O GPS é buscado em outra thread. A Torre abre primeiro com a última posição
+    # conhecida e recebe a nova leitura depois, sem spinner nem espera de rede.
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="5s")
+        def _ciclo_gps_mapa_rota():
+            agora_gps = time.time()
+            job = st.session_state.get("_gps_rota_future")
+
+            if job is not None and job.done():
+                try:
+                    resultado = job.result()
+                except Exception as erro_job:
+                    resultado = {"sessao": None, "pagina": "", "posicoes": [], "erro": str(erro_job)}
+                st.session_state.pop("_gps_rota_future", None)
+                st.session_state["_gps_rota_ultimo_erro"] = resultado.get("erro", "")
+                if resultado.get("sessao") is not None:
+                    st.session_state["protege_sessao"] = resultado["sessao"]
+                    st.session_state["protege_pagina"] = resultado.get("pagina", "")
+                posicoes_novas = resultado.get("posicoes") or []
+                if posicoes_novas:
+                    assinatura_antiga = json.dumps(
+                        st.session_state.get("_gps_rota_posicoes") or [],
+                        ensure_ascii=False, sort_keys=True, default=str,
+                    )
+                    assinatura_nova = json.dumps(
+                        posicoes_novas, ensure_ascii=False, sort_keys=True, default=str,
+                    )
+                    st.session_state["_gps_rota_posicoes"] = posicoes_novas
+                    st.session_state["_gps_rota_atualizado_em"] = agora_gps
+                    if assinatura_nova != assinatura_antiga:
+                        try:
+                            st.rerun(scope="app")
+                        except TypeError:
+                            st.rerun()
+
+            sem_job = st.session_state.get("_gps_rota_future") is None
+            ultimo_envio = float(st.session_state.get("_gps_rota_consulta_em", 0) or 0)
+            if sem_job and agora_gps - ultimo_envio >= 30:
+                usuario, senha, veiculos = carregar_config_protege()
+                if usuario and senha and veiculos:
+                    st.session_state["_gps_rota_consulta_em"] = agora_gps
+                    st.session_state["_gps_rota_future"] = obter_executor_gps_rota().submit(
+                        consultar_gps_rota_em_background,
+                        usuario,
+                        senha,
+                        veiculos,
+                        st.session_state.get("protege_sessao"),
+                        st.session_state.get("protege_pagina"),
+                    )
+
+        _ciclo_gps_mapa_rota()
+
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR):
         st.session_state['rota_gerada'] = False
     if not st.session_state.get('rota_gerada', False):
@@ -8861,7 +8948,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
             
-            df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+            df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
@@ -9412,7 +9499,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 f"por prioridade, capacidade ou falta de tempo hábil até as 17h."
             )
         
-        df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
+        df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         try:
             dict_checkins_torre = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
@@ -9985,11 +10072,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             st.session_state['geometria_viaria'] = geometria_viaria
 
             if len(geometria_rota) > 1:
-                # Contorno claro + grafite APROAR: contraste sobre as cores reais do mapa.
-                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.92).add_to(m)
+                # Contorno claro + azul da referência sobre as cores reais do mapa.
+                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.88).add_to(m)
                 folium.PolyLine(
                     geometria_rota,
-                    color="#252B29", weight=5.5, opacity=0.96,
+                    color="#2563EB", weight=5.5, opacity=0.98,
                     dash_array=None if geometria_viaria else "9,7",
                     tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
                 ).add_to(m)
@@ -10012,7 +10099,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-                    fundo_marcador = "linear-gradient(90deg, #202523 0 50%, #737d79 50% 100%)" if (tem_coleta and tem_entrega) else "#202523" if tem_coleta else "#737d79"
+                    fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #22c55e 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#22c55e"
                     popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
                     folium.Marker(
                         [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
@@ -10021,6 +10108,73 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     ).add_to(m)
                     p_num += 1
 
+            # Última posição real do Davi. Ela é atualizada pela consulta em
+            # background acima; desenhar o caminhão nunca bloqueia o mapa.
+            posicoes_gps_rota = st.session_state.get("_gps_rota_posicoes") or []
+            posicao_davi = next(
+                (
+                    pos for pos in posicoes_gps_rota
+                    if str(pos.get("Placa", "")).strip().upper() == PLACA_DAVI.upper()
+                ),
+                None,
+            )
+            if posicao_davi is None:
+                posicao_davi = next(
+                    (pos for pos in posicoes_gps_rota if str(pos.get("Placa", "")).upper().startswith("TIF")),
+                    None,
+                )
+
+            if posicao_davi:
+                try:
+                    lat_caminhao = float(posicao_davi.get("Latitude"))
+                    lon_caminhao = float(posicao_davi.get("Longitude"))
+                    coordenada_gps_valida = (
+                        -90 <= lat_caminhao <= 90 and -180 <= lon_caminhao <= 180
+                        and abs(lat_caminhao) + abs(lon_caminhao) > 0.01
+                    )
+                except (TypeError, ValueError):
+                    coordenada_gps_valida = False
+
+                if coordenada_gps_valida:
+                    proximo_destino_davi = ""
+                    for etapa_rota in route_steps:
+                        if etapa_rota.get("type") != "stop" or etapa_rota.get("destino") == p_saida:
+                            continue
+                        pendente_etapa = any(
+                            str(tarefa.get("id", "")) not in dict_concluidos_torre
+                            for _acao, tarefa in (etapa_rota.get("actions") or [])
+                        )
+                        if pendente_etapa:
+                            proximo_destino_davi = str(etapa_rota.get("destino", ""))
+                            break
+
+                    velocidade_davi = float(posicao_davi.get("Velocidade (km/h)", 0) or 0)
+                    situacao_davi = str(posicao_davi.get("Situação", "") or "Posição localizada")
+                    atualizacao_davi = str(posicao_davi.get("Última atualização", "") or "")
+                    destino_gps_texto = (
+                        f"Indo para {proximo_destino_davi}" if velocidade_davi > 2 and proximo_destino_davi
+                        else f"Próximo destino: {proximo_destino_davi}" if proximo_destino_davi
+                        else "Roteiro concluído"
+                    )
+                    popup_caminhao = (
+                        f"<b>🚚 Davi — {html_escape(str(PLACA_DAVI))}</b><br>"
+                        f"{html_escape(destino_gps_texto)}<br>"
+                        f"{html_escape(situacao_davi)} — {velocidade_davi:.0f} km/h<br>"
+                        f"Atualização: {html_escape(atualizacao_davi)}"
+                    )
+                    folium.Marker(
+                        [lat_caminhao, lon_caminhao],
+                        popup=folium.Popup(popup_caminhao, max_width=310),
+                        tooltip=f"🚚 Davi • {destino_gps_texto}",
+                        z_index_offset=5000,
+                        icon=folium.DivIcon(html='''
+                            <div style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;
+                                        border-radius:50%;background:#2563eb;border:3px solid #fff;
+                                        box-shadow:0 3px 12px rgba(0,0,0,.55);font-size:23px;line-height:1;">🚚</div>
+                        '''),
+                    ).add_to(m)
+                    pontos_reais_mapa.append([lat_caminhao, lon_caminhao])
+
             if len(pontos_reais_mapa) > 1:
                 m.fit_bounds(pontos_reais_mapa, padding=(45, 45), max_zoom=14)
             if p_saida in locais_dict and pos_base_visual is not None:
@@ -10028,7 +10182,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     [pos_base_visual[0], pos_base_visual[1]],
                     popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
                     z_index_offset=2500,
-                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #111514, #3d4542); color: white; border: 3px solid #f0f2f1; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.55); font-size: 16px;">🏁</div>''')
+                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid #dbeafe; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.55); font-size: 16px;">🏁</div>''')
                 ).add_to(m)
 
             st_folium(
