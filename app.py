@@ -2371,6 +2371,58 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
     return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
+
+def resumir_rua_rastreador(endereco):
+    """Reduz o endereço da Protege à rua e ao número para caber no marcador."""
+    endereco_limpo = re.sub(r"\s+", " ", str(endereco or "")).strip(" ,-|")
+    if not endereco_limpo:
+        return "Rua atual não informada"
+
+    trecho_rua = re.split(r"\s+(?:-|–|—|\|)\s+", endereco_limpo, maxsplit=1)[0].strip()
+    partes = [parte.strip() for parte in trecho_rua.split(",") if parte.strip()]
+    if len(partes) >= 2 and re.fullmatch(r"(?:N[º°.]?\s*)?\d+[A-Z]?|S/?N", partes[1], flags=re.IGNORECASE):
+        trecho_rua = f"{partes[0]}, {partes[1]}"
+    elif len(partes) > 1:
+        trecho_rua = partes[0]
+    return trecho_rua[:90]
+
+
+def inferir_destino_provavel_por_distancia(
+    lat_atual, lon_atual, route_steps, locais, ponto_saida, concluidos
+):
+    """Escolhe a parada pendente mais próxima da posição GPS, sem usar a ordem da rota."""
+    candidatos = []
+    concluidos = concluidos or {}
+
+    for etapa in route_steps or []:
+        destino = str(etapa.get("destino", "") or "").strip()
+        if etapa.get("type") != "stop" or not destino or destino == ponto_saida:
+            continue
+
+        tarefas = etapa.get("actions") or []
+        if not tarefas or not any(
+            str(tarefa.get("id", "")) not in concluidos for _acao, tarefa in tarefas
+        ):
+            continue
+
+        coordenadas = (locais or {}).get(destino)
+        if not isinstance(coordenadas, (list, tuple)) or len(coordenadas) < 2:
+            continue
+        try:
+            lat_destino, lon_destino = float(coordenadas[0]), float(coordenadas[1])
+            distancia = calcular_distancia_km(
+                float(lat_atual), float(lon_atual), lat_destino, lon_destino
+            )
+        except (TypeError, ValueError, IndexError):
+            continue
+        if math.isfinite(distancia):
+            candidatos.append((distancia, destino))
+
+    if not candidatos:
+        return "", None
+    distancia, destino = min(candidatos, key=lambda item: item[0])
+    return destino, distancia
+
 def normalizar_geometria_mapa(geometria, referencias=None):
     """Normaliza uma geometria para o formato [lat, lon] esperado pelo Folium.
 
@@ -10239,18 +10291,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             # Última posição real do Davi. Ela é atualizada pela consulta em
             # background acima; desenhar o caminhão nunca bloqueia o mapa.
             posicoes_gps_rota = st.session_state.get("_gps_rota_posicoes") or []
+            placa_davi_normalizada = re.sub(r"[^A-Z0-9]", "", PLACA_DAVI.upper())
             posicao_davi = next(
                 (
                     pos for pos in posicoes_gps_rota
-                    if str(pos.get("Placa", "")).strip().upper() == PLACA_DAVI.upper()
+                    if re.sub(r"[^A-Z0-9]", "", str(pos.get("Placa", "")).upper())
+                    == placa_davi_normalizada
                 ),
                 None,
             )
-            if posicao_davi is None:
-                posicao_davi = next(
-                    (pos for pos in posicoes_gps_rota if str(pos.get("Placa", "")).upper().startswith("TIF")),
-                    None,
-                )
 
             if posicao_davi:
                 try:
@@ -10264,36 +10313,48 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     coordenada_gps_valida = False
 
                 if coordenada_gps_valida:
-                    proximo_destino_davi = ""
-                    for etapa_rota in route_steps:
-                        if etapa_rota.get("type") != "stop" or etapa_rota.get("destino") == p_saida:
-                            continue
-                        pendente_etapa = any(
-                            str(tarefa.get("id", "")) not in dict_concluidos_torre
-                            for _acao, tarefa in (etapa_rota.get("actions") or [])
-                        )
-                        if pendente_etapa:
-                            proximo_destino_davi = str(etapa_rota.get("destino", ""))
-                            break
+                    destino_provavel_davi, distancia_destino_davi = inferir_destino_provavel_por_distancia(
+                        lat_caminhao, lon_caminhao, route_steps, locais_dict,
+                        p_saida, dict_concluidos_torre,
+                    )
 
                     velocidade_davi = float(posicao_davi.get("Velocidade (km/h)", 0) or 0)
                     situacao_davi = str(posicao_davi.get("Situação", "") or "Posição localizada")
                     atualizacao_davi = str(posicao_davi.get("Última atualização", "") or "")
+                    rua_atual_davi = resumir_rua_rastreador(posicao_davi.get("Endereço", ""))
                     destino_gps_texto = (
-                        f"Indo para {proximo_destino_davi}" if velocidade_davi > 2 and proximo_destino_davi
-                        else f"Próximo destino: {proximo_destino_davi}" if proximo_destino_davi
+                        f"Provavelmente indo para {destino_provavel_davi}"
+                        if destino_provavel_davi
                         else "Roteiro concluído"
+                    )
+                    distancia_gps_texto = (
+                        f"{distancia_destino_davi:.1f} km em linha reta"
+                        if distancia_destino_davi is not None else ""
+                    )
+                    distancia_popup_davi = (
+                        f"<span style='font-size:11px'>{html_escape(distancia_gps_texto)}</span><br>"
+                        if distancia_gps_texto else ""
                     )
                     popup_caminhao = (
                         f"<b>🚚 Davi — {html_escape(str(PLACA_DAVI))}</b><br>"
-                        f"{html_escape(destino_gps_texto)}<br>"
+                        f"<span style='font-size:11px;color:#64748b'>📍 {html_escape(rua_atual_davi)}</span><br>"
+                        f"<b>{html_escape(destino_gps_texto)}</b><br>"
+                        f"{distancia_popup_davi}"
                         f"{html_escape(situacao_davi)} — {velocidade_davi:.0f} km/h<br>"
                         f"Atualização: {html_escape(atualizacao_davi)}"
+                    )
+                    tooltip_caminhao = (
+                        "<div style='min-width:245px;max-width:310px;white-space:normal;line-height:1.25'>"
+                        f"<div style='font-size:10px;font-weight:600;color:#64748b;margin-bottom:3px'>"
+                        f"📍 {html_escape(rua_atual_davi)}</div>"
+                        f"<div style='font-size:13px;font-weight:800;color:#0f172a'>"
+                        f"🚚 Davi • {html_escape(destino_gps_texto)}</div>"
+                        "</div>"
                     )
                     folium.Marker(
                         [lat_caminhao, lon_caminhao],
                         popup=folium.Popup(popup_caminhao, max_width=310),
-                        tooltip=f"🚚 Davi • {destino_gps_texto}",
+                        tooltip=tooltip_caminhao,
                         z_index_offset=5000,
                         icon=folium.DivIcon(html='''
                             <div style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;
