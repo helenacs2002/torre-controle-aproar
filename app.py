@@ -106,49 +106,356 @@ def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
 
-# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM E DASHBOARD CORPORATIVO) ---
+# --- DESIGN SYSTEM APROAR — TORRE + APP DO MOTORISTA -------------------------
 def aplicar_estilo_customizado():
+    """Aplica o mesmo sistema visual à Torre e à página /davi."""
     st.markdown("""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        html, body, [class*="css"], .stMarkdown, .stText, p, div, h1, h2, h3, h4, h5, h6 { font-family: 'Inter', sans-serif !important; color: #e4e8f4; }
-        /* Ícones do Streamlit usam uma fonte própria. Forçar Inter nos spans
-           fazia nomes como keyboard_arrow_right aparecerem como texto. */
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap');
+
+        :root {
+            --ap-bg: #070913;
+            --ap-bg-soft: #0a0e1b;
+            --ap-surface: #0f1526;
+            --ap-surface-2: #131b30;
+            --ap-surface-3: #18223a;
+            --ap-line: rgba(148, 163, 184, .16);
+            --ap-line-strong: rgba(96, 165, 250, .28);
+            --ap-text: #f4f7fb;
+            --ap-muted: #94a3b8;
+            --ap-blue: #2563eb;
+            --ap-blue-2: #3b82f6;
+            --ap-green: #22c55e;
+            --ap-amber: #f59e0b;
+            --ap-red: #ef4444;
+            --ap-radius-sm: 10px;
+            --ap-radius: 16px;
+            --ap-radius-lg: 22px;
+            --ap-shadow: 0 18px 45px rgba(0, 0, 0, .28);
+        }
+
+        html, body, [class*="css"], .stMarkdown, .stText, p, div,
+        h1, h2, h3, h4, h5, h6, label, button, input, textarea {
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        }
+        h1, h2, h3, h4, h5, h6, .aproar-title, .aproar-driver-greeting,
+        [data-testid="stMetricValue"], .driver-kpi strong, .driver-stop-copy > strong {
+            font-family:'Sora', 'Manrope', sans-serif !important;
+        }
+        html, body, [data-testid="stAppViewContainer"] { background: var(--ap-bg) !important; }
+        [data-testid="stAppViewContainer"] {
+            color: var(--ap-text);
+            background-image:
+                radial-gradient(circle at 84% 2%, rgba(37,99,235,.13), transparent 30rem),
+                radial-gradient(circle at 8% 36%, rgba(14,165,233,.06), transparent 28rem),
+                linear-gradient(180deg, #070913 0%, #080b15 100%) !important;
+        }
+        .main .block-container {
+            max-width: 1500px;
+            padding: 1.15rem 2.35rem 4rem;
+        }
+        p, li, label, .stCaption { color: #cbd5e1; }
+        h1, h2, h3, h4, h5, h6 { color: var(--ap-text) !important; letter-spacing: -.025em; }
+        a { color: #93c5fd; }
+
         span[data-testid="stIconMaterial"], .material-symbols-rounded, .material-symbols-outlined {
             font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
             font-weight: normal !important; font-style: normal !important;
             letter-spacing: normal !important; text-transform: none !important;
             white-space: nowrap !important; word-wrap: normal !important;
         }
-        [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
-        [data-testid="stSidebar"] { background-color: #0b0e1e !important; border-right: 1px solid rgba(64,116,146,.15) !important; }
-        /* A rota /davi usa uma página técnica do Streamlit; escondemos a navegação
-           multipágina nativa para manter apenas o menu corporativo da Torre. */
+
+        [data-testid="stHeader"] {
+            background: rgba(7, 9, 19, .72) !important;
+            border-bottom: 1px solid rgba(148,163,184,.08);
+            backdrop-filter: blur(18px);
+        }
+        [data-testid="stSidebar"] {
+            background:
+                radial-gradient(circle at 20% 0%, rgba(37,99,235,.13), transparent 18rem),
+                #0a0e1b !important;
+            border-right: 1px solid var(--ap-line) !important;
+        }
+        [data-testid="stSidebar"] .block-container { padding-top: 1.25rem; }
         [data-testid="stSidebarNav"] { display: none !important; }
-        [data-testid="stHeader"] { background-color: rgba(7, 9, 19, 0.8) !important; backdrop-filter: blur(8px); }
-        /* Evita que a tela inteira escureça enquanto apenas um trecho é atualizado. */
         [data-stale="true"] { opacity: 1 !important; }
-        button[kind="primary"], [data-testid="baseButton-primary"] { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; color: #ffffff !important; border-radius: 8px !important; border: none !important; font-weight: 600 !important; box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3); transition: all 0.2s ease-in-out; padding: 10px 20px !important; }
-        button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(37, 99, 235, 0.5); }
-        button[kind="primary"]:disabled { background: #1e293b !important; color: #64748b !important; box-shadow: none !important; transform: none !important; cursor: not-allowed !important; }
-        .stTabs [data-baseweb="tab-list"] { gap: 12px; background-color: rgba(18, 21, 48, 0.6); padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(64,116,146,.15); }
-        .stTabs [data-baseweb="tab"] { background-color: transparent; border-radius: 8px; color: #8da0b8; padding: 10px 18px; font-weight: 500; transition: all 0.2s ease; border: none !important; }
-        .stTabs [data-baseweb="tab"]:hover { color: #ffffff; background-color: rgba(255,255,255,0.05); }
-        .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4); }
-        div[data-testid="stMetric"] { background-color: rgba(25, 30, 56, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(64, 116, 146, 0.25); padding: 20px 25px; border-radius: 14px; box-shadow: 0 8px 20px rgba(0,0,0,0.15); transition: transform 0.2s ease; }
-        div[data-testid="stMetric"]:hover { transform: translateY(-3px); border-color: rgba(37, 99, 235, 0.5); }
-        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] { background-color: rgba(18, 21, 48, 0.4) !important; border-radius: 14px !important; padding: 24px !important; border: 1px solid rgba(64,116,146,.2) !important; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div { background-color: rgba(13, 16, 37, 0.8) !important; border: 1px solid rgba(64,116,146,.3) !important; color: #e4e8f4 !important; border-radius: 8px !important; transition: border-color 0.2s; }
-        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within { border-color: #2563eb !important; box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3) !important; }
-        [data-testid="stDataFrame"] { background-color: rgba(18, 21, 48, 0.6) !important; border: 1px solid rgba(64,116,146,.2) !important; border-radius: 12px !important; overflow: hidden; }
-        /* Folium/Leaflet deve ocupar toda a coluna; evita o bloco escuro sobrando à direita. */
-        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe { width: 100% !important; max-width: 100% !important; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #070913; }
-        ::-webkit-scrollbar-thumb { background: #2563eb; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #1d4ed8; }
+        .aproar-sidebar-brand {
+            display:flex; align-items:center; gap:11px; margin:0 0 8px; padding:12px;
+            border:1px solid var(--ap-line); border-radius:14px; background:rgba(19,27,48,.64);
+        }
+        .aproar-sidebar-brand span {
+            display:grid; place-items:center; width:36px; height:36px; border-radius:11px;
+            color:#fff; font-size:15px; font-weight:900; background:linear-gradient(145deg,#3b82f6,#1d4ed8);
+            box-shadow:0 8px 18px rgba(37,99,235,.28);
+        }
+        .aproar-sidebar-brand strong { display:block; color:#f8fafc; font-size:13px; }
+        .aproar-sidebar-brand small { display:block; margin-top:2px; color:#94a3b8; font-size:10px; }
+        .aproar-logo-sidebar {
+            display:block; width:94px; height:35px; flex:0 0 94px;
+            object-fit:contain; object-position:left center;
+        }
+
+        /* Cabeçalho corporativo */
+        .aproar-shell-header {
+            display: flex; align-items: center; justify-content: space-between; gap: 22px;
+            margin: 0 0 22px; padding: 18px 20px;
+            background: linear-gradient(135deg, rgba(19,27,48,.92), rgba(10,14,27,.94));
+            border: 1px solid var(--ap-line); border-radius: var(--ap-radius-lg);
+            box-shadow: var(--ap-shadow); overflow: hidden; position: relative;
+        }
+        .aproar-shell-header::after {
+            content: ''; position: absolute; inset: auto -70px -105px auto;
+            width: 240px; height: 240px; border-radius: 50%;
+            background: rgba(37,99,235,.14); filter: blur(15px); pointer-events: none;
+        }
+        .aproar-brand { display:flex; align-items:center; gap:14px; min-width:0; z-index:1; }
+        .aproar-logo-main {
+            display:block; width:146px; max-width:22vw; height:48px;
+            object-fit:contain; object-position:left center;
+            filter:drop-shadow(0 8px 18px rgba(0,0,0,.24));
+        }
+        .aproar-brand-mark {
+            width: 46px; height: 46px; flex: 0 0 46px; display:grid; place-items:center;
+            border-radius: 14px; background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+            box-shadow: 0 10px 24px rgba(37,99,235,.34); color:#fff;
+            font-weight:900; font-size:19px; letter-spacing:-.08em;
+        }
+        .aproar-logo-fallback {
+            display:flex !important; align-items:center; justify-content:flex-start;
+            color:#f8fafc; font-family:'Sora', sans-serif !important;
+            font-size:14px; font-weight:800; letter-spacing:.09em;
+        }
+        .aproar-eyebrow { color:#60a5fa; font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+        .aproar-title { color:var(--ap-text); font-size:21px; line-height:1.14; font-weight:700; margin-top:2px; letter-spacing:-.035em; }
+        .aproar-subtitle { color:var(--ap-muted); font-size:12px; margin-top:4px; }
+        .aproar-header-meta { display:flex; align-items:center; gap:10px; z-index:1; }
+        .aproar-meta-chip {
+            display:flex; align-items:center; gap:8px; min-height:38px; padding:0 12px;
+            color:#cbd5e1; font-size:12px; font-weight:700; white-space:nowrap;
+            background:rgba(255,255,255,.035); border:1px solid var(--ap-line); border-radius:999px;
+        }
+        .aproar-meta-chip.primary { color:#bfdbfe; border-color:rgba(96,165,250,.28); background:rgba(37,99,235,.11); }
+        .aproar-dot { width:7px; height:7px; border-radius:50%; background:var(--ap-green); box-shadow:0 0 0 4px rgba(34,197,94,.12); }
+
+        /* Navegação principal */
+        [data-testid="stSegmentedControl"] { margin: 0 0 20px; }
+        [data-testid="stSegmentedControl"] > div {
+            gap: 5px !important; padding: 6px !important; overflow-x: auto;
+            background: rgba(15,21,38,.86) !important; border: 1px solid var(--ap-line) !important;
+            border-radius: 15px !important; box-shadow: 0 10px 28px rgba(0,0,0,.16);
+        }
+        [data-testid="stSegmentedControl"] button {
+            min-height: 41px !important; border-radius: 10px !important; color: var(--ap-muted) !important;
+            font-size: 12.5px !important; font-weight: 700 !important; letter-spacing:-.01em; white-space: nowrap;
+        }
+        [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+            color: #fff !important; background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+            box-shadow: 0 7px 18px rgba(37,99,235,.28);
+        }
+
+        /* Botões */
+        .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
+            min-height: 42px; border-radius: 11px !important; font-weight: 700 !important;
+            border: 1px solid rgba(148,163,184,.22) !important;
+            background: rgba(19,27,48,.82) !important; color: #e2e8f0 !important;
+            transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease !important;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            transform: translateY(-1px); border-color: rgba(96,165,250,.55) !important;
+            box-shadow: 0 8px 20px rgba(0,0,0,.20);
+        }
+        button[kind="primary"], [data-testid="baseButton-primary"] {
+            min-height: 44px; padding: 10px 20px !important; border: 0 !important;
+            border-radius: 11px !important; color: #fff !important; font-weight: 800 !important;
+            background: linear-gradient(135deg, #2f74f5, #1d4ed8) !important;
+            box-shadow: 0 10px 24px rgba(37,99,235,.28) !important;
+        }
+        button[kind="primary"]:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(37,99,235,.36) !important; }
+        button:disabled { opacity:.48 !important; transform:none !important; box-shadow:none !important; }
+
+        /* Cards, métricas e formulários */
+        div[data-testid="stMetric"] {
+            min-height: 112px; padding: 18px 19px; border-radius: var(--ap-radius) !important;
+            background: linear-gradient(145deg, rgba(19,27,48,.92), rgba(12,17,31,.94)) !important;
+            border: 1px solid var(--ap-line) !important; box-shadow: 0 12px 30px rgba(0,0,0,.18);
+        }
+        div[data-testid="stMetric"] label { color:var(--ap-muted) !important; font-weight:700; }
+        div[data-testid="stMetric"] [data-testid="stMetricValue"] { color:var(--ap-text) !important; font-weight:800; letter-spacing:-.04em; }
+        div[data-testid="stMetric"] [data-testid="stMetricDelta"] { font-weight:700; }
+        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {
+            padding: 20px !important; border-radius: var(--ap-radius) !important;
+            background: rgba(15,21,38,.80) !important; border: 1px solid var(--ap-line) !important;
+            box-shadow: 0 12px 30px rgba(0,0,0,.14);
+        }
+        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div,
+        div[data-baseweb="textarea"] > div, [data-testid="stNumberInput"] > div > div {
+            min-height: 44px; color:var(--ap-text) !important; border-radius:11px !important;
+            background:#0d1322 !important; border:1px solid rgba(148,163,184,.22) !important;
+            transition:border-color .16s ease, box-shadow .16s ease;
+        }
+        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within,
+        div[data-baseweb="textarea"] > div:focus-within {
+            border-color:#3b82f6 !important; box-shadow:0 0 0 3px rgba(37,99,235,.14) !important;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            min-height:120px; border-radius:14px !important; border:1.5px dashed rgba(96,165,250,.45) !important;
+            background:rgba(37,99,235,.055) !important;
+        }
+
+        /* Tabelas, abas, expansores e mensagens */
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+            overflow:hidden; border-radius:14px !important; border:1px solid var(--ap-line) !important;
+            background:#0d1322 !important; box-shadow:0 12px 28px rgba(0,0,0,.14);
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap:5px; padding:6px; border-radius:14px; border:1px solid var(--ap-line);
+            background:rgba(15,21,38,.82); overflow-x:auto;
+        }
+        .stTabs [data-baseweb="tab"] { min-height:40px; padding:8px 15px; color:var(--ap-muted); font-weight:700; border-radius:9px; }
+        .stTabs [aria-selected="true"] { color:#fff !important; background:rgba(37,99,235,.9) !important; }
+        [data-testid="stExpander"] {
+            overflow:hidden; border:1px solid var(--ap-line) !important; border-radius:14px !important;
+            background:rgba(15,21,38,.74) !important;
+        }
+        [data-testid="stAlert"] { border-radius:13px !important; border:1px solid var(--ap-line) !important; }
+        hr { border-color:var(--ap-line) !important; }
+        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe {
+            width:100% !important; max-width:100% !important; border-radius:16px;
+        }
+
+        /* ETA compartilhado */
+        .aproar-eta-card {
+            display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:18px;
+            margin: 10px 0 22px; padding:17px 19px; border-radius:16px;
+            background:linear-gradient(145deg,rgba(19,27,48,.94),rgba(12,17,31,.96));
+            border:1px solid var(--ap-line); box-shadow:0 12px 30px rgba(0,0,0,.18);
+        }
+        .aproar-eta-label { color:var(--ap-muted); font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+        .aproar-eta-value { color:var(--ap-text); font-size:22px; font-weight:800; margin-top:3px; letter-spacing:-.04em; }
+        .aproar-eta-side.right { text-align:right; }
+        .aproar-eta-route { color:#60a5fa; font-size:20px; }
+
+        ::-webkit-scrollbar { width:9px; height:9px; }
+        ::-webkit-scrollbar-track { background:#070913; }
+        ::-webkit-scrollbar-thumb { background:#283752; border:2px solid #070913; border-radius:999px; }
+        ::-webkit-scrollbar-thumb:hover { background:#3b82f6; }
+
+        @media (max-width: 900px) {
+            .main .block-container { padding: .9rem 1rem 5rem; }
+            .aproar-shell-header { align-items:flex-start; padding:16px; }
+            .aproar-header-meta { flex-wrap:wrap; justify-content:flex-end; }
+        }
+        @media (max-width: 640px) {
+            .main .block-container { padding:.7rem .78rem 5.5rem; }
+            .aproar-shell-header { border-radius:18px; margin-bottom:14px; }
+            .aproar-brand-mark { width:42px; height:42px; flex-basis:42px; }
+            .aproar-logo-main { width:112px; max-width:34vw; height:42px; }
+            .aproar-title { font-size:18px; }
+            .aproar-subtitle { display:none; }
+            .aproar-header-meta { display:none; }
+            .aproar-eta-card { grid-template-columns:1fr auto 1fr; gap:9px; padding:14px; }
+            .aproar-eta-route { font-size:16px; }
+            .aproar-eta-value { font-size:19px; }
+            div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] { padding:15px !important; }
+        }
     </style>
     """, unsafe_allow_html=True)
+
+
+def _html_logo_aproar(classe_css):
+    """Carrega logo.png ao lado do app.py e devolve uma imagem pronta para o HTML."""
+    try:
+        caminho_logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        with open(caminho_logo, "rb") as arquivo_logo:
+            conteudo_logo = base64.b64encode(arquivo_logo.read()).decode("ascii")
+        return (
+            f'<img class="{html_escape(classe_css, quote=True)}" '
+            f'src="data:image/png;base64,{conteudo_logo}" alt="Aproar">'
+        )
+    except (OSError, ValueError):
+        return f'<div class="{html_escape(classe_css, quote=True)} aproar-logo-fallback">APROAR</div>'
+
+
+def renderizar_cabecalho_torre():
+    logo = _html_logo_aproar("aproar-logo-main")
+    st.markdown(f"""
+        <header class="aproar-shell-header">
+            <div class="aproar-brand">
+                {logo}
+                <div>
+                    <div class="aproar-eyebrow">CENTRAL LOGÍSTICA</div>
+                    <div class="aproar-title">Torre de Controle</div>
+                    <div class="aproar-subtitle">Planejamento, monitoramento e execução em uma única operação</div>
+                </div>
+            </div>
+            <div class="aproar-header-meta">
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR}</div>
+                <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
+            </div>
+        </header>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_cabecalho_motorista():
+    hora = AGORA_REAL.hour
+    saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
+    logo = _html_logo_aproar("aproar-logo-driver")
+    st.markdown(f"""
+        <header class="aproar-driver-header">
+            <div class="aproar-driver-topline">
+                <div class="aproar-driver-brand">{logo}</div>
+                <div class="aproar-driver-live"><i></i> ROTA ATIVA</div>
+            </div>
+            <div class="aproar-driver-greeting">{saudacao}, <strong>Davi</strong></div>
+            <div class="aproar-driver-date">Rota oficial • {DATA_REF_ROTA_STR}</div>
+        </header>
+    """, unsafe_allow_html=True)
+
+
+def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=None, locais=None):
+    paradas = [
+        (indice, etapa) for indice, etapa in enumerate(route_steps or [])
+        if etapa.get("type") == "stop" and not (indice == 0)
+    ]
+    concluidas = sum(1 for _, etapa in paradas if etapa.get("is_concluded"))
+    proxima = next(((indice, etapa) for indice, etapa in paradas if not etapa.get("is_concluded")), None)
+    destino = str(proxima[1].get("destino", "Rota concluída")) if proxima else "Rota concluída"
+    chegada = str(proxima[1].get("dyn_chegada", "--:--")) if proxima else format_mins_to_time(final_dyn_min)
+    numero = (paradas.index(proxima) + 1) if proxima in paradas else len(paradas)
+    progresso = int(round((concluidas / max(1, len(paradas))) * 100))
+    link_gps = ""
+    endereco = str((enderecos or {}).get(destino, "") or "")
+    coordenadas = (locais or {}).get(destino, [None, None])
+    if endereco.startswith("http"):
+        link_gps = endereco
+    elif endereco:
+        link_gps = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco)}"
+    elif len(coordenadas) >= 2 and coordenadas[0] is not None:
+        link_gps = f"https://www.google.com/maps/dir/?api=1&destination={coordenadas[0]},{coordenadas[1]}"
+    botao_gps = (
+        f'<a class="driver-gps-link" href="{html_escape(link_gps, quote=True)}" target="_blank" rel="noopener">ABRIR GPS&nbsp; ↗</a>'
+        if link_gps else ""
+    )
+    st.markdown(f"""
+        <section class="aproar-driver-summary" id="rota">
+            <div class="aproar-driver-kpis">
+                <div class="driver-kpi"><span>PARADAS</span><strong>{len(paradas)}</strong><small>{concluidas} concluídas</small></div>
+                <div class="driver-kpi"><span>DISTÂNCIA</span><strong>{float(total_km or 0):.1f}</strong><small>quilômetros</small></div>
+                <div class="driver-kpi"><span>CONCLUSÃO</span><strong>{format_mins_to_time(final_dyn_min)}</strong><small>previsão atual</small></div>
+            </div>
+            <div class="driver-progress"><span style="width:{progresso}%"></span></div>
+            <div class="driver-next-stop">
+                <div class="driver-stop-index">{numero}</div>
+                <div class="driver-stop-copy">
+                    <span>PRÓXIMA PARADA</span>
+                    <strong>{html_escape(destino)}</strong>
+                    <small>Chegada prevista <b>{html_escape(chegada)}</b></small>
+                </div>
+                {botao_gps}
+            </div>
+        </section>
+    """, unsafe_allow_html=True)
+
 
 aplicar_estilo_customizado()
 
@@ -2476,16 +2783,17 @@ def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     valor_referencia = DATA_REF_ROTA_STR if rota_futura else hora_atual_str
 
     st.markdown(f'''
-    <div style="background: linear-gradient(145deg, rgba(18,21,48,0.8), rgba(13,16,37,0.9)); padding: 15px 25px; border-radius: 12px; border: 1px solid rgba(64,116,146,.3); display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; box-shadow: 0 8px 20px rgba(0,0,0,0.2);">
-       <div style="font-size: 14px; color: #8da0b8; text-align: left;">
-            {rotulo_referencia}<br>
-            <b style="color: #e4e8f4; font-size: 20px;">{valor_referencia}</b>
-       </div>
-       <div style="font-size: 14px; color: #8da0b8; text-align: right;">
-            <span style="font-size: 20px;">🏁</span> Término previsto:<br>
-            <b style="color: {cor_previsao}; font-size: 20px;">{nova_previsao_str}</b>
-       </div>
-    </div>
+        <div class="aproar-eta-card">
+            <div class="aproar-eta-side">
+                <div class="aproar-eta-label">{rotulo_referencia.replace('📅 ', '').replace('🕒 ', '')}</div>
+                <div class="aproar-eta-value">{valor_referencia}</div>
+            </div>
+            <div class="aproar-eta-route">→</div>
+            <div class="aproar-eta-side right">
+                <div class="aproar-eta-label">Término previsto</div>
+                <div class="aproar-eta-value" style="color:{cor_previsao};">{nova_previsao_str}</div>
+            </div>
+        </div>
     ''', unsafe_allow_html=True)
 
 # =====================================================================
@@ -2583,6 +2891,35 @@ def _separar_materiais_comprovante(valor):
             vistos.add(chave)
             itens.append(item)
     return itens
+
+
+def _dividir_material_quantidade(valor):
+    """Separa a quantidade inicial do nome sem confundir medidas como 2,5mm/20kg."""
+    item = re.sub(r"\s+", " ", str(valor or "")).strip(" •-\t")
+    if not item:
+        return "Material não informado", "—"
+
+    numero = r"(\d+(?:[\.,]\d+)?)"
+    unidades = r"(un(?:id(?:ades?)?)?|pçs?|pcs?|peças?|sacos?|caixas?|rolos?|metros?|m|kg|litros?|l|kits?|pares?)"
+
+    com_unidade = re.match(
+        rf"^{numero}\s+{unidades}\b\s*(?:[-xX:]\s*)?(.+)$",
+        item,
+        flags=re.IGNORECASE,
+    )
+    if com_unidade:
+        quantidade = f"{com_unidade.group(1)} {com_unidade.group(2)}"
+        return com_unidade.group(3).strip(), quantidade
+
+    com_separador = re.match(rf"^{numero}\s*[-xX:]\s*(.+)$", item)
+    if com_separador:
+        return com_separador.group(2).strip(), com_separador.group(1)
+
+    numero_e_texto = re.match(rf"^{numero}\s+([A-Za-zÀ-ÿ].+)$", item)
+    if numero_e_texto:
+        return numero_e_texto.group(2).strip(), numero_e_texto.group(1)
+
+    return item, "—"
 
 
 def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto, material_foto="GERAL", numero_foto=1):
@@ -2824,14 +3161,119 @@ if modo_davi:
         <style>
             [data-testid="stSidebar"] {display: none !important;}
             [data-testid="stHeader"] {display: none !important;}
-            .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 100% !important;}
+            [data-testid="stToolbar"] {display:none !important;}
+            [data-testid="stAppViewContainer"] {
+                background-image:
+                    radial-gradient(circle at 100% 0%, rgba(37,99,235,.17), transparent 25rem),
+                    linear-gradient(180deg,#070b14 0%,#080b14 100%) !important;
+            }
+            .main .block-container {
+                width:100%; max-width:720px !important;
+                padding:14px 14px 92px !important;
+            }
+            .aproar-driver-header {
+                position:relative; overflow:hidden; margin:0 0 12px; padding:18px 18px 20px;
+                border:1px solid rgba(96,165,250,.20); border-radius:22px;
+                background:linear-gradient(145deg,rgba(15,27,48,.98),rgba(9,14,27,.98));
+                box-shadow:0 20px 45px rgba(0,0,0,.26);
+            }
+            .aproar-driver-header::after {
+                content:''; position:absolute; width:190px; height:190px; border-radius:50%;
+                right:-82px; bottom:-125px; background:rgba(37,99,235,.24); filter:blur(8px);
+            }
+            .aproar-driver-topline { display:flex; align-items:center; justify-content:space-between; gap:12px; position:relative; z-index:1; }
+            .aproar-driver-brand { display:flex; align-items:center; gap:9px; color:#f8fafc; font-size:14px; font-weight:900; letter-spacing:.12em; }
+            .aproar-logo-driver {
+                display:block; width:112px; max-width:38vw; height:34px;
+                object-fit:contain; object-position:left center;
+                filter:drop-shadow(0 8px 16px rgba(0,0,0,.25));
+            }
+            .aproar-driver-live {
+                display:flex; align-items:center; gap:7px; color:#bbf7d0; font-size:10px; font-weight:800;
+                letter-spacing:.08em; padding:7px 9px; border:1px solid rgba(34,197,94,.22);
+                border-radius:999px; background:rgba(34,197,94,.08);
+            }
+            .aproar-driver-live i { width:7px; height:7px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 4px rgba(34,197,94,.10); }
+            .aproar-driver-greeting { position:relative; z-index:1; margin-top:24px; color:#f8fafc; font-size:27px; font-weight:700; letter-spacing:-.045em; }
+            .aproar-driver-greeting strong { color:#60a5fa; font-weight:800; }
+            .aproar-driver-date { position:relative; z-index:1; margin-top:5px; color:#94a3b8; font-size:12.5px; font-weight:600; }
+
+            .aproar-driver-summary { margin:6px 0 12px; }
+            .aproar-driver-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+            .driver-kpi {
+                min-width:0; padding:13px 11px 12px; border-radius:15px;
+                background:linear-gradient(145deg,rgba(18,27,47,.96),rgba(12,18,32,.98));
+                border:1px solid rgba(148,163,184,.15); box-shadow:0 10px 24px rgba(0,0,0,.15);
+            }
+            .driver-kpi span { display:block; color:#64748b; font-size:8.5px; font-weight:900; letter-spacing:.10em; }
+            .driver-kpi strong { display:block; margin-top:5px; color:#f8fafc; font-size:20px; line-height:1; font-weight:800; letter-spacing:-.04em; }
+            .driver-kpi small { display:block; overflow:hidden; margin-top:5px; color:#94a3b8; font-size:9.5px; white-space:nowrap; text-overflow:ellipsis; }
+            .driver-progress { height:4px; margin:10px 3px 12px; overflow:hidden; border-radius:999px; background:#172036; }
+            .driver-progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#22c55e); }
+            .driver-next-stop {
+                display:grid; grid-template-columns:42px minmax(0,1fr) auto; align-items:center; gap:12px;
+                padding:15px; border-radius:17px; border:1px solid rgba(96,165,250,.25);
+                background:linear-gradient(135deg,rgba(37,99,235,.12),rgba(15,23,42,.82));
+                box-shadow:0 12px 28px rgba(0,0,0,.17);
+            }
+            .driver-stop-index {
+                display:grid; place-items:center; width:42px; height:42px; border-radius:14px;
+                background:linear-gradient(145deg,#3b82f6,#1d4ed8); color:#fff; font-size:17px; font-weight:900;
+                box-shadow:0 9px 20px rgba(37,99,235,.30);
+            }
+            .driver-stop-copy { min-width:0; }
+            .driver-stop-copy > span { display:block; color:#60a5fa; font-size:9px; font-weight:900; letter-spacing:.11em; }
+            .driver-stop-copy > strong { display:block; overflow:hidden; margin-top:3px; color:#f8fafc; font-size:17px; white-space:nowrap; text-overflow:ellipsis; }
+            .driver-stop-copy small { display:block; margin-top:4px; color:#94a3b8; font-size:11px; }
+            .driver-stop-copy small b { color:#60a5fa; }
+            .driver-gps-link {
+                display:flex; align-items:center; justify-content:center; min-height:42px; padding:0 13px;
+                color:#fff !important; font-size:10.5px; font-weight:900; white-space:nowrap; text-decoration:none !important;
+                border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8);
+                box-shadow:0 9px 20px rgba(37,99,235,.28);
+            }
+
+            .aproar-section-anchor { scroll-margin-top:12px; }
+            .aproar-section-kicker { color:#60a5fa; font-size:10px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+            .aproar-section-title { margin:3px 0 2px; color:#f8fafc; font-size:21px; font-weight:800; letter-spacing:-.035em; }
+            .aproar-section-help { margin:0 0 10px; color:#94a3b8; font-size:12px; }
+            .aproar-eta-card { margin:10px 0 14px; }
+            [data-testid="stExpander"] { margin:6px 0 14px; box-shadow:0 12px 28px rgba(0,0,0,.16); }
+            [data-testid="stExpander"] details > summary { min-height:52px; font-weight:800; }
+            [data-testid="stCameraInput"] { border-radius:15px; overflow:hidden; }
+            [data-testid="stFileUploader"] { margin-top:4px; }
+            iframe[title*="streamlit_folium"] { min-height:390px; border:1px solid rgba(148,163,184,.16); }
+
+            .aproar-driver-bottom-nav {
+                position:fixed; z-index:999999; left:50%; bottom:10px; transform:translateX(-50%);
+                width:min(94%,680px); display:grid; grid-template-columns:repeat(3,1fr); gap:5px;
+                padding:7px; border:1px solid rgba(148,163,184,.18); border-radius:18px;
+                background:rgba(11,16,29,.94); box-shadow:0 18px 42px rgba(0,0,0,.48);
+                backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+            }
+            .aproar-driver-bottom-nav a {
+                display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+                min-height:50px; border-radius:12px; color:#94a3b8 !important; font-size:10px; font-weight:800;
+                text-decoration:none !important;
+            }
+            .aproar-driver-bottom-nav a:first-child { color:#bfdbfe !important; background:rgba(37,99,235,.14); }
+            .aproar-driver-bottom-nav b { font-size:18px; line-height:1; }
+
+            @media (max-width:380px) {
+                .main .block-container { padding-left:10px !important; padding-right:10px !important; }
+                .aproar-driver-header { padding:15px; }
+                .aproar-driver-greeting { font-size:24px; }
+                .driver-kpi { padding:12px 8px; }
+                .driver-kpi strong { font-size:18px; }
+                .driver-next-stop { grid-template-columns:40px minmax(0,1fr); }
+                .driver-gps-link { grid-column:1 / -1; }
+            }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown("<h2 style='text-align: center; color: #e4e8f4; margin-bottom: 0;'>📱 App do Motorista</h2>", unsafe_allow_html=True)
-    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px; color: #8da0b8;'>Rota oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
+    renderizar_cabecalho_motorista()
 
-    if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"): st.rerun()
+    if st.button("↻  ATUALIZAR ROTA", use_container_width=True): st.rerun()
 
     erro_checkin_mobile = ""
     try:
@@ -2928,6 +3370,7 @@ if modo_davi:
     
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
+    renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos_dict, locais_dict)
     renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
 
@@ -2936,7 +3379,13 @@ if modo_davi:
     # O cartão em que o motorista para vira a parada ativa do comprovante.
     # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
     # ---------------------------------------------------------------
-    st.markdown("<div id='comprovante'></div>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="aproar-section-anchor" id="comprovante">
+            <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
+            <div class="aproar-section-title">Comprovante digital</div>
+            <div class="aproar-section-help">Recebedor, materiais e fotos vinculados à parada ativa</div>
+        </div>
+    """, unsafe_allow_html=True)
 
     if "davi_comprovantes_estado" not in st.session_state:
         st.session_state["davi_comprovantes_estado"] = {}
@@ -2990,7 +3439,7 @@ if modo_davi:
         foco_comprovante = None
 
     if entregas_por_etapa:
-        with st.expander("📸 COMPROVANTE DA ENTREGA", expanded=True):
+        with st.expander("COMPROVANTE DA ENTREGA", expanded=True):
             st.caption("↔️ Não precisa escolher a demanda aqui. Deslize o roteiro e pare na parada desejada; ela é selecionada automaticamente.")
 
             if not persistencia_comprovantes_ok:
@@ -3217,8 +3666,13 @@ if modo_davi:
                         st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
 
 
-    st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro passo a passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
-    st.caption("Deslize para o lado para avançar pelas etapas da rota.")
+    st.markdown(f"""
+        <div class="aproar-section-anchor" id="roteiro">
+            <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
+            <div class="aproar-section-title">Roteiro passo a passo</div>
+            <div class="aproar-section-help">{total_km:.1f} km • deslize para avançar entre as etapas</div>
+        </div>
+    """, unsafe_allow_html=True)
     cartoes_mobile = []
     numero_parada_mobile = 1
 
@@ -3340,28 +3794,30 @@ if modo_davi:
         html_carrossel = """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
         <style>
+            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
             * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Inter, Arial, sans-serif; }
-            .barra { display:flex; justify-content:space-between; align-items:center; margin:0 4px 8px; color:#8da0b8; font-size:13px; }
+            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Manrope, Arial, sans-serif; }
+            h1, h2, h3, strong, .obra { font-family:Sora, Manrope, Arial, sans-serif; }
+            .barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 2px 10px; color:#94a3b8; font-size:11px; font-weight:700; }
             .resumo-topo { display:flex; align-items:center; gap:6px; }
-            .feitas { color:#86efac; font-weight:800; background:rgba(22,163,74,.13); border:1px solid rgba(34,197,94,.28); padding:6px 9px; border-radius:999px; }
-            .contador { color:#e4e8f4; font-weight:800; background:#151a31; border:1px solid #2b3654; padding:6px 10px; border-radius:999px; }
+            .feitas { color:#bbf7d0; font-weight:900; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.23); padding:6px 9px; border-radius:999px; }
+            .contador { color:#dbeafe; font-weight:900; background:rgba(37,99,235,.11); border:1px solid rgba(96,165,250,.24); padding:6px 10px; border-radius:999px; }
             .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
             .trilho::-webkit-scrollbar { display:none; }
-            .cartao { flex:0 0 calc(100% - 8px); height:430px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#121530,#0d1025); border:1px solid #303a59; border-radius:18px; box-shadow:0 10px 28px rgba(0,0,0,.32); }
-            .cartao.preparacao { border-color:#2563eb; }
-            .cartao.almoco { border-color:#f59e0b; }
-            .cartao.retorno { border-color:#16a34a; }
-            .cartao.feita { border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.18),0 10px 28px rgba(0,0,0,.32); }
+            .cartao { flex:0 0 calc(100% - 6px); height:432px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:20px; box-shadow:0 18px 38px rgba(0,0,0,.34); }
+            .cartao.preparacao { border-color:rgba(59,130,246,.48); }
+            .cartao.almoco { border-color:rgba(245,158,11,.48); }
+            .cartao.retorno { border-color:rgba(34,197,94,.48); }
+            .cartao.feita { border-color:rgba(34,197,94,.62); box-shadow:0 0 0 2px rgba(34,197,94,.12),0 18px 38px rgba(0,0,0,.34); }
             .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
-            .cartao.selecionada { box-shadow:0 0 0 2px rgba(37,99,235,.32),0 10px 28px rgba(0,0,0,.32); }
-            .topo-card { padding:18px 18px 13px; border-bottom:1px solid rgba(141,160,184,.18); }
+            .cartao.selecionada { box-shadow:0 0 0 2px rgba(59,130,246,.26),0 20px 42px rgba(0,0,0,.38); }
+            .topo-card { padding:18px 18px 14px; border-bottom:1px solid rgba(148,163,184,.13); background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 60%); }
             .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
             .almoco .selo { background:#92400e; color:#fef3c7; }
             .retorno .selo { background:#166534; color:#dcfce7; }
-            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; }
+            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; letter-spacing:-.035em; }
             .meta { color:#8da0b8; font-size:12px; line-height:1.45; }
-            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 8px; }
+            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 9px; scrollbar-width:thin; scrollbar-color:#334155 transparent; }
             .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
             .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
             .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
@@ -3385,13 +3841,13 @@ if modo_davi:
             .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
             .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
-            .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
-            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
+            .rodape-card { display:grid; gap:8px; padding:11px 14px 14px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
+            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid rgba(34,197,94,.48); background:rgba(22,163,74,.08); color:#bbf7d0; font-size:12.5px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
-            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
+            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
-            .controle { border:1px solid #303a59; background:#151a31; color:#e4e8f4; border-radius:10px; padding:10px 8px; font-weight:800; cursor:pointer; }
+            .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
             .controle:disabled { opacity:.35; }
             .pontos { display:flex; gap:5px; justify-content:center; max-width:130px; overflow:hidden; }
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
@@ -3518,7 +3974,13 @@ if modo_davi:
         st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
-    st.markdown("#### 🗺️ Visão geral da rota")
+    st.markdown("""
+        <div class="aproar-section-anchor" id="mapa-rota">
+            <div class="aproar-section-kicker">VISÃO GERAL</div>
+            <div class="aproar-section-title">Mapa da rota</div>
+            <div class="aproar-section-help">Trajeto, sequência e localização das paradas</div>
+        </div>
+    """, unsafe_allow_html=True)
     m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
     pontos_reais_mobile = []
     if p_saida in locais_dict:
@@ -3615,10 +4077,226 @@ if modo_davi:
         ).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
-    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos<br><span style='font-size:11px;'>Azul = trajeto • cinza pontilhado = marcador deslocado para ficar legível</span></div>", unsafe_allow_html=True)
-    st.divider()
-    st.caption("Central de Logística APROAR")
+    st.markdown("<div style='text-align:center;font-size:11px;margin:8px 0 18px;color:#64748b;'><b style='color:#94a3b8;'>LEGENDA</b> &nbsp; 🟡 Coleta &nbsp; 🟢 Entrega &nbsp; 🏁 Início<br>Azul = trajeto • cinza = ajuste visual do marcador</div>", unsafe_allow_html=True)
+    st.markdown("""
+        <nav class="aproar-driver-bottom-nav" aria-label="Navegação do motorista">
+            <a href="#rota"><b>⌂</b><span>Resumo</span></a>
+            <a href="#roteiro"><b>↗</b><span>Roteiro</span></a>
+            <a href="#mapa-rota"><b>⌖</b><span>Mapa</span></a>
+        </nav>
+    """, unsafe_allow_html=True)
+    st.caption("Central de Logística APROAR • rota sincronizada com a Torre")
     st.stop()
+
+# =====================================================================
+# DESIGN INDUSTRIAL MINIMAL — TORRE DE CONTROLE (SOMENTE COMPUTADOR)
+# =====================================================================
+st.markdown("""
+    <style>
+        :root {
+            --ap-bg:#080b0b;
+            --ap-bg-soft:#0c1010;
+            --ap-surface:#101414;
+            --ap-surface-2:#151a19;
+            --ap-surface-3:#1a201f;
+            --ap-line:rgba(226,232,240,.13);
+            --ap-line-strong:rgba(244,180,0,.42);
+            --ap-text:#f4f5f4;
+            --ap-muted:#8e9895;
+            --ap-blue:#2f75ff;
+            --ap-blue-2:#5b91ff;
+            --ap-green:#20c977;
+            --ap-amber:#f4b400;
+            --ap-red:#ef5f5f;
+            --ap-radius-sm:4px;
+            --ap-radius:6px;
+            --ap-radius-lg:8px;
+            --ap-shadow:0 14px 34px rgba(0,0,0,.22);
+        }
+
+        html, body, [data-testid="stAppViewContainer"] { background:#080b0b !important; }
+        [data-testid="stAppViewContainer"] {
+            background-image:linear-gradient(180deg,#090c0c 0%,#070909 100%) !important;
+        }
+        .main .block-container { max-width:1680px; padding:.85rem 1.25rem 4rem; }
+        [data-testid="stHeader"] {
+            background:rgba(8,11,11,.94) !important;
+            border-bottom:1px solid var(--ap-line); backdrop-filter:blur(14px);
+        }
+        [data-testid="stSidebar"] {
+            width:292px !important; min-width:292px !important;
+            background:#0a0d0d !important; border-right:1px solid var(--ap-line) !important;
+        }
+        [data-testid="stSidebar"] .block-container { padding:1rem .9rem 2rem; }
+
+        .aproar-shell-header {
+            margin:0 0 14px; padding:13px 4px 18px; overflow:visible;
+            background:transparent; border:0; border-bottom:1px solid var(--ap-line);
+            border-radius:0; box-shadow:none;
+        }
+        .aproar-shell-header::after { display:none; }
+        .aproar-brand { gap:20px; }
+        .aproar-logo-main { width:170px; height:52px; filter:none; }
+        .aproar-eyebrow { color:var(--ap-muted); font-size:10px; letter-spacing:.17em; }
+        .aproar-title {
+            margin-top:1px; color:#f6f7f6; font-size:24px; font-weight:700;
+            letter-spacing:.015em; text-transform:uppercase;
+        }
+        .aproar-subtitle { color:#a3aaa8; font-size:12px; }
+        .aproar-meta-chip {
+            min-height:42px; border-radius:5px; color:#d8dddb;
+            background:#101514; border:1px solid var(--ap-line);
+        }
+        .aproar-meta-chip.primary { color:#d8dddb; background:#101514; border-color:var(--ap-line); }
+        .aproar-meta-chip:last-child { color:#7be5a9; border-color:rgba(32,201,119,.26); }
+        .aproar-dot { background:var(--ap-green); }
+
+        .aproar-sidebar-brand {
+            margin:0 0 15px; padding:8px 8px 16px; gap:12px;
+            background:transparent; border:0; border-bottom:1px solid var(--ap-line); border-radius:0;
+        }
+        .aproar-logo-sidebar { width:118px; height:42px; flex-basis:118px; }
+        .aproar-sidebar-brand strong { color:#f4f5f4; font-size:12px; text-transform:uppercase; }
+        .aproar-sidebar-brand small { color:#737e7a; }
+        .aproar-sidebar-section {
+            margin:4px 8px 7px; color:#68716e; font-size:9px; font-weight:800;
+            letter-spacing:.16em; text-transform:uppercase;
+        }
+
+        [data-testid="stSidebar"] div[role="radiogroup"] { gap:4px; }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label {
+            min-height:44px; margin:0; padding:0 11px; border-left:3px solid transparent;
+            border-radius:4px; background:transparent; color:#aab2af;
+            transition:background .14s ease,color .14s ease,border-color .14s ease;
+        }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:#141817; color:#fff; }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
+            color:#ffd452; background:linear-gradient(90deg,rgba(244,180,0,.13),rgba(244,180,0,.035));
+            border-left-color:var(--ap-amber);
+        }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child { display:none; }
+        [data-testid="stSidebar"] div[role="radiogroup"] p { font-size:12px; font-weight:700; }
+
+        .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
+            min-height:40px; border-radius:4px !important; background:#121615 !important;
+            border:1px solid var(--ap-line) !important; box-shadow:none !important;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            transform:none; color:#ffd452 !important; border-color:rgba(244,180,0,.48) !important;
+        }
+        button[kind="primary"], [data-testid="baseButton-primary"] {
+            min-height:42px; border-radius:4px !important; color:#151000 !important;
+            background:var(--ap-amber) !important; box-shadow:none !important;
+        }
+        button[kind="primary"]:hover { transform:none; background:#ffc928 !important; box-shadow:none !important; }
+
+        div[data-testid="stMetric"], div[data-testid="stForm"],
+        div[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stExpander"],
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+            border-radius:6px !important; background:#101414 !important;
+            border:1px solid var(--ap-line) !important; box-shadow:none !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] { padding:14px !important; }
+        [data-testid="stAlert"] { border-radius:5px !important; }
+        .aproar-eta-card {
+            margin:9px 0 14px; border-radius:6px; background:#101414;
+            border:1px solid var(--ap-line); box-shadow:none;
+        }
+        .aproar-eta-value { font-size:21px; }
+        .aproar-eta-side.right .aproar-eta-value { color:var(--ap-green); }
+        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe {
+            border:1px solid var(--ap-line); border-radius:6px;
+        }
+        [data-testid="stExpander"] details > summary { min-height:46px; }
+        [data-testid="stExpander"] details > summary:hover { color:#ffd452; }
+
+        .aproar-industrial-heading {
+            display:flex; align-items:center; justify-content:space-between; gap:12px;
+            margin:0 0 10px; padding:0 0 10px; border-bottom:1px solid var(--ap-line);
+        }
+        .aproar-industrial-heading h2 {
+            margin:0; color:#f4f5f4 !important; font-size:18px; font-weight:700;
+            letter-spacing:.035em; text-transform:uppercase;
+        }
+        .aproar-industrial-heading span {
+            padding:4px 8px; color:#aab2af; font-size:10px; font-weight:800;
+            letter-spacing:.08em; border:1px solid var(--ap-line); border-radius:4px;
+        }
+        .aproar-stop-header {
+            display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px;
+            margin:-2px 0 9px; padding:8px 0 10px; border-bottom:1px solid var(--ap-line);
+        }
+        .aproar-stop-action {
+            padding:4px 7px; border-radius:4px; font-size:10px; font-weight:900;
+            letter-spacing:.08em;
+        }
+        .aproar-stop-action.coleta { color:#2b1d00; background:var(--ap-amber); }
+        .aproar-stop-action.entrega { color:#021e11; background:var(--ap-green); }
+        .aproar-stop-copy { min-width:0; }
+        .aproar-stop-copy strong { display:block; overflow:hidden; color:#f4f5f4; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+        .aproar-stop-copy small { display:block; margin-top:3px; color:#87918e; font-size:10px; }
+        .aproar-stop-number { color:#67716e; font-size:11px; font-weight:800; }
+        .aproar-material-table { margin:5px 0; overflow:hidden; border:1px solid var(--ap-line); border-radius:4px; }
+        .aproar-material-row {
+            display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px;
+            padding:7px 9px; background:#0b0f0f; border-bottom:1px solid rgba(226,232,240,.08);
+        }
+        .aproar-material-row:last-child { border-bottom:0; }
+        .aproar-material-row span { color:#d6dbd9; font-size:11px; }
+        .aproar-material-row strong { color:#f4f5f4; font-size:11px; white-space:nowrap; }
+        .aproar-unit-line {
+            display:flex; justify-content:space-between; gap:10px; margin-top:7px;
+            color:#7f8986; font-size:10px;
+        }
+        .aproar-unit-line strong { color:#cfd5d2; text-align:right; }
+        .aproar-industrial-summary {
+            display:grid; grid-template-columns:1.35fr .75fr; gap:10px; margin-top:10px;
+        }
+        .aproar-route-panel, .aproar-fleet-panel {
+            min-width:0; padding:13px 14px; background:#101414;
+            border:1px solid var(--ap-line); border-radius:6px;
+        }
+        .aproar-summary-title {
+            display:flex; align-items:center; justify-content:space-between; gap:10px;
+            padding-bottom:9px; border-bottom:1px solid var(--ap-line);
+        }
+        .aproar-summary-title strong { color:#f4f5f4; font-size:13px; text-transform:uppercase; }
+        .aproar-summary-title span { color:#5b91ff; font-size:9px; font-weight:800; letter-spacing:.08em; }
+        .aproar-summary-times { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:12px 0; }
+        .aproar-summary-times div:last-child { text-align:right; }
+        .aproar-summary-times span, .aproar-summary-times strong { display:block; }
+        .aproar-summary-times span { color:#7d8784; font-size:9px; text-transform:uppercase; }
+        .aproar-summary-times strong { margin-top:3px; color:#f4f5f4; font-size:20px; }
+        .aproar-summary-times div:last-child strong { color:var(--ap-green); }
+        .aproar-summary-line { width:100px; height:4px; background:#242b29; }
+        .aproar-summary-line i { display:block; width:62%; height:100%; background:var(--ap-blue); }
+        .aproar-summary-data { display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--ap-line); }
+        .aproar-summary-data div { padding:9px 8px 0; border-right:1px solid var(--ap-line); }
+        .aproar-summary-data div:first-child { padding-left:0; }
+        .aproar-summary-data div:last-child { border-right:0; }
+        .aproar-summary-data span, .aproar-summary-data strong { display:block; }
+        .aproar-summary-data span { color:#747e7b; font-size:8px; text-transform:uppercase; }
+        .aproar-summary-data strong { margin-top:4px; color:#dce1df; font-size:11px; }
+        .aproar-fleet-body { padding-top:12px; }
+        .aproar-fleet-body span, .aproar-fleet-body strong, .aproar-fleet-body small { display:block; }
+        .aproar-fleet-body > span { color:#737d7a; font-size:9px; text-transform:uppercase; }
+        .aproar-fleet-body strong { margin-top:5px; color:#f4f5f4; font-size:14px; }
+        .aproar-fleet-body small { margin-top:3px; color:#8b9592; }
+        .aproar-fleet-cost { margin-top:12px; padding-top:10px; border-top:1px solid var(--ap-line); }
+        .aproar-fleet-cost b { color:#ffd452; font-size:15px; }
+
+        ::-webkit-scrollbar-track { background:#080b0b; }
+        ::-webkit-scrollbar-thumb { background:#2c3331; border-color:#080b0b; border-radius:2px; }
+        ::-webkit-scrollbar-thumb:hover { background:#f4b400; }
+
+        @media (max-width:1100px) {
+            [data-testid="stSidebar"] { width:250px !important; min-width:250px !important; }
+            .aproar-title { font-size:20px; }
+            .aproar-logo-main { width:142px; }
+            .aproar-industrial-summary { grid-template-columns:1fr; }
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 # =====================================================================
 # TORRE DE CONTROLE (PC)
@@ -4789,6 +5467,15 @@ def _obter_componente_drag_rota():
     os.makedirs(pasta, exist_ok=True)
     index_path = os.path.join(pasta, "index.html")
     frontend = '<!doctype html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n*{box-sizing:border-box}\nhtml,body{margin:0;padding:0;height:100vh;overflow:hidden;background:#070913;color:#e5e7eb;font-family:Inter,Arial,sans-serif}\n#app{height:100vh;overflow-y:auto;overflow-x:hidden;padding:0 6px 0 0;scrollbar-gutter:stable}\n#app::-webkit-scrollbar{width:9px}\n#app::-webkit-scrollbar-track{background:#0b1020;border-radius:8px}\n#app::-webkit-scrollbar-thumb{background:#475569;border-radius:8px;border:2px solid #0b1020}\n#app::-webkit-scrollbar-thumb:hover{background:#64748b}\n.aviso{font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.45}\n.secao{border:1px solid #263452;background:#0b1020;border-radius:12px;margin:0 0 10px;overflow:hidden}\n.secao-head{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:#11182d;border-bottom:1px solid #263452;font-size:13px}\n.secao-head span{color:#9fb1ca;font-weight:700}\n.zona{min-height:62px;padding:8px;transition:.12s ease}\n.zona.over{outline:2px dashed #60a5fa;outline-offset:-4px;background:#0f1c37}\n.demanda{padding:9px 10px;margin:5px 0;border-radius:9px;border:1px solid #334155;background:#10182b;cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.18);user-select:none}\n.demanda:active{cursor:grabbing}\n.demanda.dragging{opacity:.28}\n.demanda.coleta{border-left:5px solid #f59e0b}\n.demanda.entrega{border-left:5px solid #22c55e}\n.top{display:flex;align-items:center;gap:7px;font-size:12px}\n.handle{font-size:18px;color:#93c5fd;line-height:1}\n.manual{margin-left:auto;background:#1d4ed8;color:#dbeafe;padding:2px 6px;border-radius:999px;font-size:10px}\n.obra{font-size:12.5px;font-weight:800;margin-top:3px;color:#f1f5f9}\n.mat{font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.vazio{font-size:11px;color:#64748b;text-align:center;padding:12px;border:1px dashed #334155;border-radius:8px}\n</style>\n</head>\n<body><div id="app"></div>\n<script>\nconst app=document.getElementById(\'app\');\nlet arrastado=null;\nlet argsAtuais={};\nfunction post(type, extra={}){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type:type},extra),\'*\');}\nfunction ready(){post(\'streamlit:componentReady\',{apiVersion:1});}\nfunction setValue(value){post(\'streamlit:setComponentValue\',{value:value,dataType:\'json\'});}\nfunction setHeight(){\n  const desejada=Number(argsAtuais.requested_height||0);\n  const altura=Math.max(360,desejada>0?desejada:720);\n  post(\'streamlit:setFrameHeight\',{height:altura});\n}\nfunction el(tag, cls, texto){const n=document.createElement(tag);if(cls)n.className=cls;if(texto!==undefined&&texto!==null)n.textContent=String(texto);return n;}\nfunction habilitarCard(card){\n  card.addEventListener(\'dragstart\',e=>{arrastado=card;card.classList.add(\'dragging\');e.dataTransfer.effectAllowed=\'move\';try{e.dataTransfer.setData(\'text/plain\',card.dataset.id||\'demanda\');}catch(_){}});\n  card.addEventListener(\'dragend\',()=>{card.classList.remove(\'dragging\');document.querySelectorAll(\'.zona\').forEach(z=>z.classList.remove(\'over\'));arrastado=null;});\n}\nfunction habilitarZona(zona){\n  zona.addEventListener(\'dragenter\',e=>{e.preventDefault();zona.classList.add(\'over\');});\n  zona.addEventListener(\'dragover\',e=>{e.preventDefault();zona.classList.add(\'over\');e.dataTransfer.dropEffect=\'move\';});\n  zona.addEventListener(\'dragleave\',e=>{if(!zona.contains(e.relatedTarget))zona.classList.remove(\'over\');});\n  zona.addEventListener(\'drop\',e=>{\n    e.preventDefault();e.stopPropagation();zona.classList.remove(\'over\');if(!arrastado)return;\n    const outros=[...zona.querySelectorAll(\'.demanda\')].filter(x=>x!==arrastado);let indice=outros.length;\n    for(let i=0;i<outros.length;i++){const r=outros[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){indice=i;break;}}\n    zona.querySelectorAll(\'.vazio\').forEach(v=>v.remove());\n    if(indice<outros.length)zona.insertBefore(arrastado,outros[indice]);else zona.appendChild(arrastado);\n    setValue({nonce:String(Date.now())+\'-\'+Math.random().toString(36).slice(2),demanda_id:arrastado.dataset.id||\'\',acao:arrastado.dataset.acao||\'\',destino:zona.dataset.destino||\'\',ordem:indice});\n    setTimeout(setHeight,20);\n  });\n}\nfunction render(args){\n  argsAtuais=args||{};app.replaceChildren();\n  app.appendChild(el(\'div\',\'aviso\',\'Arraste pelo ⠿. Solte dentro de outra parada para mudar o local da ação; solte acima ou abaixo para mudar a ordem. Role dentro deste painel para ver todas as paradas. O Trello não é alterado.\'));\n  const secoes=((argsAtuais.payload||{}).secoes)||[];\n  secoes.forEach(sec=>{\n    const section=el(\'section\',\'secao\');const head=el(\'div\',\'secao-head\');head.appendChild(el(\'b\',\'\',sec.rotulo||\'\'));head.appendChild(el(\'span\',\'\',sec.local||\'\'));section.appendChild(head);\n    const zona=el(\'div\',\'zona\');zona.dataset.destino=sec.local||\'\';const cards=sec.cards||[];\n    if(!cards.length)zona.appendChild(el(\'div\',\'vazio\',\'Solte uma demanda aqui\'));\n    cards.forEach(c=>{const card=el(\'div\',\'demanda \'+(c.acao===\'COLETAR\'?\'coleta\':\'entrega\'));card.draggable=true;card.dataset.id=c.id||\'\';card.dataset.acao=c.acao||\'\';const top=el(\'div\',\'top\');top.appendChild(el(\'span\',\'handle\',\'⠿\'));top.appendChild(el(\'b\',\'\',c.acao===\'COLETAR\'?\'📦 COLETA\':\'📬 ENTREGA\'));if(c.manual)top.appendChild(el(\'span\',\'manual\',\'manual\'));card.appendChild(top);card.appendChild(el(\'div\',\'obra\',c.obra||\'Demanda\'));card.appendChild(el(\'div\',\'mat\',c.materiais||\'\'));habilitarCard(card);zona.appendChild(card);});\n    habilitarZona(zona);section.appendChild(zona);app.appendChild(section);\n  });\n  setTimeout(setHeight,0);\n}\nwindow.addEventListener(\'message\',e=>{const d=e.data||{};if(d.type===\'streamlit:render\')render(d.args||{});});\nready();\n</script></body></html>\n'
+    frontend = frontend.replace(
+        "<style>\n",
+        "<style>\n@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');\n",
+        1,
+    ).replace(
+        "font-family:Inter,Arial,sans-serif",
+        "font-family:Manrope,Arial,sans-serif",
+        1,
+    )
     with open(index_path, "w", encoding="utf-8") as arquivo:
         arquivo.write(frontend)
 
@@ -7019,10 +7706,7 @@ def loop_automacoes_background(processar_rastreador=True):
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
-try:
-    with open("logo.png", "rb") as image_file: encoded_string = base64.b64encode(image_file.read()).decode()
-    st.markdown(f'<div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;"><img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;"><h1 style="margin: 0; padding: 0; line-height: 1.2; color: #e4e8f4;">TORRE DE CONTROLE LOGÍSTICO</h1></div>', unsafe_allow_html=True)
-except: st.title("🚚 TORRE DE CONTROLE LOGÍSTICO")
+renderizar_cabecalho_torre()
 
 # NAVEGAÇÃO PRIMEIRO: nenhuma consulta de rede/banco deve bloquear a troca de módulo.
 MODULOS_PRINCIPAIS = [
@@ -7033,14 +7717,17 @@ MODULOS_PRINCIPAIS = [
     "📍 Endereços",
     "🚗 Frota e custos",
 ]
-if hasattr(st, "segmented_control"):
-    modulo_principal = st.segmented_control(
-        "Módulo", MODULOS_PRINCIPAIS, default=MODULOS_PRINCIPAIS[0],
-        key="modulo_principal", label_visibility="collapsed",
-    )
-else:
+with st.sidebar:
+    logo_sidebar = _html_logo_aproar("aproar-logo-sidebar")
+    st.markdown(f"""
+        <div class="aproar-sidebar-brand">
+            {logo_sidebar}
+            <div><strong>Painel de operações</strong><small>Central logística</small></div>
+        </div>
+        <div class="aproar-sidebar-section">Navegação</div>
+    """, unsafe_allow_html=True)
     modulo_principal = st.radio(
-        "Módulo", MODULOS_PRINCIPAIS, index=0, horizontal=True,
+        "Módulo", MODULOS_PRINCIPAIS, index=0,
         key="modulo_principal", label_visibility="collapsed",
     )
 modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
@@ -7048,7 +7735,7 @@ modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
-    st.header("⚙️ Painel de operações")
+    st.markdown('<div class="aproar-sidebar-section">Sincronização e ajustes</div>', unsafe_allow_html=True)
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     # Sincronização automática leve: Trello + baixas + Teams a cada 2 minutos.
     # O primeiro carregamento NÃO consulta o Trello, para a página abrir rápido.
@@ -8712,9 +9399,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 )
                 st.rerun()
 
-        col_esq, col_dir = st.columns([1.2, 0.8])
-        with col_esq:
-            st.subheader(f"📋 Roteiro de viagem do Davi — {DATA_REF_ROTA_STR}")
+        col_mapa, col_paradas = st.columns([1.58, 0.92])
+        with col_paradas:
+            st.markdown(
+                f'<div class="aproar-industrial-heading"><h2>Paradas</h2>'
+                f'<span>{sum(1 for etapa in route_steps if etapa.get("type") == "stop")} NA ROTA</span></div>',
+                unsafe_allow_html=True,
+            )
             st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
@@ -8892,30 +9583,48 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
-
-                        cor_torre = "#22c55e" if not eh_coleta_torre else "#f59e0b"
-                        fundo_torre = "rgba(34,197,94,.10)" if not eh_coleta_torre else "rgba(245,158,11,.10)"
-                        texto_cor_torre = "#bbf7d0" if not eh_coleta_torre else "#fde68a"
                         obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
+                        campo_unidade_torre = 'Origem' if eh_coleta_torre else 'Destino'
+                        unidade_torre = canonicalizar_ponto_rota(
+                            t.get(campo_unidade_torre, '') or step.get('destino', '')
+                        )
+                        unidade_torre_html = html_escape(str(unidade_torre or 'Unidade não informada'))
+                        classe_acao_torre = "coleta" if eh_coleta_torre else "entrega"
 
                         with st.container(border=True):
                             st.markdown(
                                 f"""
-                                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;
-                                            padding:9px 11px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
-                                            border-radius:9px;background:{fundo_torre};">
-                                    <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
-                                    <div style="font-weight:800;color:#e4e8f4;text-align:right;">🏗️ {obra_torre_html}</div>
+                                <div class="aproar-stop-header">
+                                    <span class="aproar-stop-action {classe_acao_torre}">{icone_torre} {rotulo_torre}</span>
+                                    <div class="aproar-stop-copy">
+                                        <strong>{obra_torre_html}</strong>
+                                        <small>UNIDADE · {unidade_torre_html}</small>
+                                    </div>
+                                    <span class="aproar-stop-number">#{indice_demanda:02d}</span>
                                 </div>
                                 """,
                                 unsafe_allow_html=True,
                             )
 
                             if materiais_torre:
+                                linhas_materiais_torre = []
                                 for material_torre in materiais_torre:
-                                    st.markdown(f"• {material_torre}")
+                                    nome_material_torre, quantidade_material_torre = _dividir_material_quantidade(material_torre)
+                                    linhas_materiais_torre.append(
+                                        f'<div class="aproar-material-row">'
+                                        f'<span>{html_escape(nome_material_torre)}</span>'
+                                        f'<strong>{html_escape(quantidade_material_torre)}</strong></div>'
+                                    )
+                                st.markdown(
+                                    '<div class="aproar-material-table">' + ''.join(linhas_materiais_torre) + '</div>',
+                                    unsafe_allow_html=True,
+                                )
                             else:
-                                st.caption("Material não informado")
+                                st.markdown(
+                                    '<div class="aproar-material-table"><div class="aproar-material-row">'
+                                    '<span>Material não informado</span><strong>—</strong></div></div>',
+                                    unsafe_allow_html=True,
+                                )
 
                             if concluida:
                                 st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
@@ -9024,10 +9733,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
             compartilhamento_rota()
 
-        with col_dir:
-            st.subheader("🗺️ Mapa da rota")
+        with col_mapa:
+            st.markdown(
+                '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO EM TEMPO REAL</span></div>',
+                unsafe_allow_html=True,
+            )
             # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
+            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="CartoDB dark_matter")
 
             # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
             # existem somente para impedir que um número fique escondido por outro.
@@ -9171,6 +9883,47 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             st_folium(
                 m, height=540, use_container_width=True, returned_objects=[],
                 key=f"mapa_rota_{DATA_REF_ROTA_STR}",
+            )
+            total_paradas_industrial = sum(
+                1 for etapa in route_steps
+                if etapa.get('type') == 'stop' and etapa.get('destino') != p_saida
+            )
+            distancia_industrial = f"{float(total_km):.1f}".replace('.', ',')
+            veiculo_industrial = html_escape(veiculo_selecionado.split('(')[0].strip())
+            if valor_km_veiculo_proprio is not None:
+                custo_industrial = float(total_km) * float(valor_km_veiculo_proprio)
+                custo_industrial_txt = f"R$ {custo_industrial:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+            else:
+                custo_industrial_txt = "Frota da empresa"
+
+            st.markdown(
+                f"""
+                <div class="aproar-industrial-summary">
+                    <section class="aproar-route-panel">
+                        <div class="aproar-summary-title"><strong>Rota 01 — Davi</strong><span>PLANEJADA</span></div>
+                        <div class="aproar-summary-times">
+                            <div><span>Horário atual</span><strong>{hora_atual_str}</strong></div>
+                            <div class="aproar-summary-line"><i></i></div>
+                            <div><span>Término previsto</span><strong>{nova_previsao_str}</strong></div>
+                        </div>
+                        <div class="aproar-summary-data">
+                            <div><span>Início</span><strong>{html_escape(hora_inicio_real)}</strong></div>
+                            <div><span>Expediente</span><strong>07:00–17:00</strong></div>
+                            <div><span>Paradas</span><strong>{total_paradas_industrial}</strong></div>
+                            <div><span>Distância</span><strong>{distancia_industrial} km</strong></div>
+                        </div>
+                    </section>
+                    <section class="aproar-fleet-panel">
+                        <div class="aproar-summary-title"><strong>Frota</strong><span>EM ROTA</span></div>
+                        <div class="aproar-fleet-body">
+                            <span>Motorista</span><strong>Davi · {veiculo_industrial}</strong>
+                            <small>Rota sincronizada com a central</small>
+                            <div class="aproar-fleet-cost"><span>Custeio estimado</span><b>{custo_industrial_txt}</b></div>
+                        </div>
+                    </section>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
             legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
             st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
