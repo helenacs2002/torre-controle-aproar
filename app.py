@@ -389,7 +389,7 @@ def renderizar_cabecalho_torre():
                 </div>
             </div>
             <div class="aproar-header-meta">
-                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR}</div>
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V3</div>
                 <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
             </div>
         </header>
@@ -4100,13 +4100,13 @@ st.markdown("""
             --ap-surface-2:#151a19;
             --ap-surface-3:#1a201f;
             --ap-line:rgba(226,232,240,.13);
-            --ap-line-strong:rgba(244,180,0,.42);
+            --ap-line-strong:rgba(113,149,196,.38);
             --ap-text:#f4f5f4;
             --ap-muted:#8e9895;
             --ap-blue:#4779b9;
             --ap-blue-2:#7195c4;
             --ap-green:#3aa978;
-            --ap-amber:#c89b35;
+            --ap-amber:#8192a6;
             --ap-red:#c96767;
             --ap-radius-sm:4px;
             --ap-radius:6px;
@@ -4174,7 +4174,8 @@ st.markdown("""
             color:#eef2f1; background:linear-gradient(90deg,rgba(71,121,185,.14),rgba(71,121,185,.025));
             border-left-color:var(--ap-blue-2);
         }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child { display:none; }
+        [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child,
+        [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child { display:none !important; }
         [data-testid="stSidebar"] div[role="radiogroup"] p { font-size:12px; font-weight:700; }
 
         .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
@@ -4184,7 +4185,8 @@ st.markdown("""
         .stButton > button:hover, .stDownloadButton > button:hover {
             transform:none; color:#d9e5f3 !important; border-color:rgba(113,149,196,.46) !important;
         }
-        button[kind="primary"], [data-testid="baseButton-primary"] {
+        button[kind="primary"], [data-testid="baseButton-primary"],
+        section[data-testid="stMain"] .stButton > button[kind="primary"] {
             min-height:42px; border-radius:4px !important; color:#f5f7f6 !important;
             background:#315d92 !important; border:1px solid #4779b9 !important; box-shadow:none !important;
         }
@@ -4308,7 +4310,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 2
+ROTA_ENGINE_VERSION = 3
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -4558,6 +4560,13 @@ def carregar_rota_salva_para_sessao(data_rota):
         st.session_state['horario_matriz_rota'] = res_rota[6] or ""
         if st.session_state['route_steps']:
             st.session_state['p_saida'] = st.session_state['route_steps'][0].get('destino', 'ESCRITÓRIO')
+            # Uma rota persistida por um motor antigo pode conter o mesmo endereço
+            # em várias paradas (por exemplo, BARRA -> FIEC -> BARRA). Não a tratamos
+            # como planejamento definitivo: o módulo Roteiro usará este sinal para
+            # carregar as demandas e reconstruí-la com uma visita por local.
+            st.session_state['_rota_locais_repetidos_carregada'] = detectar_locais_repetidos_rota(
+                st.session_state['route_steps'], st.session_state['p_saida']
+            )
             _ultima_saida = str(st.session_state['route_steps'][-1].get('saida', '') or '')
             try:
                 h, m = map(int, _ultima_saida.split(':')[:2])
@@ -4938,6 +4947,24 @@ def canonicalizar_ponto_rota(nome):
             
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
+
+
+def detectar_locais_repetidos_rota(route_steps, ponto_saida=""):
+    """Lista paradas físicas repetidas, ignorando preparação e retorno à base."""
+    vistos = set()
+    repetidos = []
+    for step in route_steps or []:
+        if not isinstance(step, dict) or step.get("type") != "stop":
+            continue
+        local = canonicalizar_ponto_rota(step.get("destino", ""))
+        if not local or local in {"DESCONHECIDO", "NAN", "NONE"}:
+            continue
+        # Uma eventual parada intermediária na própria base também é erro lógico,
+        # salvo a preparação/retorno, que usam outros tipos de etapa.
+        if local in vistos and local not in repetidos:
+            repetidos.append(local)
+        vistos.add(local)
+    return repetidos
 
 
 # =====================================================================
@@ -8612,6 +8639,25 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         carregar_rota_salva_para_sessao(DATA_REF_ROTA_STR)
 
     df_ativos = st.session_state.demandas.copy()
+    _locais_repetidos_rota = detectar_locais_repetidos_rota(
+        st.session_state.get('route_steps') or [], ponto_saida
+    )
+    st.session_state['_rota_locais_repetidos_carregada'] = _locais_repetidos_rota
+
+    # No primeiro acesso, a rota salva chega antes do quadro do Trello. Se ela foi
+    # criada pelo motor antigo e repete locais, hidratamos as demandas pelo cache do
+    # Supabase agora mesmo para que o recálculo V3 não dependa de um clique manual.
+    _chave_hidratacao_repetidos = f"_hidratou_repetidos_{DATA_REF_ROTA_STR}"
+    if (
+        _locais_repetidos_rota
+        and isinstance(df_ativos, pd.DataFrame)
+        and df_ativos.empty
+        and not st.session_state.get(_chave_hidratacao_repetidos)
+    ):
+        st.session_state[_chave_hidratacao_repetidos] = True
+        if sincronizar_demandas(forcar=False, geocodificar=False, somente_cache=True):
+            df_ativos = st.session_state.demandas.copy()
+
     ajustes_manuais = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
     if not df_ativos.empty:
         df_ativos["Origem"] = df_ativos["Origem"].apply(canonicalizar_ponto_rota)
@@ -8717,24 +8763,26 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
 
-    # Rotas gravadas por uma versão anterior são recalculadas uma única vez
-    # quando as demandas ativas já estiverem disponíveis. Isso aplica a nova
-    # consolidação sem exigir que o operador descubra o botão manualmente.
+    # Rotas gravadas por uma versão anterior — ou que ainda tragam o mesmo local
+    # em várias paradas — são recalculadas uma única vez por data quando as
+    # demandas ativas estiverem disponíveis.
     versao_rota_salva = max(
         [int(step.get('_motor_rota_versao', 0) or 0) for step in (st.session_state.get('route_steps') or [])]
         + [0]
     )
     if (
         rota_ativa_hoje
-        and versao_rota_salva < ROTA_ENGINE_VERSION
+        and (versao_rota_salva < ROTA_ENGINE_VERSION or bool(_locais_repetidos_rota))
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and not st.session_state.get('_motor_rota_v2_solicitado')
+        and st.session_state.get('_motor_rota_v3_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v2_solicitado'] = True
+        st.session_state['_motor_rota_v3_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
+        _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ A rota foi reorganizada para consolidar cada unidade em uma única visita sempre que possível.'
+            '✅ Motor V3 aplicado. A rota foi reorganizada para consolidar cada local '
+            f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
     # Recebe um movimento do editor arrastável e o transforma em regra persistente.
@@ -9255,7 +9303,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais)
             if route_steps:
                 route_steps[0]['_motor_rota_versao'] = ROTA_ENGINE_VERSION
-            st.session_state.pop('_motor_rota_v2_solicitado', None)
+            st.session_state['_rota_locais_repetidos_carregada'] = detectar_locais_repetidos_rota(
+                route_steps, ponto_saida
+            )
 
             # Recalcula a quilometragem a partir das etapas que realmente ficaram
             # na rota; uma antiga "PARADA: ESCRITÓRIO" absorvida pela preparação
@@ -9930,7 +9980,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-                    fundo_marcador = "linear-gradient(90deg, #c89b35 0 50%, #3aa978 50% 100%)" if (tem_coleta and tem_entrega) else "#c89b35" if tem_coleta else "#3aa978"
+                    fundo_marcador = "linear-gradient(90deg, #4779b9 0 50%, #3aa978 50% 100%)" if (tem_coleta and tem_entrega) else "#4779b9" if tem_coleta else "#3aa978"
                     popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
                     folium.Marker(
                         [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
