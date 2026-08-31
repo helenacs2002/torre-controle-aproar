@@ -4482,6 +4482,61 @@ st.markdown("""
         .aproar-fleet-cost { margin-top:12px; padding-top:10px; border-top:1px solid var(--ap-line); }
         .aproar-fleet-cost b { color:#cbd9e9; font-size:15px; }
 
+        /* Roteiro do Davi — hierarquia visual limpa */
+        .aproar-route-overview {
+            margin:0 0 12px; overflow:hidden; background:#0d1425;
+            border:1px solid var(--ap-line); border-radius:7px;
+        }
+        .aproar-route-overview-head {
+            display:flex; align-items:center; justify-content:space-between; gap:14px;
+            padding:11px 14px; background:#0f172a; border-bottom:1px solid var(--ap-line);
+        }
+        .aproar-route-overview-head strong {
+            color:#f8fafc; font-size:13px; font-weight:800; letter-spacing:.025em; text-transform:uppercase;
+        }
+        .aproar-route-overview-head small { display:block; margin-top:2px; color:#95a3ba; font-size:10px; }
+        .aproar-route-state {
+            flex:0 0 auto; padding:5px 9px; border-radius:999px; font-size:9px;
+            font-weight:900; letter-spacing:.07em; text-transform:uppercase;
+        }
+        .aproar-route-state.ok { color:#86efac; background:rgba(34,197,94,.09); border:1px solid rgba(34,197,94,.30); }
+        .aproar-route-state.warn { color:#fde68a; background:rgba(245,158,11,.09); border:1px solid rgba(245,158,11,.30); }
+        .aproar-route-state.danger { color:#fca5a5; background:rgba(239,68,68,.09); border:1px solid rgba(239,68,68,.30); }
+        .aproar-route-kpis { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:0; background:rgba(148,163,184,.10); }
+        .aproar-route-kpi { min-width:0; padding:11px 12px; background:#0d1425; }
+        .aproar-route-kpi + .aproar-route-kpi { border-left:1px solid var(--ap-line); }
+        .aproar-route-kpi span { display:block; color:#8492a8; font-size:8px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+        .aproar-route-kpi strong { display:block; margin-top:4px; overflow:hidden; color:#edf2f7; font-size:15px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
+        .aproar-route-kpi strong.good { color:#4ade80; }
+        .aproar-route-kpi strong.warn { color:#fbbf24; }
+        .aproar-route-kpi small { display:block; margin-top:2px; overflow:hidden; color:#8c99ad; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+        .aproar-route-statusline {
+            display:flex; align-items:flex-start; gap:9px; padding:9px 13px;
+            color:#cbd5e1; font-size:10.5px; line-height:1.42; border-top:1px solid var(--ap-line);
+        }
+        .aproar-route-statusline i { width:7px; height:7px; margin-top:4px; flex:0 0 7px; border-radius:50%; background:#4ade80; }
+        .aproar-route-statusline.warn i { background:#fbbf24; }
+        .aproar-route-statusline.danger i { background:#f87171; }
+        .aproar-route-toolbar-note {
+            margin:0 0 10px; padding:8px 10px; color:#b9c4d5; font-size:10px; line-height:1.4;
+            background:#0b1220; border:1px solid var(--ap-line); border-radius:5px;
+        }
+        .aproar-route-toolbar-note b { color:#e7edf6; }
+        .aproar-compact-note {
+            margin:8px 0 10px; padding:8px 10px; color:#cbd5e1; font-size:10.5px; line-height:1.4;
+            background:rgba(37,99,235,.07); border:1px solid rgba(59,130,246,.22); border-radius:5px;
+        }
+        .aproar-special-step {
+            display:flex; align-items:center; justify-content:space-between; gap:10px; margin:7px 0; padding:9px 11px;
+            color:#d9e1ec; font-size:11px; background:#0b1220; border:1px solid var(--ap-line); border-radius:5px;
+        }
+        .aproar-special-step strong { color:#f4f7fb; }
+        .aproar-management-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:0 0 12px; }
+        .aproar-management-item { padding:10px 11px; background:#0f1526; border:1px solid var(--ap-line); border-radius:5px; }
+        .aproar-management-item span { display:block; color:#8492a8; font-size:8px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
+        .aproar-management-item strong { display:block; margin-top:4px; color:#edf2f7; font-size:12px; }
+        .aproar-management-item small { display:block; margin-top:3px; color:#8c99ad; font-size:9px; }
+
         /* Legendas e subtextos brancos — somente na plataforma do computador. */
         [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
         .stCaption, .stCaption p,
@@ -4506,6 +4561,17 @@ st.markdown("""
             .aproar-title { font-size:20px; }
             .aproar-logo-main { width:142px; }
             .aproar-industrial-summary { grid-template-columns:1fr; }
+            .aproar-route-kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }
+            .aproar-route-kpi:nth-child(5) { border-left:0; border-top:1px solid var(--ap-line); }
+            .aproar-route-kpi:nth-child(n+6) { border-top:1px solid var(--ap-line); }
+            .aproar-management-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+        }
+        @media (max-width:760px) {
+            .aproar-route-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .aproar-route-kpi:nth-child(odd) { border-left:0; }
+            .aproar-route-kpi:nth-child(n+3) { border-top:1px solid var(--ap-line); }
+            .aproar-route-overview-head { align-items:flex-start; }
+            .aproar-management-grid { grid-template-columns:1fr; }
         }
     </style>
 """, unsafe_allow_html=True)
@@ -9990,6 +10056,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if demanda_id_fora:
                     demandas_fora_rota[demanda_id_fora] = tarefa_fora
 
+        qtd_adiadas = 0
+        qtd_acordo = 0
+        qtd_capacidade = 0
+        partes_limite = []
+        df_adiadas_compacto = pd.DataFrame()
         if demandas_fora_rota:
             demandas_adiadas = list(demandas_fora_rota.values())
             qtd_adiadas = len(demandas_adiadas)
@@ -9998,7 +10069,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
             )
             qtd_capacidade = qtd_adiadas - qtd_acordo
-            partes_limite = []
             if qtd_capacidade:
                 partes_limite.append(
                     f"{qtd_capacidade} {plural_pt(qtd_capacidade, 'não cabe', 'não cabem')} com segurança até 17h"
@@ -10007,38 +10077,23 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 partes_limite.append(
                     f"{qtd_acordo} {plural_pt(qtd_acordo, 'foi autorizado', 'foram autorizadas')} para o próximo dia"
                 )
-            st.warning(
-                "⏰ **Capacidade real do expediente:** " + "; ".join(partes_limite) + ". "
-                "A rota exibida contém somente o que é possível planejar dentro do turno."
-            )
-            with st.expander(
-                f"⏭️ FORA DA ROTA ATÉ 17H · {qtd_adiadas} "
-                f"{plural_pt(qtd_adiadas, 'demanda', 'demandas')} — ver detalhes",
-                expanded=False,
-            ):
-                df_adiadas_compacto = pd.DataFrame([
-                    {
-                        "Demanda": str(t.get('Obra', 'Demanda sem nome') or 'Demanda sem nome'),
-                        "Prazo": str(t.get('Urgência', 'sem prazo') or 'sem prazo'),
-                        "Percurso": (
-                            f"{canonicalizar_ponto_rota(t.get('Origem', ''))} → "
-                            f"{canonicalizar_ponto_rota(t.get('Destino', ''))}"
-                        ),
-                        "Motivo": (
-                            "Acordado para o próximo dia"
-                            if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
-                            else "Não coube até 17h"
-                        ),
-                    }
-                    for t in demandas_adiadas
-                ])
-                st.dataframe(
-                    df_adiadas_compacto,
-                    use_container_width=True,
-                    hide_index=True,
-                    height=min(320, 38 + 35 * qtd_adiadas),
-                )
-        
+            df_adiadas_compacto = pd.DataFrame([
+                {
+                    "Demanda": str(t.get('Obra', 'Demanda sem nome') or 'Demanda sem nome'),
+                    "Prazo": str(t.get('Urgência', 'sem prazo') or 'sem prazo'),
+                    "Percurso": (
+                        f"{canonicalizar_ponto_rota(t.get('Origem', ''))} → "
+                        f"{canonicalizar_ponto_rota(t.get('Destino', ''))}"
+                    ),
+                    "Motivo": (
+                        "Acordado para o próximo dia"
+                        if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
+                        else "Não coube até 17h"
+                    ),
+                }
+                for t in demandas_adiadas
+            ])
+
         df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         try:
@@ -10168,19 +10223,85 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 )
                 st.rerun()
 
-        # O mapa/resumo ocupa o topo e o roteiro vem abaixo em largura total.
-        # Dois containers preservam o código existente sem criar a coluna vazia
-        # que aparecia quando as paradas eram muito mais altas que o mapa.
-        col_mapa = st.container()
-        col_paradas = st.container()
+        # Hierarquia visual: um único resumo executivo, seguido das três áreas de trabalho.
+        # As informações deixam de se repetir entre mapa, roteiro e fechamento.
+        hora_atual_str = AGORA_REAL.strftime("%H:%M")
+        nova_previsao_str = format_mins_to_time(final_dyn_min)
+        total_paradas_industrial = sum(
+            1 for etapa in route_steps
+            if etapa.get('type') == 'stop' and etapa.get('destino') != p_saida
+        )
+        distancia_industrial = f"{float(total_km):.1f}".replace('.', ',')
+        veiculo_industrial = html_escape(veiculo_selecionado.split('(')[0].strip())
+        if valor_km_veiculo_proprio is not None:
+            custo_industrial = float(total_km) * float(valor_km_veiculo_proprio)
+            custo_industrial_txt = f"R$ {custo_industrial:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        else:
+            custo_industrial_txt = "Frota da empresa"
+
+        if final_dyn_min > LIMITE_EXPEDIENTE_DAVI_MIN:
+            classe_estado_rota = "danger"
+            rotulo_estado_rota = "REGISTRO APÓS 17H"
+            texto_estado_rota = (
+                f"Registro real indica término às {nova_previsao_str}. Conclusões já realizadas são preservadas; "
+                "nenhuma nova parada é planejada depois das 17h."
+            )
+        elif qtd_adiadas:
+            classe_estado_rota = "warn"
+            rotulo_estado_rota = "CAPACIDADE LIMITADA"
+            texto_estado_rota = (
+                "Capacidade real do expediente: " + "; ".join(partes_limite) + ". "
+                "A sequência exibida contém somente o que cabe com segurança até 17h."
+            )
+        else:
+            classe_estado_rota = "ok"
+            rotulo_estado_rota = "DENTRO DO EXPEDIENTE"
+            texto_estado_rota = f"Rota viável com término previsto às {nova_previsao_str}. Nenhuma demanda obrigatória ficou fora por capacidade."
+
+        fora_rota_valor = str(qtd_adiadas)
+        fora_rota_classe = "warn" if qtd_adiadas else "good"
+        st.markdown(
+            f'''
+            <section class="aproar-route-overview">
+                <div class="aproar-route-overview-head">
+                    <div><strong>Rota do Davi · {html_escape(DATA_REF_ROTA_STR)}</strong>
+                    <small>Planejamento operacional · Motor V5 · sincronizado com a central</small></div>
+                    <span class="aproar-route-state {classe_estado_rota}">{rotulo_estado_rota}</span>
+                </div>
+                <div class="aproar-route-kpis">
+                    <div class="aproar-route-kpi"><span>Agora</span><strong>{html_escape(hora_atual_str)}</strong></div>
+                    <div class="aproar-route-kpi"><span>Término previsto</span><strong class="{'good' if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else 'warn'}">{html_escape(nova_previsao_str)}</strong></div>
+                    <div class="aproar-route-kpi"><span>Início da rota</span><strong>{html_escape(hora_inicio_real)}</strong></div>
+                    <div class="aproar-route-kpi"><span>Expediente</span><strong>07:00–17:00</strong></div>
+                    <div class="aproar-route-kpi"><span>Paradas</span><strong>{total_paradas_industrial}</strong></div>
+                    <div class="aproar-route-kpi"><span>Distância</span><strong>{distancia_industrial} km</strong></div>
+                    <div class="aproar-route-kpi"><span>Fora da rota</span><strong class="{fora_rota_classe}">{fora_rota_valor}</strong><small>até 17h</small></div>
+                    <div class="aproar-route-kpi"><span>Veículo / custeio</span><strong>{veiculo_industrial}</strong><small>{html_escape(custo_industrial_txt)}</small></div>
+                </div>
+                <div class="aproar-route-statusline {classe_estado_rota}"><i></i><span>{html_escape(texto_estado_rota)}</span></div>
+            </section>
+            ''',
+            unsafe_allow_html=True,
+        )
+
+        aba_operacao, aba_mapa, aba_gestao = st.tabs([
+            "🚚 Operação", "🗺️ Mapa", "📋 Fechamento e compartilhamento"
+        ])
+        col_paradas = aba_operacao
+        col_mapa = aba_mapa
+        col_gestao = aba_gestao
         with col_paradas:
             st.markdown(
                 f'<div class="aproar-industrial-heading"><h2>Paradas</h2>'
                 f'<span>{sum(1 for etapa in route_steps if etapa.get("type") == "stop")} NA ROTA</span></div>',
                 unsafe_allow_html=True,
             )
-            st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
-            st.caption("✅ As demandas concluídas ficam reunidas em uma tabela compacta; abaixo aparecem somente as etapas ainda pendentes.")
+            st.markdown(
+                '<div class="aproar-route-toolbar-note">'
+                'A sequência abaixo mostra <b>somente o trabalho pendente</b>. Demandas concluídas e exceções do expediente ficam recolhidas nos resumos.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -10213,11 +10334,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
             referencia_txt = f" • referência {horario_matriz_exibicao}" if horario_matriz_exibicao else ""
-            st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}**{referencia_txt} • ETAs com validação operacional de trecho")
-
-            hora_atual_str = AGORA_REAL.strftime("%H:%M")
-            nova_previsao_str = format_mins_to_time(final_dyn_min)
-            renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+            st.markdown(
+                f'<div class="aproar-route-toolbar-note">🛣️ <b>Otimização:</b> {html_escape(str(fonte_matriz_exibicao))}'
+                f'{html_escape(referencia_txt)} · ETAs com validação operacional de trecho</div>',
+                unsafe_allow_html=True,
+            )
 
             # Uma demanda concluída pode aparecer como COLETA e ENTREGA em pontos
             # diferentes. Reunimos por ID para mostrar uma linha por demanda, sem
@@ -10271,9 +10392,25 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         },
                     )
 
+            if qtd_adiadas and not df_adiadas_compacto.empty:
+                with st.expander(
+                    f"⏭️ FORA DA ROTA ATÉ 17H · {qtd_adiadas} "
+                    f"{plural_pt(qtd_adiadas, 'demanda', 'demandas')}",
+                    expanded=False,
+                ):
+                    st.dataframe(
+                        df_adiadas_compacto,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=min(320, 38 + 35 * qtd_adiadas),
+                    )
+
             _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
             if _msg_ajuste:
-                st.success(_msg_ajuste)
+                st.markdown(
+                    f'<div class="aproar-compact-note">✓ {html_escape(str(_msg_ajuste))}</div>',
+                    unsafe_allow_html=True,
+                )
 
             with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
                 st.caption(
@@ -10346,11 +10483,19 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             num_parada = 1
             for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
-                    st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
+                    st.markdown(
+                        f'<div class="aproar-special-step"><span>🍽️ <strong>Pausa para almoço</strong></span>'
+                        f'<span>{html_escape(str(step["dyn_chegada"]))}–{html_escape(str(step["dyn_saida"]))}</span></div>',
+                        unsafe_allow_html=True,
+                    )
                     texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
                     continue
                 if step['type'] == 'return':
-                    st.info(f"🏁 **Retorno à base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
+                    st.markdown(
+                        f'<div class="aproar-special-step"><span>🏁 <strong>Retorno à base</strong> · {html_escape(str(step["destino"]))}</span>'
+                        f'<span>chegada {html_escape(str(step["dyn_chegada"]))}</span></div>',
+                        unsafe_allow_html=True,
+                    )
                     texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
                     continue
 
@@ -10530,77 +10675,95 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
             horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
-            
-            st.success(f"📍 **Planejamento original (considerando a saída no horário):** término às {horario_base_fim}.")
-            if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
-                st.info(f"🟢 **Previsão real atualizada:** término às {horario_dyn_fim} (dentro do expediente).")
-            else:
-                st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
-
-            st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
+            custo_estimado_veiculo_proprio = None
+            custo_estimado_txt = "—"
+            valor_km_txt = ""
+            tipo_veiculo_proprio = ""
             if valor_km_veiculo_proprio is not None:
                 custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
                 tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
                 custo_estimado_txt = f"R$ {custo_estimado_veiculo_proprio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
                 valor_km_txt = f"R$ {valor_km_veiculo_proprio:.2f}/km".replace('.', ',')
-                st.info(
-                    f"💰 **Custeio estimado — {tipo_veiculo_proprio}:** "
-                    f"{custo_estimado_txt} (**{valor_km_txt}**)."
-                )
 
+            link_maps = ""
             if len(route_steps) > 1:
                 waypts_addr = []
                 for s in route_steps:
                     if s['type'] != 'lunch':
                         addr = enderecos_dict.get(s['destino'], "")
                         waypts_addr.append(urllib.parse.quote(addr) if addr and not addr.startswith("http") else f"{locais_dict[s['destino']][0]},{locais_dict[s['destino']][1]}")
-                link_maps = f"https://www.google.com/maps/dir/?api=1&origin={waypts_addr[0]}&destination={waypts_addr[-1]}&travelmode=driving"
-                if len(waypts_addr) > 2: link_maps += f"&waypoints={'|'.join(waypts_addr[1:-1][:9])}"
-                texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
+                if len(waypts_addr) >= 2:
+                    link_maps = f"https://www.google.com/maps/dir/?api=1&origin={waypts_addr[0]}&destination={waypts_addr[-1]}&travelmode=driving"
+                    if len(waypts_addr) > 2:
+                        link_maps += f"&waypoints={'|'.join(waypts_addr[1:-1][:9])}"
+                    texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
 
-            st.divider()
-            @fragmento_independente
-            def formulario_fechamento_rota():
-                with st.form("fechamento_km_rota"):
-                    st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
-                    total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
-                    acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
-                    
-                    if acoes_concluidas < total_acoes:
-                        st.warning(
-                            f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
-                            f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
-                            f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
-                        )
-                    else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
-                        
-                    km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
-                    veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
-                    if st.form_submit_button("Registrar quilometragem no painel de custos"):
-                        execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
-                        carregar_registro_km_df.clear()
-                        st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
+        with col_gestao:
+            st.markdown(
+                '<div class="aproar-industrial-heading"><h2>Fechamento e compartilhamento</h2>'
+                '<span>AÇÕES SECUNDÁRIAS</span></div>',
+                unsafe_allow_html=True,
+            )
+            custo_gestao = custo_estimado_txt if custo_estimado_veiculo_proprio is not None else "Frota da empresa"
+            detalhe_custo_gestao = valor_km_txt if valor_km_txt else "combustível/manutenção reais"
+            status_planejamento_gestao = "Dentro do expediente" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "Registro real após 17h"
+            st.markdown(
+                f'''<div class="aproar-management-grid">
+                    <div class="aproar-management-item"><span>Planejamento original</span><strong>Término {html_escape(horario_base_fim)}</strong></div>
+                    <div class="aproar-management-item"><span>Previsão atual</span><strong>{html_escape(horario_dyn_fim)} · {html_escape(status_planejamento_gestao)}</strong></div>
+                    <div class="aproar-management-item"><span>Distância planejada</span><strong>{float(total_km):.1f} km</strong></div>
+                    <div class="aproar-management-item"><span>Custeio estimado</span><strong>{html_escape(custo_gestao)}</strong><small>{html_escape(detalhe_custo_gestao)}</small></div>
+                </div>''',
+                unsafe_allow_html=True,
+            )
 
-            formulario_fechamento_rota()
+            col_fechar, col_compartilhar = st.columns([1, 1], gap="large")
+            with col_fechar:
+                @fragmento_independente
+                def formulario_fechamento_rota():
+                    with st.form("fechamento_km_rota"):
+                        st.markdown("#### 💾 Fechamento da quilometragem")
+                        total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
+                        acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
+                        if acoes_concluidas < total_acoes:
+                            st.caption(
+                                f"⚠️ {acoes_concluidas} de {total_acoes} "
+                                f"{plural_pt(total_acoes, 'demanda concluída', 'demandas concluídas')} hoje."
+                            )
+                        else:
+                            st.caption("✅ Todas as demandas desta rota foram concluídas hoje.")
+                        km_real = st.number_input("Quilometragem efetivamente rodada", value=float(total_km), step=1.0)
+                        veiculo_fechamento = st.selectbox("Veículo que rodou a rota", ["Strada", "L200"])
+                        if st.form_submit_button("Registrar quilometragem", use_container_width=True):
+                            execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
+                            carregar_registro_km_df.clear()
+                            st.success(f"✅ {km_real:.1f} km registrados para {veiculo_fechamento}.")
+                formulario_fechamento_rota()
 
-            url_geral, _ = obter_webhook_teams("Geral / Logística")
+            with col_compartilhar:
+                url_geral, _ = obter_webhook_teams("Geral / Logística")
 
-            @fragmento_independente
-            def compartilhamento_rota():
-                if url_geral:
-                    if st.button("📢 Enviar roteiro ao grupo geral (Teams)", use_container_width=True):
-                        resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
-                        enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
-                        if enviado: st.success("✅ Roteiro enviado!")
-                        else: st.error(f"Erro ao enviar: {detalhe}")
-
-                st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
-
-            compartilhamento_rota()
+                @fragmento_independente
+                def compartilhamento_rota():
+                    st.markdown("#### 📤 Compartilhamento")
+                    if url_geral:
+                        if st.button("📢 Enviar roteiro ao Teams", use_container_width=True):
+                            resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
+                            enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
+                            if enviado:
+                                st.success("✅ Roteiro enviado!")
+                            else:
+                                st.error(f"Erro ao enviar: {detalhe}")
+                    st.text_area("Texto pronto para WhatsApp", value=texto_whatsapp, height=165)
+                compartilhamento_rota()
 
         with col_mapa:
             st.markdown(
-                '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO EM TEMPO REAL</span></div>',
+                '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO E POSIÇÃO</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<div class="aproar-route-toolbar-note">Mapa de apoio à operação. A sequência oficial permanece na aba <b>Operação</b>.</div>',
                 unsafe_allow_html=True,
             )
             # MAPA DA ROTA — OpenStreetMap não exige API key e permanece com as
@@ -10831,52 +10994,14 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 ).add_to(m)
 
             st_folium(
-                m, height=540, use_container_width=True, returned_objects=[],
+                m, height=470, use_container_width=True, returned_objects=[],
                 key=f"mapa_rota_{DATA_REF_ROTA_STR}",
             )
-            total_paradas_industrial = sum(
-                1 for etapa in route_steps
-                if etapa.get('type') == 'stop' and etapa.get('destino') != p_saida
-            )
-            distancia_industrial = f"{float(total_km):.1f}".replace('.', ',')
-            veiculo_industrial = html_escape(veiculo_selecionado.split('(')[0].strip())
-            if valor_km_veiculo_proprio is not None:
-                custo_industrial = float(total_km) * float(valor_km_veiculo_proprio)
-                custo_industrial_txt = f"R$ {custo_industrial:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-            else:
-                custo_industrial_txt = "Frota da empresa"
-
-            st.markdown(
-                f"""
-                <div class="aproar-industrial-summary">
-                    <section class="aproar-route-panel">
-                        <div class="aproar-summary-title"><strong>Rota 01 — Davi</strong><span>PLANEJADA</span></div>
-                        <div class="aproar-summary-times">
-                            <div><span>Horário atual</span><strong>{hora_atual_str}</strong></div>
-                            <div class="aproar-summary-line"><i></i></div>
-                            <div><span>Término previsto</span><strong>{nova_previsao_str}</strong></div>
-                        </div>
-                        <div class="aproar-summary-data">
-                            <div><span>Início</span><strong>{html_escape(hora_inicio_real)}</strong></div>
-                            <div><span>Expediente</span><strong>07:00–17:00</strong></div>
-                            <div><span>Paradas</span><strong>{total_paradas_industrial}</strong></div>
-                            <div><span>Distância</span><strong>{distancia_industrial} km</strong></div>
-                        </div>
-                    </section>
-                    <section class="aproar-fleet-panel">
-                        <div class="aproar-summary-title"><strong>Frota</strong><span>EM ROTA</span></div>
-                        <div class="aproar-fleet-body">
-                            <span>Motorista</span><strong>Davi · {veiculo_industrial}</strong>
-                            <small>Rota sincronizada com a central</small>
-                            <div class="aproar-fleet-cost"><span>Custeio estimado</span><b>{custo_industrial_txt}</b></div>
-                        </div>
-                    </section>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
             legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
-            st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
+            st.caption(
+                f"Legenda: 🟡 Coleta · 🟢 Entrega · 🏁 Início/Retorno · 🟡🟢 Ambos · Azul = {legenda_tracado}. "
+                "Linha cinza pontilhada = marcador deslocado apenas para legibilidade."
+            )
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
@@ -10892,9 +11017,14 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             "Fonte viária": st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária'),
         }])
         df_resumo_sequencial = montar_resumo_sequencial_rota(route_steps, p_saida, retornar_base=True)
-        st.caption("🛣️ Os horários do resumo usam distância viária e piso operacional para deslocamentos urbanos, evitando estimativas excessivamente otimistas. 🍽️ A pausa de 1 hora para almoço aparece como etapa própria.")
-        renderizar_exportador(
-            f"Roteiro do Davi - {DATA_REF_ROTA_STR}",
-            {"Resumo da rota": df_resumo_sequencial},
-            "roteiro_do_davi", "roteiro",
-        )
+        with col_gestao:
+            st.divider()
+            st.caption(
+                "Os horários usam distância viária e piso operacional para deslocamentos urbanos. "
+                "A pausa de 1 hora para almoço aparece como etapa própria."
+            )
+            renderizar_exportador(
+                f"Roteiro do Davi - {DATA_REF_ROTA_STR}",
+                {"Resumo da rota": df_resumo_sequencial},
+                "roteiro_do_davi", "roteiro",
+            )
