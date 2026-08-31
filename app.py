@@ -9160,9 +9160,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         and DATA_REF_ROTA_DATE == AGORA_REAL.date()
         and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
         and ids_criticos_fora_rota
-        and st.session_state.get('_ultimo_lote_urgente_incorporado') != assinatura_criticos_fora_rota
+        and st.session_state.get('_ultimo_lote_urgente_incorporado_v2') != assinatura_criticos_fora_rota
     ):
-        st.session_state['_ultimo_lote_urgente_incorporado'] = assinatura_criticos_fora_rota
+        # A chave versionada também libera uma nova tentativa depois de mudanças
+        # no critério de viabilidade, mesmo que o conjunto de cartões seja igual.
+        st.session_state['_ultimo_lote_urgente_incorporado_v2'] = assinatura_criticos_fora_rota
         st.session_state['_recalcular_rota_automatico'] = True
         nomes_criticos = ', '.join(df_criticas_fora_rota['Obra'].astype(str).tolist())
         st.session_state['_mensagem_ajuste_rota'] = (
@@ -9415,6 +9417,18 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 # Fornecedores recorrentes podem vir no cartão sem endereço. O
                 # fallback oficial é usado sob demanda e nunca substitui um local
                 # que a equipe já cadastrou/ajustou na aba Endereços.
+                if alvo in locais_db:
+                    endereco_existente, lat_existente, lon_existente = locais_db[alvo]
+                    if not str(endereco_existente or '').strip() and lat_existente is None and lon_existente is None:
+                        endereco_fallback = obter_endereco_fornecedor_fallback(p)
+                        if endereco_fallback:
+                            execute_db(
+                                "UPDATE locais SET endereco=:end WHERE apelido=:apelido "
+                                "AND (endereco IS NULL OR TRIM(endereco)='') AND lat IS NULL AND lon IS NULL",
+                                {"apelido": alvo, "end": endereco_fallback},
+                            )
+                            locais_db[alvo] = (endereco_fallback, None, None)
+
                 if alvo not in locais_db:
                     endereco_fallback = obter_endereco_fornecedor_fallback(p)
                     if endereco_fallback:
@@ -9514,6 +9528,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if not entregas and not coletas:
                     return None
 
+                tarefas_no_ponto = entregas + coletas
+                demanda_critica_no_ponto = any(
+                    float(t.get('Peso', 1) or 1) >= 5
+                    or bool(re.search(r'HOJE|VENCIDA', str(t.get('Urgência', '') or ''), flags=re.IGNORECASE))
+                    for t in tarefas_no_ponto
+                )
+
                 servico = estimar_tempo_parada(ponto, entregas, coletas)
                 fim = arr + servico
                 if arr < 12 * 60 <= fim and not pausa_consumida:
@@ -9526,7 +9547,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if retornar_base and ponto != ponto_saida:
                     d_volta, dur_volta_api = get_dist_dur_bruto(ponto, ponto_saida)
                     dur_volta = ajustar_tempo_deslocamento_operacional(d_volta, dur_volta_api, fim)
-                    if fim + dur_volta > LIMITE_EXPEDIENTE_DAVI_MIN:
+                    # Uma demanda de hoje não pode desaparecer apenas porque o
+                    # RETORNO à base ultrapassa 17h. O atendimento ainda precisa
+                    # terminar até 17h; só a volta fica sinalizada como excepcional.
+                    if fim + dur_volta > LIMITE_EXPEDIENTE_DAVI_MIN and not demanda_critica_no_ponto:
                         return None
 
                 return dist, dur_api, dur
@@ -9741,12 +9765,23 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         # Qualquer COLETA arrastada para a base vira PREPARAÇÃO e nunca uma
         # parada operacional separada.
 
+        if st.session_state.get('retorno_omitido_expediente'):
+            st.warning(
+                "⚠️ **Retorno à base após as 17h:** uma demanda crítica foi mantida porque "
+                "o atendimento cabe no expediente, mas a viagem de volta não."
+            )
+
         if st.session_state.get('demandas_adiadas'):
-            qtd_adiadas = len(st.session_state['demandas_adiadas'])
+            demandas_adiadas = st.session_state['demandas_adiadas']
+            qtd_adiadas = len(demandas_adiadas)
+            nomes_adiadas = ', '.join(
+                f"{str(t.get('Obra', 'Demanda sem nome'))} ({str(t.get('Urgência', 'sem prazo'))})"
+                for t in demandas_adiadas
+            )
             st.warning(
                 f"⏰ **Limite do expediente:** {qtd_adiadas} "
                 f"{plural_pt(qtd_adiadas, 'demanda ficou', 'demandas ficaram')} para o próximo planejamento, "
-                f"por prioridade, capacidade ou falta de tempo hábil até as 17h."
+                f"por prioridade, capacidade ou falta de tempo hábil até as 17h: **{nomes_adiadas}**."
             )
         
         df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
