@@ -106,364 +106,49 @@ def remover_acentos(txt):
     if not txt: return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(txt)) if unicodedata.category(c) != 'Mn')
 
-# --- DESIGN SYSTEM APROAR — TORRE + APP DO MOTORISTA -------------------------
+# --- INJEÇÃO DE CSS CUSTOMIZADO (VISUAL PREMIUM E DASHBOARD CORPORATIVO) ---
 def aplicar_estilo_customizado():
-    """Aplica o mesmo sistema visual à Torre e à página /davi."""
     st.markdown("""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap');
-
-        :root {
-            --ap-bg: #070913;
-            --ap-bg-soft: #0a0e1b;
-            --ap-surface: #0f1526;
-            --ap-surface-2: #131b30;
-            --ap-surface-3: #18223a;
-            --ap-line: rgba(148, 163, 184, .16);
-            --ap-line-strong: rgba(96, 165, 250, .28);
-            --ap-text: #f4f7fb;
-            --ap-muted: #94a3b8;
-            --ap-blue: #2563eb;
-            --ap-blue-2: #3b82f6;
-            --ap-green: #22c55e;
-            --ap-amber: #f59e0b;
-            --ap-red: #ef4444;
-            --ap-radius-sm: 10px;
-            --ap-radius: 16px;
-            --ap-radius-lg: 22px;
-            --ap-shadow: 0 18px 45px rgba(0, 0, 0, .28);
-        }
-
-        html, body, [class*="css"], .stMarkdown, .stText, p, div,
-        h1, h2, h3, h4, h5, h6, label, button, input, textarea {
-            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-        }
-        h1, h2, h3, h4, h5, h6, .aproar-title, .aproar-driver-greeting,
-        [data-testid="stMetricValue"], .driver-kpi strong, .driver-stop-copy > strong {
-            font-family:'Sora', 'Manrope', sans-serif !important;
-        }
-        html, body, [data-testid="stAppViewContainer"] { background: var(--ap-bg) !important; }
-        [data-testid="stAppViewContainer"] {
-            color: var(--ap-text);
-            background-image:
-                radial-gradient(circle at 84% 2%, rgba(37,99,235,.13), transparent 30rem),
-                radial-gradient(circle at 8% 36%, rgba(14,165,233,.06), transparent 28rem),
-                linear-gradient(180deg, #070913 0%, #080b15 100%) !important;
-        }
-        .main .block-container {
-            max-width: 1500px;
-            padding: 1.15rem 2.35rem 4rem;
-        }
-        p, li, label, .stCaption { color: #cbd5e1; }
-        h1, h2, h3, h4, h5, h6 { color: var(--ap-text) !important; letter-spacing: -.025em; }
-        a { color: #93c5fd; }
-
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        html, body, [class*="css"], .stMarkdown, .stText, p, div, h1, h2, h3, h4, h5, h6 { font-family: 'Inter', sans-serif !important; color: #e4e8f4; }
+        /* Ícones do Streamlit usam uma fonte própria. Forçar Inter nos spans
+           fazia nomes como keyboard_arrow_right aparecerem como texto. */
         span[data-testid="stIconMaterial"], .material-symbols-rounded, .material-symbols-outlined {
             font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
             font-weight: normal !important; font-style: normal !important;
             letter-spacing: normal !important; text-transform: none !important;
             white-space: nowrap !important; word-wrap: normal !important;
         }
-
-        [data-testid="stHeader"] {
-            background: rgba(7, 9, 19, .72) !important;
-            border-bottom: 1px solid rgba(148,163,184,.08);
-            backdrop-filter: blur(18px);
-        }
-        [data-testid="stSidebar"] {
-            background:
-                radial-gradient(circle at 20% 0%, rgba(37,99,235,.13), transparent 18rem),
-                #0a0e1b !important;
-            border-right: 1px solid var(--ap-line) !important;
-        }
-        [data-testid="stSidebar"] .block-container { padding-top: 1.25rem; }
+        [data-testid="stAppViewContainer"] { background-color: #070913 !important; }
+        [data-testid="stSidebar"] { background-color: #0b0e1e !important; border-right: 1px solid rgba(64,116,146,.15) !important; }
+        /* A rota /davi usa uma página técnica do Streamlit; escondemos a navegação
+           multipágina nativa para manter apenas o menu corporativo da Torre. */
         [data-testid="stSidebarNav"] { display: none !important; }
+        [data-testid="stHeader"] { background-color: rgba(7, 9, 19, 0.8) !important; backdrop-filter: blur(8px); }
+        /* Evita que a tela inteira escureça enquanto apenas um trecho é atualizado. */
         [data-stale="true"] { opacity: 1 !important; }
-        .aproar-sidebar-brand {
-            display:flex; align-items:center; gap:11px; margin:0 0 8px; padding:12px;
-            border:1px solid var(--ap-line); border-radius:14px; background:rgba(19,27,48,.64);
-        }
-        .aproar-sidebar-brand span {
-            display:grid; place-items:center; width:36px; height:36px; border-radius:11px;
-            color:#fff; font-size:15px; font-weight:900; background:linear-gradient(145deg,#3b82f6,#1d4ed8);
-            box-shadow:0 8px 18px rgba(37,99,235,.28);
-        }
-        .aproar-sidebar-brand strong { display:block; color:#f8fafc; font-size:13px; }
-        .aproar-sidebar-brand small { display:block; margin-top:2px; color:#94a3b8; font-size:10px; }
-        .aproar-logo-sidebar {
-            display:block; width:94px; height:35px; flex:0 0 94px;
-            object-fit:contain; object-position:left center;
-        }
-
-        /* Cabeçalho corporativo */
-        .aproar-shell-header {
-            display: flex; align-items: center; justify-content: space-between; gap: 22px;
-            margin: 0 0 22px; padding: 18px 20px;
-            background: linear-gradient(135deg, rgba(19,27,48,.92), rgba(10,14,27,.94));
-            border: 1px solid var(--ap-line); border-radius: var(--ap-radius-lg);
-            box-shadow: var(--ap-shadow); overflow: hidden; position: relative;
-        }
-        .aproar-shell-header::after {
-            content: ''; position: absolute; inset: auto -70px -105px auto;
-            width: 240px; height: 240px; border-radius: 50%;
-            background: rgba(37,99,235,.14); filter: blur(15px); pointer-events: none;
-        }
-        .aproar-brand { display:flex; align-items:center; gap:14px; min-width:0; z-index:1; }
-        .aproar-logo-main {
-            display:block; width:146px; max-width:22vw; height:48px;
-            object-fit:contain; object-position:left center;
-            filter:drop-shadow(0 8px 18px rgba(0,0,0,.24));
-        }
-        .aproar-brand-mark {
-            width: 46px; height: 46px; flex: 0 0 46px; display:grid; place-items:center;
-            border-radius: 14px; background: linear-gradient(145deg, #3b82f6, #1d4ed8);
-            box-shadow: 0 10px 24px rgba(37,99,235,.34); color:#fff;
-            font-weight:900; font-size:19px; letter-spacing:-.08em;
-        }
-        .aproar-logo-fallback {
-            display:flex !important; align-items:center; justify-content:flex-start;
-            color:#f8fafc; font-family:'Sora', sans-serif !important;
-            font-size:14px; font-weight:800; letter-spacing:.09em;
-        }
-        .aproar-eyebrow { color:#60a5fa; font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
-        .aproar-title { color:var(--ap-text); font-size:21px; line-height:1.14; font-weight:700; margin-top:2px; letter-spacing:-.035em; }
-        .aproar-subtitle { color:var(--ap-muted); font-size:12px; margin-top:4px; }
-        .aproar-header-meta { display:flex; align-items:center; gap:10px; z-index:1; }
-        .aproar-meta-chip {
-            display:flex; align-items:center; gap:8px; min-height:38px; padding:0 12px;
-            color:#cbd5e1; font-size:12px; font-weight:700; white-space:nowrap;
-            background:rgba(255,255,255,.035); border:1px solid var(--ap-line); border-radius:999px;
-        }
-        .aproar-meta-chip.primary { color:#bfdbfe; border-color:rgba(96,165,250,.28); background:rgba(37,99,235,.11); }
-        .aproar-dot { width:7px; height:7px; border-radius:50%; background:var(--ap-green); box-shadow:0 0 0 4px rgba(34,197,94,.12); }
-
-        /* Navegação principal */
-        [data-testid="stSegmentedControl"] { margin: 0 0 20px; }
-        [data-testid="stSegmentedControl"] > div {
-            gap: 5px !important; padding: 6px !important; overflow-x: auto;
-            background: rgba(15,21,38,.86) !important; border: 1px solid var(--ap-line) !important;
-            border-radius: 15px !important; box-shadow: 0 10px 28px rgba(0,0,0,.16);
-        }
-        [data-testid="stSegmentedControl"] button {
-            min-height: 41px !important; border-radius: 10px !important; color: var(--ap-muted) !important;
-            font-size: 12.5px !important; font-weight: 700 !important; letter-spacing:-.01em; white-space: nowrap;
-        }
-        [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
-            color: #fff !important; background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
-            box-shadow: 0 7px 18px rgba(37,99,235,.28);
-        }
-
-        /* Botões */
-        .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
-            min-height: 42px; border-radius: 11px !important; font-weight: 700 !important;
-            border: 1px solid rgba(148,163,184,.22) !important;
-            background: rgba(19,27,48,.82) !important; color: #e2e8f0 !important;
-            transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease !important;
-        }
-        .stButton > button:hover, .stDownloadButton > button:hover {
-            transform: translateY(-1px); border-color: rgba(96,165,250,.55) !important;
-            box-shadow: 0 8px 20px rgba(0,0,0,.20);
-        }
-        button[kind="primary"], [data-testid="baseButton-primary"] {
-            min-height: 44px; padding: 10px 20px !important; border: 0 !important;
-            border-radius: 11px !important; color: #fff !important; font-weight: 800 !important;
-            background: linear-gradient(135deg, #2f74f5, #1d4ed8) !important;
-            box-shadow: 0 10px 24px rgba(37,99,235,.28) !important;
-        }
-        button[kind="primary"]:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(37,99,235,.36) !important; }
-        button:disabled { opacity:.48 !important; transform:none !important; box-shadow:none !important; }
-
-        /* Cards, métricas e formulários */
-        div[data-testid="stMetric"] {
-            min-height: 112px; padding: 18px 19px; border-radius: var(--ap-radius) !important;
-            background: linear-gradient(145deg, rgba(19,27,48,.92), rgba(12,17,31,.94)) !important;
-            border: 1px solid var(--ap-line) !important; box-shadow: 0 12px 30px rgba(0,0,0,.18);
-        }
-        div[data-testid="stMetric"] label { color:var(--ap-muted) !important; font-weight:700; }
-        div[data-testid="stMetric"] [data-testid="stMetricValue"] { color:var(--ap-text) !important; font-weight:800; letter-spacing:-.04em; }
-        div[data-testid="stMetric"] [data-testid="stMetricDelta"] { font-weight:700; }
-        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {
-            padding: 20px !important; border-radius: var(--ap-radius) !important;
-            background: rgba(15,21,38,.80) !important; border: 1px solid var(--ap-line) !important;
-            box-shadow: 0 12px 30px rgba(0,0,0,.14);
-        }
-        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div,
-        div[data-baseweb="textarea"] > div, [data-testid="stNumberInput"] > div > div {
-            min-height: 44px; color:var(--ap-text) !important; border-radius:11px !important;
-            background:#0d1322 !important; border:1px solid rgba(148,163,184,.22) !important;
-            transition:border-color .16s ease, box-shadow .16s ease;
-        }
-        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within,
-        div[data-baseweb="textarea"] > div:focus-within {
-            border-color:#3b82f6 !important; box-shadow:0 0 0 3px rgba(37,99,235,.14) !important;
-        }
-        [data-testid="stFileUploaderDropzone"] {
-            min-height:120px; border-radius:14px !important; border:1.5px dashed rgba(96,165,250,.45) !important;
-            background:rgba(37,99,235,.055) !important;
-        }
-
-        /* Tabelas, abas, expansores e mensagens */
-        [data-testid="stDataFrame"], [data-testid="stTable"] {
-            overflow:hidden; border-radius:14px !important; border:1px solid var(--ap-line) !important;
-            background:#0d1322 !important; box-shadow:0 12px 28px rgba(0,0,0,.14);
-        }
-        .stTabs [data-baseweb="tab-list"] {
-            gap:5px; padding:6px; border-radius:14px; border:1px solid var(--ap-line);
-            background:rgba(15,21,38,.82); overflow-x:auto;
-        }
-        .stTabs [data-baseweb="tab"] { min-height:40px; padding:8px 15px; color:var(--ap-muted); font-weight:700; border-radius:9px; }
-        .stTabs [aria-selected="true"] { color:#fff !important; background:rgba(37,99,235,.9) !important; }
-        [data-testid="stExpander"] {
-            overflow:hidden; border:1px solid var(--ap-line) !important; border-radius:14px !important;
-            background:rgba(15,21,38,.74) !important;
-        }
-        [data-testid="stAlert"] { border-radius:13px !important; border:1px solid var(--ap-line) !important; }
-        hr { border-color:var(--ap-line) !important; }
-        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe {
-            width:100% !important; max-width:100% !important; border-radius:16px;
-        }
-
-        /* ETA compartilhado */
-        .aproar-eta-card {
-            display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:18px;
-            margin: 10px 0 22px; padding:17px 19px; border-radius:16px;
-            background:linear-gradient(145deg,rgba(19,27,48,.94),rgba(12,17,31,.96));
-            border:1px solid var(--ap-line); box-shadow:0 12px 30px rgba(0,0,0,.18);
-        }
-        .aproar-eta-label { color:var(--ap-muted); font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
-        .aproar-eta-value { color:var(--ap-text); font-size:22px; font-weight:800; margin-top:3px; letter-spacing:-.04em; }
-        .aproar-eta-side.right { text-align:right; }
-        .aproar-eta-route { color:#60a5fa; font-size:20px; }
-
-        ::-webkit-scrollbar { width:9px; height:9px; }
-        ::-webkit-scrollbar-track { background:#070913; }
-        ::-webkit-scrollbar-thumb { background:#283752; border:2px solid #070913; border-radius:999px; }
-        ::-webkit-scrollbar-thumb:hover { background:#3b82f6; }
-
-        @media (max-width: 900px) {
-            .main .block-container { padding: .9rem 1rem 5rem; }
-            .aproar-shell-header { align-items:flex-start; padding:16px; }
-            .aproar-header-meta { flex-wrap:wrap; justify-content:flex-end; }
-        }
-        @media (max-width: 640px) {
-            .main .block-container { padding:.7rem .78rem 5.5rem; }
-            .aproar-shell-header { border-radius:18px; margin-bottom:14px; }
-            .aproar-brand-mark { width:42px; height:42px; flex-basis:42px; }
-            .aproar-logo-main { width:112px; max-width:34vw; height:42px; }
-            .aproar-title { font-size:18px; }
-            .aproar-subtitle { display:none; }
-            .aproar-header-meta { display:none; }
-            .aproar-eta-card { grid-template-columns:1fr auto 1fr; gap:9px; padding:14px; }
-            .aproar-eta-route { font-size:16px; }
-            .aproar-eta-value { font-size:19px; }
-            div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] { padding:15px !important; }
-        }
+        button[kind="primary"], [data-testid="baseButton-primary"] { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; color: #ffffff !important; border-radius: 8px !important; border: none !important; font-weight: 600 !important; box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3); transition: all 0.2s ease-in-out; padding: 10px 20px !important; }
+        button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(37, 99, 235, 0.5); }
+        button[kind="primary"]:disabled { background: #1e293b !important; color: #64748b !important; box-shadow: none !important; transform: none !important; cursor: not-allowed !important; }
+        .stTabs [data-baseweb="tab-list"] { gap: 12px; background-color: rgba(18, 21, 48, 0.6); padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(64,116,146,.15); }
+        .stTabs [data-baseweb="tab"] { background-color: transparent; border-radius: 8px; color: #8da0b8; padding: 10px 18px; font-weight: 500; transition: all 0.2s ease; border: none !important; }
+        .stTabs [data-baseweb="tab"]:hover { color: #ffffff; background-color: rgba(255,255,255,0.05); }
+        .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4); }
+        div[data-testid="stMetric"] { background-color: rgba(25, 30, 56, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(64, 116, 146, 0.25); padding: 20px 25px; border-radius: 14px; box-shadow: 0 8px 20px rgba(0,0,0,0.15); transition: transform 0.2s ease; }
+        div[data-testid="stMetric"]:hover { transform: translateY(-3px); border-color: rgba(37, 99, 235, 0.5); }
+        div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] { background-color: rgba(18, 21, 48, 0.4) !important; border-radius: 14px !important; padding: 24px !important; border: 1px solid rgba(64,116,146,.2) !important; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, div[data-baseweb="textarea"] > div { background-color: rgba(13, 16, 37, 0.8) !important; border: 1px solid rgba(64,116,146,.3) !important; color: #e4e8f4 !important; border-radius: 8px !important; transition: border-color 0.2s; }
+        div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within { border-color: #2563eb !important; box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3) !important; }
+        [data-testid="stDataFrame"] { background-color: rgba(18, 21, 48, 0.6) !important; border: 1px solid rgba(64,116,146,.2) !important; border-radius: 12px !important; overflow: hidden; }
+        /* Folium/Leaflet deve ocupar toda a coluna; evita o bloco escuro sobrando à direita. */
+        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe { width: 100% !important; max-width: 100% !important; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #070913; }
+        ::-webkit-scrollbar-thumb { background: #2563eb; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #1d4ed8; }
     </style>
     """, unsafe_allow_html=True)
-
-
-def _html_logo_aproar(classe_css):
-    """Carrega logo.png ao lado do app.py e devolve uma imagem pronta para o HTML."""
-    try:
-        caminho_logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
-        with open(caminho_logo, "rb") as arquivo_logo:
-            conteudo_logo = base64.b64encode(arquivo_logo.read()).decode("ascii")
-        return (
-            f'<img class="{html_escape(classe_css, quote=True)}" '
-            f'src="data:image/png;base64,{conteudo_logo}" alt="Aproar">'
-        )
-    except (OSError, ValueError):
-        return f'<div class="{html_escape(classe_css, quote=True)} aproar-logo-fallback">APROAR</div>'
-
-
-def renderizar_cabecalho_torre():
-    logo = _html_logo_aproar("aproar-logo-main")
-    st.markdown(f"""
-        <header class="aproar-shell-header">
-            <div class="aproar-brand">
-                {logo}
-                <div>
-                    <div class="aproar-eyebrow">CENTRAL LOGÍSTICA</div>
-                    <div class="aproar-title">Torre de Controle</div>
-                    <div class="aproar-subtitle">Planejamento, monitoramento e execução em uma única operação</div>
-                </div>
-            </div>
-            <div class="aproar-header-meta">
-                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V6</div>
-                <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
-            </div>
-        </header>
-    """, unsafe_allow_html=True)
-
-
-def renderizar_cabecalho_motorista():
-    hora = AGORA_REAL.hour
-    saudacao = "Bom dia" if hora < 12 else "Boa tarde" if hora < 18 else "Boa noite"
-    logo = _html_logo_aproar("aproar-logo-driver")
-    st.markdown(f"""
-        <header class="aproar-driver-header">
-            <div class="aproar-driver-topline">
-                <div class="aproar-driver-brand">{logo}</div>
-                <div class="aproar-driver-live"><i></i> ROTA ATIVA</div>
-            </div>
-            <div class="aproar-driver-greeting">{saudacao}, <strong>Davi</strong></div>
-            <div class="aproar-driver-date">Rota oficial • {DATA_REF_ROTA_STR}</div>
-        </header>
-    """, unsafe_allow_html=True)
-
-
-def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=None, locais=None):
-    paradas = [
-        (indice, etapa) for indice, etapa in enumerate(route_steps or [])
-        if etapa.get("type") == "stop" and not (indice == 0)
-    ]
-    concluidas = sum(1 for _, etapa in paradas if etapa.get("is_concluded"))
-    proxima = next(((indice, etapa) for indice, etapa in paradas if not etapa.get("is_concluded")), None)
-    destino = str(proxima[1].get("destino", "Rota concluída")) if proxima else "Rota concluída"
-    chegada = str(proxima[1].get("dyn_chegada", "--:--")) if proxima else format_mins_to_time(final_dyn_min)
-    numero = (paradas.index(proxima) + 1) if proxima in paradas else len(paradas)
-    progresso = int(round((concluidas / max(1, len(paradas))) * 100))
-    acoes_proxima = [str(acao) for acao, _tarefa in (proxima[1].get("actions", []) if proxima else [])]
-    tem_coleta = "COLETAR" in acoes_proxima
-    tem_entrega = "ENTREGAR" in acoes_proxima
-    tipo_proxima = (
-        "COLETAR E ENTREGAR" if tem_coleta and tem_entrega
-        else "ENTREGAR" if tem_entrega
-        else "COLETAR" if tem_coleta
-        else "SEGUIR ROTEIRO"
-    )
-    link_gps = ""
-    endereco = str((enderecos or {}).get(destino, "") or "")
-    coordenadas = (locais or {}).get(destino, [None, None])
-    if endereco.startswith("http"):
-        link_gps = endereco
-    elif endereco:
-        link_gps = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco)}"
-    elif len(coordenadas) >= 2 and coordenadas[0] is not None:
-        link_gps = f"https://www.google.com/maps/dir/?api=1&destination={coordenadas[0]},{coordenadas[1]}"
-    botao_gps = (
-        f'<a class="driver-gps-link" href="{html_escape(link_gps, quote=True)}" target="_blank" rel="noopener">ABRIR GPS&nbsp; ↗</a>'
-        if link_gps else ""
-    )
-    st.markdown(f"""
-        <section class="aproar-driver-summary" id="rota">
-            <div class="driver-next-stop">
-                <div class="driver-stop-index">{numero}</div>
-                <div class="driver-stop-copy">
-                    <span>PRÓXIMA PARADA</span>
-                    <strong>{html_escape(destino)}</strong>
-                    <small><b>{tipo_proxima}</b> • chegada {html_escape(chegada)}</small>
-                </div>
-                {botao_gps}
-            </div>
-            <div class="driver-simple-progress">
-                <span><b>{concluidas}/{len(paradas)}</b> paradas concluídas</span>
-                <span>{float(total_km or 0):.1f} km • término {format_mins_to_time(final_dyn_min)}</span>
-            </div>
-            <div class="driver-progress"><span style="width:{progresso}%"></span></div>
-        </section>
-    """, unsafe_allow_html=True)
-
 
 aplicar_estilo_customizado()
 
@@ -2371,58 +2056,6 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
     return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-
-def resumir_rua_rastreador(endereco):
-    """Reduz o endereço da Protege à rua e ao número para caber no marcador."""
-    endereco_limpo = re.sub(r"\s+", " ", str(endereco or "")).strip(" ,-|")
-    if not endereco_limpo:
-        return "Rua atual não informada"
-
-    trecho_rua = re.split(r"\s+(?:-|–|—|\|)\s+", endereco_limpo, maxsplit=1)[0].strip()
-    partes = [parte.strip() for parte in trecho_rua.split(",") if parte.strip()]
-    if len(partes) >= 2 and re.fullmatch(r"(?:N[º°.]?\s*)?\d+[A-Z]?|S/?N", partes[1], flags=re.IGNORECASE):
-        trecho_rua = f"{partes[0]}, {partes[1]}"
-    elif len(partes) > 1:
-        trecho_rua = partes[0]
-    return trecho_rua[:90]
-
-
-def inferir_destino_provavel_por_distancia(
-    lat_atual, lon_atual, route_steps, locais, ponto_saida, concluidos
-):
-    """Escolhe a parada pendente mais próxima da posição GPS, sem usar a ordem da rota."""
-    candidatos = []
-    concluidos = concluidos or {}
-
-    for etapa in route_steps or []:
-        destino = str(etapa.get("destino", "") or "").strip()
-        if etapa.get("type") != "stop" or not destino or destino == ponto_saida:
-            continue
-
-        tarefas = etapa.get("actions") or []
-        if not tarefas or not any(
-            str(tarefa.get("id", "")) not in concluidos for _acao, tarefa in tarefas
-        ):
-            continue
-
-        coordenadas = (locais or {}).get(destino)
-        if not isinstance(coordenadas, (list, tuple)) or len(coordenadas) < 2:
-            continue
-        try:
-            lat_destino, lon_destino = float(coordenadas[0]), float(coordenadas[1])
-            distancia = calcular_distancia_km(
-                float(lat_atual), float(lon_atual), lat_destino, lon_destino
-            )
-        except (TypeError, ValueError, IndexError):
-            continue
-        if math.isfinite(distancia):
-            candidatos.append((distancia, destino))
-
-    if not candidatos:
-        return "", None
-    distancia, destino = min(candidatos, key=lambda item: item[0])
-    return destino, distancia
-
 def normalizar_geometria_mapa(geometria, referencias=None):
     """Normaliza uma geometria para o formato [lat, lon] esperado pelo Folium.
 
@@ -2602,7 +2235,6 @@ def atualizar_tempos_deslocamento_operacionais(route_steps, start_time_str="08:0
 
     return route_steps
 
-@st.cache_data(ttl=10, show_spinner=False)
 def obter_hora_inicio_rota(data_rota):
     """A rota do Davi é planejada para iniciar às 08:00.
 
@@ -2743,7 +2375,6 @@ def aplicar_tempos_dinamicos(route_steps, dict_concluidos, start_time_str):
     return route_steps, current_min
 
 
-@st.cache_data(ttl=5, show_spinner=False)
 def carregar_paradas_rastreadas_rota(data_rota, placa=PLACA_DAVI):
     """Carrega as visitas reais do rastreador, mais recentes primeiro."""
     try:
@@ -2758,31 +2389,6 @@ def carregar_paradas_rastreadas_rota(data_rota, placa=PLACA_DAVI):
         )
     except Exception:
         return pd.DataFrame(columns=["id", "local", "hora_chegada", "hora_saida"])
-
-
-@st.cache_data(ttl=5, show_spinner=False)
-def carregar_conclusoes_rota(data_rota):
-    """Uma leitura curta alimenta Torre, recálculo e aplicativo do Davi."""
-    try:
-        return get_df(
-            "SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data",
-            {"data": data_rota},
-        )
-    except Exception:
-        return pd.DataFrame(columns=["id", "hora_conclusao"])
-
-
-@st.cache_data(ttl=5, show_spinner=False)
-def carregar_rota_publicada_mobile(data_rota):
-    """Evita ler novamente todo o JSON da rota a cada toque no celular."""
-    try:
-        return fetch_one(
-            "SELECT json_route, json_locais, json_geometria, json_enderecos, total_km "
-            "FROM rota_ativa WHERE id = 1 AND data_rota = :data",
-            {"data": data_rota},
-        )
-    except Exception:
-        return None
 
 
 def _normalizar_local_rastreio(valor):
@@ -2870,17 +2476,16 @@ def renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min):
     valor_referencia = DATA_REF_ROTA_STR if rota_futura else hora_atual_str
 
     st.markdown(f'''
-        <div class="aproar-eta-card">
-            <div class="aproar-eta-side">
-                <div class="aproar-eta-label">{rotulo_referencia.replace('📅 ', '').replace('🕒 ', '')}</div>
-                <div class="aproar-eta-value">{valor_referencia}</div>
-            </div>
-            <div class="aproar-eta-route">→</div>
-            <div class="aproar-eta-side right">
-                <div class="aproar-eta-label">Término previsto</div>
-                <div class="aproar-eta-value" style="color:{cor_previsao};">{nova_previsao_str}</div>
-            </div>
-        </div>
+    <div style="background: linear-gradient(145deg, rgba(18,21,48,0.8), rgba(13,16,37,0.9)); padding: 15px 25px; border-radius: 12px; border: 1px solid rgba(64,116,146,.3); display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; box-shadow: 0 8px 20px rgba(0,0,0,0.2);">
+       <div style="font-size: 14px; color: #8da0b8; text-align: left;">
+            {rotulo_referencia}<br>
+            <b style="color: #e4e8f4; font-size: 20px;">{valor_referencia}</b>
+       </div>
+       <div style="font-size: 14px; color: #8da0b8; text-align: right;">
+            <span style="font-size: 20px;">🏁</span> Término previsto:<br>
+            <b style="color: {cor_previsao}; font-size: 20px;">{nova_previsao_str}</b>
+       </div>
+    </div>
     ''', unsafe_allow_html=True)
 
 # =====================================================================
@@ -2902,7 +2507,6 @@ def garantir_tabela_checkins_davi():
     execute_db(SQL_TABELA_CHECKINS_DAVI)
     return True
 
-@st.cache_data(ttl=5, show_spinner=False)
 def carregar_checkins_davi(data_rota):
     rows = fetch_all(
         """
@@ -2949,10 +2553,6 @@ def salvar_checkin_davi(data_rota, etapa_indice, destino, feita):
             """,
             {"data": data_rota, "indice": etapa_indice, "destino": destino},
         )
-    try:
-        carregar_checkins_davi.clear()
-    except Exception:
-        pass
 
 
 # =====================================================================
@@ -2983,35 +2583,6 @@ def _separar_materiais_comprovante(valor):
             vistos.add(chave)
             itens.append(item)
     return itens
-
-
-def _dividir_material_quantidade(valor):
-    """Separa a quantidade inicial do nome sem confundir medidas como 2,5mm/20kg."""
-    item = re.sub(r"\s+", " ", str(valor or "")).strip(" •-\t")
-    if not item:
-        return "Material não informado", "—"
-
-    numero = r"(\d+(?:[\.,]\d+)?)"
-    unidades = r"(un(?:id(?:ades?)?)?|pçs?|pcs?|peças?|sacos?|caixas?|rolos?|metros?|m|kg|litros?|l|kits?|pares?)"
-
-    com_unidade = re.match(
-        rf"^{numero}\s+{unidades}\b\s*(?:[-xX:]\s*)?(.+)$",
-        item,
-        flags=re.IGNORECASE,
-    )
-    if com_unidade:
-        quantidade = f"{com_unidade.group(1)} {com_unidade.group(2)}"
-        return com_unidade.group(3).strip(), quantidade
-
-    com_separador = re.match(rf"^{numero}\s*[-xX:]\s*(.+)$", item)
-    if com_separador:
-        return com_separador.group(2).strip(), com_separador.group(1)
-
-    numero_e_texto = re.match(rf"^{numero}\s+([A-Za-zÀ-ÿ].+)$", item)
-    if numero_e_texto:
-        return numero_e_texto.group(2).strip(), numero_e_texto.group(1)
-
-    return item, "—"
 
 
 def enviar_foto_comprovante_power_automate(tarefa, recebedor, foto, material_foto="GERAL", numero_foto=1):
@@ -3147,7 +2718,6 @@ def carregar_resumo_comprovantes_davi(data_rota):
     return estados
 
 
-@st.cache_data(ttl=5, show_spinner=False)
 def carregar_comprovantes_davi(data_rota):
     estados = {}
     linhas = fetch_all(
@@ -3207,7 +2777,6 @@ def registrar_foto_comprovante_davi(data_rota, tarefa, recebedor, arquivo, tipo_
     )
     try:
         carregar_resumo_comprovantes_davi.clear()
-        carregar_comprovantes_davi.clear()
     except Exception:
         pass
 
@@ -3227,7 +2796,6 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
     )
     try:
         carregar_resumo_comprovantes_davi.clear()
-        carregar_comprovantes_davi.clear()
     except Exception:
         pass
 
@@ -3256,129 +2824,20 @@ if modo_davi:
         <style>
             [data-testid="stSidebar"] {display: none !important;}
             [data-testid="stHeader"] {display: none !important;}
-            [data-testid="stToolbar"] {display:none !important;}
-            [data-testid="stAppViewContainer"] {
-                background-image:
-                    radial-gradient(circle at 100% 0%, rgba(37,99,235,.17), transparent 25rem),
-                    linear-gradient(180deg,#070b14 0%,#080b14 100%) !important;
-            }
-            .main .block-container {
-                width:100%; max-width:720px !important;
-                padding:14px 14px 92px !important;
-            }
-            .aproar-driver-header {
-                position:relative; overflow:hidden; margin:0 0 8px; padding:14px 15px 15px;
-                border:1px solid rgba(96,165,250,.20); border-radius:16px;
-                background:linear-gradient(145deg,rgba(15,27,48,.98),rgba(9,14,27,.98));
-                box-shadow:0 20px 45px rgba(0,0,0,.26);
-            }
-            .aproar-driver-header::after {
-                content:''; position:absolute; width:190px; height:190px; border-radius:50%;
-                right:-82px; bottom:-125px; background:rgba(37,99,235,.24); filter:blur(8px);
-            }
-            .aproar-driver-topline { display:flex; align-items:center; justify-content:space-between; gap:12px; position:relative; z-index:1; }
-            .aproar-driver-brand { display:flex; align-items:center; gap:9px; color:#f8fafc; font-size:14px; font-weight:900; letter-spacing:.12em; }
-            .aproar-logo-driver {
-                display:block; width:92px; max-width:34vw; height:28px;
-                object-fit:contain; object-position:left center;
-                filter:drop-shadow(0 8px 16px rgba(0,0,0,.25));
-            }
-            .aproar-driver-live {
-                display:flex; align-items:center; gap:7px; color:#bbf7d0; font-size:10px; font-weight:800;
-                letter-spacing:.08em; padding:7px 9px; border:1px solid rgba(34,197,94,.22);
-                border-radius:999px; background:rgba(34,197,94,.08);
-            }
-            .aproar-driver-live i { width:7px; height:7px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 4px rgba(34,197,94,.10); }
-            .aproar-driver-greeting { position:relative; z-index:1; margin-top:12px; color:#f8fafc; font-size:22px; font-weight:700; letter-spacing:-.045em; }
-            .aproar-driver-greeting strong { color:#60a5fa; font-weight:800; }
-            .aproar-driver-date { position:relative; z-index:1; margin-top:5px; color:#94a3b8; font-size:12.5px; font-weight:600; }
-
-            .aproar-driver-summary { margin:6px 0 12px; }
-            .aproar-driver-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
-            .driver-kpi {
-                min-width:0; padding:13px 11px 12px; border-radius:15px;
-                background:linear-gradient(145deg,rgba(18,27,47,.96),rgba(12,18,32,.98));
-                border:1px solid rgba(148,163,184,.15); box-shadow:0 10px 24px rgba(0,0,0,.15);
-            }
-            .driver-kpi span { display:block; color:#64748b; font-size:8.5px; font-weight:900; letter-spacing:.10em; }
-            .driver-kpi strong { display:block; margin-top:5px; color:#f8fafc; font-size:20px; line-height:1; font-weight:800; letter-spacing:-.04em; }
-            .driver-kpi small { display:block; overflow:hidden; margin-top:5px; color:#94a3b8; font-size:9.5px; white-space:nowrap; text-overflow:ellipsis; }
-            .driver-progress { height:4px; margin:10px 3px 12px; overflow:hidden; border-radius:999px; background:#172036; }
-            .driver-progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#22c55e); }
-            .driver-simple-progress { display:flex; justify-content:space-between; gap:10px; margin:9px 3px 0; color:#cbd5e1; font-size:10.5px; }
-            .driver-simple-progress b { color:#fff; }
-            .driver-next-stop {
-                display:grid; grid-template-columns:42px minmax(0,1fr) auto; align-items:center; gap:12px;
-                padding:15px; border-radius:17px; border:1px solid rgba(96,165,250,.25);
-                background:linear-gradient(135deg,rgba(37,99,235,.12),rgba(15,23,42,.82));
-                box-shadow:0 12px 28px rgba(0,0,0,.17);
-            }
-            .driver-stop-index {
-                display:grid; place-items:center; width:42px; height:42px; border-radius:14px;
-                background:linear-gradient(145deg,#3b82f6,#1d4ed8); color:#fff; font-size:17px; font-weight:900;
-                box-shadow:0 9px 20px rgba(37,99,235,.30);
-            }
-            .driver-stop-copy { min-width:0; }
-            .driver-stop-copy > span { display:block; color:#60a5fa; font-size:9px; font-weight:900; letter-spacing:.11em; }
-            .driver-stop-copy > strong { display:block; overflow:hidden; margin-top:3px; color:#f8fafc; font-size:17px; white-space:nowrap; text-overflow:ellipsis; }
-            .driver-stop-copy small { display:block; margin-top:4px; color:#94a3b8; font-size:11px; }
-            .driver-stop-copy small b { color:#60a5fa; }
-            .driver-gps-link {
-                display:flex; align-items:center; justify-content:center; min-height:42px; padding:0 13px;
-                color:#fff !important; font-size:10.5px; font-weight:900; white-space:nowrap; text-decoration:none !important;
-                border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8);
-                box-shadow:0 9px 20px rgba(37,99,235,.28);
-            }
-
-            .aproar-section-anchor { scroll-margin-top:12px; }
-            .aproar-section-kicker { color:#60a5fa; font-size:10px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
-            .aproar-section-title { margin:3px 0 2px; color:#f8fafc; font-size:21px; font-weight:800; letter-spacing:-.035em; }
-            .aproar-section-help { margin:0 0 10px; color:#94a3b8; font-size:12px; }
-            .aproar-eta-card { margin:10px 0 14px; }
-            [data-testid="stExpander"] { margin:6px 0 14px; box-shadow:0 12px 28px rgba(0,0,0,.16); }
-            [data-testid="stExpander"] details > summary { min-height:52px; font-weight:800; }
-            [data-testid="stCameraInput"] { border-radius:15px; overflow:hidden; }
-            [data-testid="stFileUploader"] { margin-top:4px; }
-            [data-testid="stFileUploader"] section { min-height:108px !important; }
-            [data-testid="stTextInput"] input { min-height:48px; font-size:16px; }
-            iframe[title*="streamlit_folium"] { min-height:390px; border:1px solid rgba(148,163,184,.16); }
-
-            .aproar-driver-bottom-nav {
-                position:fixed; z-index:999999; left:50%; bottom:10px; transform:translateX(-50%);
-                width:min(94%,680px); display:grid; grid-template-columns:repeat(3,1fr); gap:5px;
-                padding:7px; border:1px solid rgba(148,163,184,.18); border-radius:18px;
-                background:rgba(11,16,29,.94); box-shadow:0 18px 42px rgba(0,0,0,.48);
-                backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
-            }
-            .aproar-driver-bottom-nav a {
-                display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-                min-height:50px; border-radius:12px; color:#94a3b8 !important; font-size:10px; font-weight:800;
-                text-decoration:none !important;
-            }
-            .aproar-driver-bottom-nav a:first-child { color:#bfdbfe !important; background:rgba(37,99,235,.14); }
-            .aproar-driver-bottom-nav b { font-size:18px; line-height:1; }
-
-            @media (max-width:380px) {
-                .main .block-container { padding-left:10px !important; padding-right:10px !important; }
-                .aproar-driver-header { padding:15px; }
-                .aproar-driver-greeting { font-size:24px; }
-                .driver-kpi { padding:12px 8px; }
-                .driver-kpi strong { font-size:18px; }
-                .driver-next-stop { grid-template-columns:40px minmax(0,1fr); }
-                .driver-gps-link { grid-column:1 / -1; }
-            }
+            .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 100% !important;}
         </style>
     """, unsafe_allow_html=True)
 
-    renderizar_cabecalho_motorista()
+    st.markdown("<h2 style='text-align: center; color: #e4e8f4; margin-bottom: 0;'>📱 App do Motorista</h2>", unsafe_allow_html=True)
+    st.caption(f"<div style='text-align:center; font-size: 14px; margin-bottom: 15px; color: #8da0b8;'>Rota oficial de: <b>{DATA_REF_ROTA_STR}</b></div>", unsafe_allow_html=True)
 
-    if st.button("↻  ATUALIZAR ROTA", use_container_width=True): st.rerun()
+    if st.button("🔄 ATUALIZAR ROTA", use_container_width=True, type="primary"): st.rerun()
 
     erro_checkin_mobile = ""
     try:
         garantir_tabela_checkins_davi()
-        res = carregar_rota_publicada_mobile(DATA_REF_ROTA_STR)
-        df_mobile = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
+        res = fetch_one("SELECT json_route, json_locais, json_geometria, json_enderecos, total_km FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
+        df_mobile = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_mobile = dict(zip(df_mobile['id'].astype(str), df_mobile['hora_conclusao']))
         hora_inicio_real = obter_hora_inicio_rota(DATA_REF_ROTA_STR)
     except: res, dict_concluidos_mobile, hora_inicio_real = None, {}, HORA_INICIO_ROTA_DAVI
@@ -3469,7 +2928,7 @@ if modo_davi:
     
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
-    renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos_dict, locais_dict)
+    renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
 
     # ---------------------------------------------------------------
@@ -3477,13 +2936,7 @@ if modo_davi:
     # O cartão em que o motorista para vira a parada ativa do comprovante.
     # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
     # ---------------------------------------------------------------
-    st.markdown("""
-            <div class="aproar-section-anchor" id="comprovante">
-                <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
-            <div class="aproar-section-title">Confirmar entrega</div>
-            <div class="aproar-section-help">Digite quem recebeu e envie uma foto</div>
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<div id='comprovante'></div>", unsafe_allow_html=True)
 
     if "davi_comprovantes_estado" not in st.session_state:
         st.session_state["davi_comprovantes_estado"] = {}
@@ -3536,19 +2989,9 @@ if modo_davi:
     except Exception:
         foco_comprovante = None
 
-    # Sem seleção manual: abre automaticamente a primeira entrega que ainda
-    # não possui comprovante finalizado.
-    if foco_comprovante is None:
-        for indice_entrega, itens_entrega in sorted(entregas_por_etapa.items()):
-            if any(
-                not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
-                for item in itens_entrega
-            ):
-                foco_comprovante = indice_entrega
-                break
-
     if entregas_por_etapa:
-        with st.expander("📸 REGISTRAR ENTREGA", expanded=True):
+        with st.expander("📸 COMPROVANTE DA ENTREGA", expanded=True):
+            st.caption("↔️ Não precisa escolher a demanda aqui. Deslize o roteiro e pare na parada desejada; ela é selecionada automaticamente.")
 
             if not persistencia_comprovantes_ok:
                 st.warning("O comprovante continua funcionando, mas o histórico interno não pôde ser sincronizado agora. Evite recarregar a página até concluir a entrega.")
@@ -3557,10 +3000,10 @@ if modo_davi:
 
             if not entregas_foco:
                 if foco_comprovante is None:
-                    st.success("✅ Todos os comprovantes de entrega foram finalizados.")
+                    st.info("👇 Deslize o roteiro abaixo até uma parada com **ENTREGA**. Ao soltar o dedo, o comprovante dessa parada abre automaticamente.")
                 else:
                     destino_foco = str(route_steps[foco_comprovante].get("destino", "") or "")
-                    st.info(f"📍 **{destino_foco or 'Esta etapa'}** não possui entrega para registrar.")
+                    st.info(f"📍 **{destino_foco or 'Esta etapa'}** não possui entrega para comprovar. Continue deslizando até uma parada com entrega.")
             else:
                 pendentes_foco = []
                 for item_foco in entregas_foco:
@@ -3667,19 +3110,43 @@ if modo_davi:
                             help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
                         )
 
-                    material_foto = "GERAL"
-                    versao_input = int(estado.get("input_version", 0))
-                    foto_comprovante = st.file_uploader(
-                        "2️⃣ Tirar ou escolher a foto",
-                        type=["jpg", "jpeg", "png", "webp"],
-                        accept_multiple_files=False,
-                        key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
-                        help="No celular, escolha Câmera ou Fotos/Galeria.",
+                    opcoes_material = ["📦 GERAL — todos os materiais"]
+                    opcoes_material += [f"🔹 {material}" for material in materiais_sel]
+                    escolha_material = st.selectbox(
+                        "2️⃣ O que aparece nesta foto?",
+                        opcoes_material,
+                        key=f"davi_comprovante_material_{chave_comprovante}",
                     )
+                    material_foto = "GERAL" if escolha_material.startswith("📦 GERAL") else escolha_material[2:].strip()
+
+                    modo_foto_comprovante = st.radio(
+                        "3️⃣ Foto",
+                        ["📸 Melhor qualidade", "⚡ Câmera rápida"],
+                        horizontal=True,
+                        key=f"davi_comprovante_modo_foto_{chave_comprovante}",
+                        help="Melhor qualidade usa a câmera/galeria nativa do celular e preserva melhor a resolução. Câmera rápida usa a captura do navegador.",
+                    )
+
+                    versao_input = int(estado.get("input_version", 0))
+                    if modo_foto_comprovante == "📸 Melhor qualidade":
+                        st.caption("📱 Recomendado: toque abaixo e escolha **Câmera** no celular. A imagem é enviada sem redimensionamento pelo app.")
+                        foto_comprovante = st.file_uploader(
+                            "Tirar ou selecionar foto",
+                            type=["jpg", "jpeg", "png", "webp"],
+                            accept_multiple_files=False,
+                            key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                            help="No celular, o seletor normalmente oferece Câmera, Fotos/Galeria ou Arquivos.",
+                        )
+                    else:
+                        st.caption("⚡ Mais rápido, mas a qualidade pode ser menor porque a captura é feita pelo navegador.")
+                        foto_comprovante = st.camera_input(
+                            "Foto do material entregue",
+                            key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
+                        )
 
                     numero_proxima_foto = len(estado["fotos"]) + 1
                     if st.button(
-                        "✅ REGISTRAR ENTREGA",
+                        f"📤 ENVIAR FOTO {numero_proxima_foto}",
                         type="primary",
                         use_container_width=True,
                         key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
@@ -3700,7 +3167,6 @@ if modo_davi:
                                 )
                             if sucesso_comprovante:
                                 tipo_registro = "Foto geral" if material_foto == "GERAL" else material_foto
-                                finalizacao_automatica_ok = True
                                 try:
                                     registrar_foto_comprovante_davi(
                                         DATA_REF_ROTA_STR,
@@ -3709,12 +3175,8 @@ if modo_davi:
                                         retorno_comprovante,
                                         tipo_registro,
                                     )
-                                    definir_comprovante_finalizado_davi(
-                                        DATA_REF_ROTA_STR, demanda_id_sel, True
-                                    )
                                 except Exception:
                                     persistencia_comprovantes_ok = False
-                                    finalizacao_automatica_ok = False
 
                                 estado["recebedor"] = nome_recebedor
                                 estado["fotos"].append({
@@ -3723,11 +3185,9 @@ if modo_davi:
                                     "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
                                 })
                                 estado["input_version"] = versao_input + 1
-                                estado["finalizado"] = finalizacao_automatica_ok
                                 estado["mensagem"] = (
-                                    "✅ Entrega registrada com foto e nome do recebedor."
-                                    if finalizacao_automatica_ok
-                                    else "Foto enviada. Toque em finalizar para concluir o registro."
+                                    f"Foto {numero_proxima_foto} enviada. "
+                                    "Você pode adicionar outra ou finalizar o comprovante."
                                 )
                                 st.rerun()
                             else:
@@ -3757,14 +3217,8 @@ if modo_davi:
                         st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
 
 
-    st.markdown(f"""
-        <div class="aproar-section-anchor" id="roteiro">
-            <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
-            <div class="aproar-section-title">Roteiro do dia</div>
-            <div class="aproar-section-help">{total_km:.1f} km • toque em uma parada para ver o que fazer</div>
-        </div>
-    """, unsafe_allow_html=True)
-    MODO_DAVI_SIMPLES = True
+    st.markdown(f"<h4 style='color: #e4e8f4; margin-bottom:4px;'>Roteiro passo a passo ({total_km:.1f} km)</h4>", unsafe_allow_html=True)
+    st.caption("Deslize para o lado para avançar pelas etapas da rota.")
     cartoes_mobile = []
     numero_parada_mobile = 1
 
@@ -3882,128 +3336,32 @@ if modo_davi:
             f"<div class='conteudo-card'>{corpo_acoes}</div>{rodape_card}</article>"
         )
 
-    if MODO_DAVI_SIMPLES:
-        numero_lista = 0
-        for indice_lista, etapa_lista in enumerate(route_steps):
-            tipo_lista = str(etapa_lista.get("type", "") or "")
-            destino_lista = str(etapa_lista.get("destino", "") or "")
-            inicio_lista = indice_lista == 0 and destino_lista == p_saida
-            checkin_lista = dict_checkins_mobile.get(indice_lista)
-            concluida_lista = bool(etapa_lista.get("is_concluded")) or bool(checkin_lista)
-
-            if tipo_lista == "lunch":
-                titulo_lista = "🍔 Pausa para almoço"
-            elif tipo_lista == "return":
-                titulo_lista = f"🏁 Retorno — {destino_lista}"
-            elif inicio_lista:
-                titulo_lista = f"🏁 Preparação — {destino_lista}"
-            else:
-                numero_lista += 1
-                titulo_lista = f"{'✅' if concluida_lista else str(numero_lista) + '.'} {destino_lista}"
-
-            expandir_lista = indice_lista == foco_comprovante
-            with st.expander(titulo_lista, expanded=expandir_lista):
-                if tipo_lista == "lunch":
-                    st.write(
-                        f"Horário previsto: **{etapa_lista.get('dyn_chegada', '12:00')} às "
-                        f"{etapa_lista.get('dyn_saida', '13:00')}**"
-                    )
-                    continue
-                if tipo_lista == "return":
-                    st.write(f"Chegada prevista: **{etapa_lista.get('dyn_chegada', '--:--')}**")
-                    continue
-
-                if inicio_lista:
-                    st.caption(
-                        f"Preparação: {etapa_lista.get('chegada', '--:--')} às "
-                        f"{etapa_lista.get('saida', '--:--')}"
-                    )
-                else:
-                    st.caption(
-                        f"Chegada prevista: {etapa_lista.get('dyn_chegada', '--:--')} • "
-                        f"Trecho: {float(etapa_lista.get('dist', 0) or 0):.1f} km"
-                    )
-
-                tem_entrega_lista = False
-                for acao_lista, tarefa_lista in (etapa_lista.get("actions") or []):
-                    eh_entrega_lista = acao_lista == "ENTREGAR"
-                    tem_entrega_lista = tem_entrega_lista or eh_entrega_lista
-                    icone_lista = "📬" if eh_entrega_lista else "📦"
-                    rotulo_lista = "ENTREGAR" if eh_entrega_lista else "COLETAR"
-                    st.markdown(
-                        f"**{icone_lista} {rotulo_lista} — {tarefa_lista.get('Obra', 'Obra não informada')}**"
-                    )
-                    materiais_lista = _separar_materiais_comprovante(tarefa_lista.get("Materiais", ""))
-                    if materiais_lista:
-                        st.markdown("\n".join(f"- {material}" for material in materiais_lista))
-                    else:
-                        st.caption("Material não informado")
-
-                if not inicio_lista:
-                    endereco_lista = str(enderecos_dict.get(destino_lista, "") or "")
-                    coordenadas_lista = locais_dict.get(destino_lista, [None, None])
-                    if endereco_lista.startswith("http"):
-                        link_lista = endereco_lista
-                    elif endereco_lista:
-                        link_lista = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_lista)}"
-                    elif len(coordenadas_lista) >= 2 and coordenadas_lista[0] is not None:
-                        link_lista = f"https://www.google.com/maps/dir/?api=1&destination={coordenadas_lista[0]},{coordenadas_lista[1]}"
-                    else:
-                        link_lista = ""
-
-                    if link_lista:
-                        st.link_button("🧭 ABRIR GPS", link_lista, use_container_width=True)
-
-                    if tem_entrega_lista and not concluida_lista:
-                        if st.button(
-                            "📸 REGISTRAR ENTREGA DESTA PARADA",
-                            use_container_width=True,
-                            key=f"davi_ir_comprovante_simples_{indice_lista}",
-                        ):
-                            st.query_params.clear()
-                            st.query_params["foco"] = str(indice_lista)
-                            st.rerun()
-
-                if tipo_lista == "stop" and not etapa_lista.get("is_concluded"):
-                    texto_checkin = "↩️ DESFAZER CONCLUSÃO" if checkin_lista else "✅ MARCAR PARADA COMO FEITA"
-                    if st.button(
-                        texto_checkin,
-                        use_container_width=True,
-                        key=f"davi_checkin_simples_{indice_lista}_{'1' if checkin_lista else '0'}",
-                    ):
-                        salvar_checkin_davi(
-                            DATA_REF_ROTA_STR, indice_lista, destino_lista, not bool(checkin_lista)
-                        )
-                        st.rerun()
-
-    elif cartoes_mobile:
+    if cartoes_mobile:
         html_carrossel = """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
             * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Manrope, Arial, sans-serif; }
-            h1, h2, h3, strong, .obra { font-family:Sora, Manrope, Arial, sans-serif; }
-            .barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 2px 10px; color:#94a3b8; font-size:11px; font-weight:700; }
+            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Inter, Arial, sans-serif; }
+            .barra { display:flex; justify-content:space-between; align-items:center; margin:0 4px 8px; color:#8da0b8; font-size:13px; }
             .resumo-topo { display:flex; align-items:center; gap:6px; }
-            .feitas { color:#bbf7d0; font-weight:900; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.23); padding:6px 9px; border-radius:999px; }
-            .contador { color:#dbeafe; font-weight:900; background:rgba(37,99,235,.11); border:1px solid rgba(96,165,250,.24); padding:6px 10px; border-radius:999px; }
+            .feitas { color:#86efac; font-weight:800; background:rgba(22,163,74,.13); border:1px solid rgba(34,197,94,.28); padding:6px 9px; border-radius:999px; }
+            .contador { color:#e4e8f4; font-weight:800; background:#151a31; border:1px solid #2b3654; padding:6px 10px; border-radius:999px; }
             .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
             .trilho::-webkit-scrollbar { display:none; }
-            .cartao { flex:0 0 calc(100% - 6px); height:432px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:20px; box-shadow:0 18px 38px rgba(0,0,0,.34); }
-            .cartao.preparacao { border-color:rgba(59,130,246,.48); }
-            .cartao.almoco { border-color:rgba(245,158,11,.48); }
-            .cartao.retorno { border-color:rgba(34,197,94,.48); }
-            .cartao.feita { border-color:rgba(34,197,94,.62); box-shadow:0 0 0 2px rgba(34,197,94,.12),0 18px 38px rgba(0,0,0,.34); }
+            .cartao { flex:0 0 calc(100% - 8px); height:430px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#121530,#0d1025); border:1px solid #303a59; border-radius:18px; box-shadow:0 10px 28px rgba(0,0,0,.32); }
+            .cartao.preparacao { border-color:#2563eb; }
+            .cartao.almoco { border-color:#f59e0b; }
+            .cartao.retorno { border-color:#16a34a; }
+            .cartao.feita { border-color:#22c55e; box-shadow:0 0 0 2px rgba(34,197,94,.18),0 10px 28px rgba(0,0,0,.32); }
             .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
-            .cartao.selecionada { box-shadow:0 0 0 2px rgba(59,130,246,.26),0 20px 42px rgba(0,0,0,.38); }
-            .topo-card { padding:18px 18px 14px; border-bottom:1px solid rgba(148,163,184,.13); background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 60%); }
+            .cartao.selecionada { box-shadow:0 0 0 2px rgba(37,99,235,.32),0 10px 28px rgba(0,0,0,.32); }
+            .topo-card { padding:18px 18px 13px; border-bottom:1px solid rgba(141,160,184,.18); }
             .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
             .almoco .selo { background:#92400e; color:#fef3c7; }
             .retorno .selo { background:#166534; color:#dcfce7; }
-            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; letter-spacing:-.035em; }
+            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; }
             .meta { color:#8da0b8; font-size:12px; line-height:1.45; }
-            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 9px; scrollbar-width:thin; scrollbar-color:#334155 transparent; }
+            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 8px; }
             .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
             .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
             .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
@@ -4027,13 +3385,13 @@ if modo_davi:
             .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
             .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
-            .rodape-card { display:grid; gap:8px; padding:11px 14px 14px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
-            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid rgba(34,197,94,.48); background:rgba(22,163,74,.08); color:#bbf7d0; font-size:12.5px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
+            .rodape-card { display:grid; gap:8px; padding:10px 14px 15px; border-top:1px solid rgba(141,160,184,.14); }
+            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid #22c55e; background:rgba(22,163,74,.08); color:#bbf7d0; font-size:13px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
-            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
+            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:14px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 5px 13px rgba(37,99,235,.28); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
-            .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
+            .controle { border:1px solid #303a59; background:#151a31; color:#e4e8f4; border-radius:10px; padding:10px 8px; font-weight:800; cursor:pointer; }
             .controle:disabled { opacity:.35; }
             .pontos { display:flex; gap:5px; justify-content:center; max-width:130px; overflow:hidden; }
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
@@ -4160,18 +3518,7 @@ if modo_davi:
         st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
-    mostrar_mapa_davi = st.toggle("🗺️ Mostrar mapa completo", value=False, key="davi_mostrar_mapa_completo")
-    if not mostrar_mapa_davi:
-        st.caption("O botão **ABRIR GPS** de cada parada leva direto ao destino.")
-        st.stop()
-
-    st.markdown("""
-        <div class="aproar-section-anchor" id="mapa-rota">
-            <div class="aproar-section-kicker">VISÃO GERAL</div>
-            <div class="aproar-section-title">Mapa da rota</div>
-            <div class="aproar-section-help">Trajeto, sequência e localização das paradas</div>
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown("#### 🗺️ Visão geral da rota")
     m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
     pontos_reais_mobile = []
     if p_saida in locais_dict:
@@ -4268,267 +3615,10 @@ if modo_davi:
         ).add_to(m_mobile)
 
     st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
-    st.markdown("<div style='text-align:center;font-size:11px;margin:8px 0 18px;color:#64748b;'><b style='color:#94a3b8;'>LEGENDA</b> &nbsp; 🟡 Coleta &nbsp; 🟢 Entrega &nbsp; 🏁 Início<br>Azul = trajeto • cinza = ajuste visual do marcador</div>", unsafe_allow_html=True)
-    st.markdown("""
-        <nav class="aproar-driver-bottom-nav" aria-label="Navegação do motorista">
-            <a href="#rota"><b>⌂</b><span>Resumo</span></a>
-            <a href="#roteiro"><b>↗</b><span>Roteiro</span></a>
-            <a href="#mapa-rota"><b>⌖</b><span>Mapa</span></a>
-        </nav>
-    """, unsafe_allow_html=True)
-    st.caption("Central de Logística APROAR • rota sincronizada com a Torre")
+    st.markdown("<div style='text-align: center; font-size: 13px; margin-top: 5px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início | 🟡🟢 Ambos<br><span style='font-size:11px;'>Azul = trajeto • cinza pontilhado = marcador deslocado para ficar legível</span></div>", unsafe_allow_html=True)
+    st.divider()
+    st.caption("Central de Logística APROAR")
     st.stop()
-
-# =====================================================================
-# DESIGN INDUSTRIAL MINIMAL — TORRE DE CONTROLE (SOMENTE COMPUTADOR)
-# =====================================================================
-st.markdown("""
-    <style>
-        :root {
-            --ap-bg:#070913;
-            --ap-bg-soft:#0a0e1b;
-            --ap-surface:#0f1526;
-            --ap-surface-2:#131b30;
-            --ap-surface-3:#18223a;
-            --ap-line:rgba(148,163,184,.18);
-            --ap-line-strong:rgba(96,165,250,.32);
-            --ap-text:#f4f7fb;
-            --ap-muted:#ffffff;
-            --ap-blue:#2563eb;
-            --ap-blue-2:#3b82f6;
-            --ap-green:#22c55e;
-            --ap-amber:#f59e0b;
-            --ap-red:#ef4444;
-            --ap-radius-sm:4px;
-            --ap-radius:6px;
-            --ap-radius-lg:8px;
-            --ap-shadow:0 14px 34px rgba(0,0,0,.22);
-        }
-
-        html, body, [data-testid="stAppViewContainer"] { background:var(--ap-bg) !important; }
-        [data-testid="stAppViewContainer"] {
-            background-image:linear-gradient(180deg,#080b18 0%,#060812 100%) !important;
-        }
-        .main .block-container { max-width:1680px; padding:.85rem 1.25rem 4rem; }
-        [data-testid="stHeader"] {
-            background:rgba(7,9,19,.94) !important;
-            border-bottom:1px solid var(--ap-line); backdrop-filter:blur(14px);
-        }
-        [data-testid="stSidebar"] {
-            width:292px !important; min-width:292px !important;
-            background:#0a1020 !important; border-right:1px solid var(--ap-line) !important;
-        }
-        [data-testid="stSidebar"] .block-container { padding:1rem .9rem 2rem; }
-
-        .aproar-shell-header {
-            margin:0 0 14px; padding:13px 4px 18px; overflow:visible;
-            background:transparent; border:0; border-bottom:1px solid var(--ap-line);
-            border-radius:0; box-shadow:none;
-        }
-        .aproar-shell-header::after { display:none; }
-        .aproar-brand { gap:20px; }
-        .aproar-logo-main { width:170px; height:52px; filter:none; }
-        .aproar-eyebrow { color:#60a5fa; font-size:10px; letter-spacing:.17em; }
-        .aproar-title {
-            margin-top:1px; color:#f6f7f6; font-size:24px; font-weight:700;
-            letter-spacing:.015em; text-transform:uppercase;
-        }
-        .aproar-subtitle { color:#8ea0ba; font-size:12px; }
-        .aproar-meta-chip {
-            min-height:42px; border-radius:5px; color:#dbeafe;
-            background:#101a31; border:1px solid #263759;
-        }
-        .aproar-meta-chip.primary { color:#bfdbfe; background:#0f1a31; border-color:#28518d; }
-        .aproar-meta-chip:last-child { color:#7be5a9; border-color:rgba(34,197,94,.28); }
-        .aproar-dot { background:var(--ap-green); }
-
-        .aproar-sidebar-brand {
-            margin:0 0 15px; padding:8px 8px 16px; gap:12px;
-            background:transparent; border:0; border-bottom:1px solid var(--ap-line); border-radius:0;
-        }
-        .aproar-logo-sidebar { width:118px; height:42px; flex-basis:118px; }
-        .aproar-sidebar-brand strong { color:#f4f5f4; font-size:12px; text-transform:uppercase; }
-        .aproar-sidebar-brand small { color:#71829e; }
-        .aproar-sidebar-section {
-            margin:4px 8px 7px; color:#62738f; font-size:9px; font-weight:800;
-            letter-spacing:.16em; text-transform:uppercase;
-        }
-
-        [data-testid="stSidebar"] div[role="radiogroup"] { gap:4px; }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label {
-            min-height:44px; margin:0; padding:0 11px; border-left:3px solid transparent;
-            border-radius:4px; background:transparent; color:#aab2af;
-            transition:background .14s ease,color .14s ease,border-color .14s ease;
-        }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:#121b30; color:#fff; }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-            color:#fff; background:linear-gradient(90deg,rgba(239,68,68,.20),rgba(239,68,68,.05));
-            border-left-color:var(--ap-red);
-        }
-        [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child,
-        [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child { display:none !important; }
-        [data-testid="stSidebar"] div[role="radiogroup"] p { font-size:12px; font-weight:700; }
-
-        .stButton > button, .stDownloadButton > button, [data-testid="baseButton-secondary"] {
-            min-height:40px; border-radius:4px !important; background:#10172a !important;
-            border:1px solid var(--ap-line) !important; box-shadow:none !important;
-        }
-        .stButton > button:hover, .stDownloadButton > button:hover {
-            transform:none; color:#d9e5f3 !important; border-color:rgba(113,149,196,.46) !important;
-        }
-        button[kind="primary"], [data-testid="baseButton-primary"],
-        section[data-testid="stMain"] .stButton > button[kind="primary"] {
-            min-height:42px; border-radius:4px !important; color:#f8fbff !important;
-            background:#2563eb !important; border:1px solid #3b82f6 !important; box-shadow:none !important;
-        }
-        button[kind="primary"]:hover { transform:none; color:#fff !important; background:#2f6fec !important; box-shadow:none !important; }
-
-        div[data-testid="stMetric"], div[data-testid="stForm"],
-        div[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stExpander"],
-        [data-testid="stDataFrame"], [data-testid="stTable"] {
-            border-radius:6px !important; background:#0f1526 !important;
-            border:1px solid var(--ap-line) !important; box-shadow:none !important;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] { padding:14px !important; }
-        [data-testid="stAlert"], [data-testid="stAlert"] > div,
-        div[data-baseweb="notification"] {
-            border-radius:5px !important; color:#d7dcda !important;
-            background:#414916 !important; border-color:#59631d !important;
-        }
-        .aproar-eta-card {
-            margin:9px 0 14px; border-radius:6px; background:#10182c;
-            border:1px solid var(--ap-line); box-shadow:none;
-        }
-        .aproar-eta-value { font-size:21px; }
-        .aproar-eta-side.right .aproar-eta-value { color:var(--ap-green); }
-        iframe[title*="streamlit_folium"], div[data-testid="stIFrame"] iframe {
-            border:1px solid var(--ap-line); border-radius:6px;
-        }
-        [data-testid="stExpander"] details > summary { min-height:46px; }
-        [data-testid="stExpander"] details > summary:hover { color:#d9e5f3; }
-
-        .aproar-industrial-heading {
-            display:flex; align-items:center; justify-content:space-between; gap:12px;
-            margin:0 0 10px; padding:0 0 10px; border-bottom:1px solid var(--ap-line);
-        }
-        .aproar-industrial-heading h2 {
-            margin:0; color:#f4f5f4 !important; font-size:18px; font-weight:700;
-            letter-spacing:.035em; text-transform:uppercase;
-        }
-        .aproar-industrial-heading span {
-            padding:4px 8px; color:#aab2af; font-size:10px; font-weight:800;
-            letter-spacing:.08em; border:1px solid var(--ap-line); border-radius:4px;
-        }
-        .aproar-stop-header {
-            display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px;
-            margin:-2px 0 9px; padding:8px 0 10px; border-bottom:1px solid var(--ap-line);
-        }
-        .aproar-stop-action {
-            padding:4px 7px; border-radius:4px; font-size:10px; font-weight:900;
-            letter-spacing:.08em;
-        }
-        .aproar-stop-action.coleta { color:#fbbf24; background:rgba(245,158,11,.10); border:1px solid rgba(245,158,11,.35); }
-        .aproar-stop-action.entrega { color:#4ade80; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.30); }
-        .aproar-stop-copy { min-width:0; }
-        .aproar-stop-copy strong { display:block; overflow:hidden; color:#f4f5f4; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
-        .aproar-stop-copy small { display:block; margin-top:3px; color:#87918e; font-size:10px; }
-        .aproar-stop-number { color:#67716e; font-size:11px; font-weight:800; }
-        .aproar-material-table { margin:5px 0; overflow:hidden; border:1px solid var(--ap-line); border-radius:4px; }
-        .aproar-material-row {
-            display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px;
-            padding:7px 9px; background:#0b1020; border-bottom:1px solid rgba(148,163,184,.10);
-        }
-        .aproar-material-row:last-child { border-bottom:0; }
-        .aproar-material-row span { color:#d6dbd9; font-size:11px; }
-        .aproar-material-row strong { color:#f4f5f4; font-size:11px; white-space:nowrap; }
-        .aproar-unit-line {
-            display:flex; justify-content:space-between; gap:10px; margin-top:7px;
-            color:#7f8986; font-size:10px;
-        }
-        .aproar-unit-line strong { color:#cfd5d2; text-align:right; }
-        .aproar-industrial-summary {
-            display:grid; grid-template-columns:1.35fr .75fr; gap:10px; margin-top:10px;
-        }
-        .aproar-route-panel, .aproar-fleet-panel {
-            min-width:0; padding:13px 14px; background:#0f1526;
-            border:1px solid var(--ap-line); border-radius:6px;
-        }
-        .aproar-summary-title {
-            display:flex; align-items:center; justify-content:space-between; gap:10px;
-            padding-bottom:9px; border-bottom:1px solid var(--ap-line);
-        }
-        .aproar-summary-title strong { color:#f4f5f4; font-size:13px; text-transform:uppercase; }
-        .aproar-summary-title span { color:var(--ap-blue-2); font-size:9px; font-weight:800; letter-spacing:.08em; }
-        .aproar-summary-times { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:12px 0; }
-        .aproar-summary-times div:last-child { text-align:right; }
-        .aproar-summary-times span, .aproar-summary-times strong { display:block; }
-        .aproar-summary-times span { color:#7d8784; font-size:9px; text-transform:uppercase; }
-        .aproar-summary-times strong { margin-top:3px; color:#f4f5f4; font-size:20px; }
-        .aproar-summary-times div:last-child strong { color:var(--ap-green); }
-        .aproar-summary-line { width:100px; height:4px; background:#242b29; }
-        .aproar-summary-line i { display:block; width:62%; height:100%; background:var(--ap-blue); }
-        .aproar-summary-data { display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--ap-line); }
-        .aproar-summary-data div { padding:9px 8px 0; border-right:1px solid var(--ap-line); }
-        .aproar-summary-data div:first-child { padding-left:0; }
-        .aproar-summary-data div:last-child { border-right:0; }
-        .aproar-summary-data span, .aproar-summary-data strong { display:block; }
-        .aproar-summary-data span { color:#747e7b; font-size:8px; text-transform:uppercase; }
-        .aproar-summary-data strong { margin-top:4px; color:#dce1df; font-size:11px; }
-        .aproar-fleet-body { padding-top:12px; }
-        .aproar-fleet-body span, .aproar-fleet-body strong, .aproar-fleet-body small { display:block; }
-        .aproar-fleet-body > span { color:#737d7a; font-size:9px; text-transform:uppercase; }
-        .aproar-fleet-body strong { margin-top:5px; color:#f4f5f4; font-size:14px; }
-        .aproar-fleet-body small { margin-top:3px; color:#8b9592; }
-        .aproar-fleet-cost { margin-top:12px; padding-top:10px; border-top:1px solid var(--ap-line); }
-        .aproar-fleet-cost b { color:#cbd9e9; font-size:15px; }
-
-        /* Roteiro: informação importante sem transformar cada recado em um banner. */
-        .aproar-inline-note {
-            display:flex; align-items:flex-start; gap:8px; margin:7px 0 10px; padding:7px 10px;
-            color:#cbd5e1; font-size:11px; line-height:1.4; background:rgba(15,23,42,.62);
-            border:1px solid rgba(148,163,184,.16); border-left:3px solid #60a5fa; border-radius:6px;
-        }
-        .aproar-inline-note.warn { border-left-color:#f59e0b; background:rgba(245,158,11,.055); }
-        .aproar-inline-note.danger { border-left-color:#ef4444; background:rgba(239,68,68,.055); }
-        .aproar-inline-note.ok { border-left-color:#22c55e; background:rgba(34,197,94,.045); }
-        .aproar-inline-note b { color:#f4f7fb; }
-        .aproar-route-meta-line {
-            display:flex; flex-wrap:wrap; gap:7px 16px; margin:4px 0 12px; padding:7px 0;
-            color:#94a3b8; font-size:10.5px; border-bottom:1px solid rgba(148,163,184,.12);
-        }
-        .aproar-route-meta-line b { color:#dbe4f0; }
-        .aproar-special-row {
-            display:flex; align-items:center; justify-content:space-between; gap:12px; margin:6px 0; padding:7px 10px;
-            color:#cbd5e1; font-size:11px; background:#0b1220; border:1px solid rgba(148,163,184,.14); border-radius:6px;
-        }
-
-        /* Legendas e subtextos brancos — somente na plataforma do computador. */
-        [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
-        .stCaption, .stCaption p,
-        [data-testid="stSidebar"] small, [data-testid="stSidebar"] .stCaption,
-        [data-testid="stSidebar"] .stCaption p,
-        .aproar-subtitle, .aproar-sidebar-brand small,
-        .aproar-stop-copy small, .aproar-stop-number,
-        .aproar-unit-line, .aproar-unit-line strong,
-        .aproar-eta-label, .aproar-industrial-heading span,
-        .aproar-summary-title span, .aproar-summary-times span,
-        .aproar-summary-data span, .aproar-fleet-body > span,
-        .aproar-fleet-body small {
-            color:#ffffff !important; opacity:1 !important;
-        }
-
-        ::-webkit-scrollbar-track { background:#080b0b; }
-        ::-webkit-scrollbar-thumb { background:#2c3331; border-color:#080b0b; border-radius:2px; }
-        ::-webkit-scrollbar-thumb:hover { background:#3b82f6; }
-
-        @media (max-width:1100px) {
-            [data-testid="stSidebar"] { width:250px !important; min-width:250px !important; }
-            .aproar-title { font-size:20px; }
-            .aproar-logo-main { width:142px; }
-            .aproar-industrial-summary { grid-template-columns:1fr; }
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 # =====================================================================
 # TORRE DE CONTROLE (PC)
@@ -4537,7 +3627,6 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 6
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -4669,7 +3758,6 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("SV ELÉTRICA CD", "R. Licurgo Montenegro, 585 - Padre Andrade, Fortaleza - CE, 60356-215"),
     ("SV ELÉTRICA WASHINGTON SOARES", "Av. Washington Soares, 6450 - Cambeba, Fortaleza - CE, 60822-142"),
     ("SV ELÉTRICA MARACANAÚ", "Av. Dr. Mendel Steinbruch, 6340 - Aracapé, Fortaleza - CE, 60765-242"),
-    ("FORTEX", "Rodovia 4º Anel Viário, 1515 - KM 9,5 - Distrito Industrial III, Maracanaú - CE, 61930-220"),
 ]
 
 SCHEMA_APP_VERSION = "2026-08-28-v13"
@@ -4788,13 +3876,6 @@ def carregar_rota_salva_para_sessao(data_rota):
         st.session_state['horario_matriz_rota'] = res_rota[6] or ""
         if st.session_state['route_steps']:
             st.session_state['p_saida'] = st.session_state['route_steps'][0].get('destino', 'ESCRITÓRIO')
-            # Uma rota persistida por um motor antigo pode conter o mesmo endereço
-            # em várias paradas (por exemplo, BARRA -> FIEC -> BARRA). Não a tratamos
-            # como planejamento definitivo: o módulo Roteiro usará este sinal para
-            # carregar as demandas e reconstruí-la com uma visita por local.
-            st.session_state['_rota_locais_repetidos_carregada'] = detectar_locais_repetidos_rota(
-                st.session_state['route_steps'], st.session_state['p_saida']
-            )
             _ultima_saida = str(st.session_state['route_steps'][-1].get('saida', '') or '')
             try:
                 h, m = map(int, _ultima_saida.split(':')[:2])
@@ -5177,33 +4258,6 @@ def canonicalizar_ponto_rota(nome):
     return texto
 
 
-def obter_endereco_fornecedor_fallback(nome):
-    """Obtém endereço conhecido sem substituir cadastros manuais do banco."""
-    chave = canonicalizar_ponto_rota(nome)
-    for apelido, endereco in ENDERECOS_FORNECEDORES_FALLBACK:
-        if canonicalizar_ponto_rota(apelido) == chave:
-            return endereco
-    return ""
-
-
-def detectar_locais_repetidos_rota(route_steps, ponto_saida=""):
-    """Lista paradas físicas repetidas, ignorando preparação e retorno à base."""
-    vistos = set()
-    repetidos = []
-    for step in route_steps or []:
-        if not isinstance(step, dict) or step.get("type") != "stop":
-            continue
-        local = canonicalizar_ponto_rota(step.get("destino", ""))
-        if not local or local in {"DESCONHECIDO", "NAN", "NONE"}:
-            continue
-        # Uma eventual parada intermediária na própria base também é erro lógico,
-        # salvo a preparação/retorno, que usam outros tipos de etapa.
-        if local in vistos and local not in repetidos:
-            repetidos.append(local)
-        vistos.add(local)
-    return repetidos
-
-
 # =====================================================================
 # AJUSTES MANUAIS DA ROTA — ARRASTAR DEMANDAS ENTRE PARADAS
 # =====================================================================
@@ -5243,28 +4297,12 @@ def _chave_acao_rota(tarefa, acao):
     return f"{str((tarefa or {}).get('id', '') or '')}|{str(acao or '').upper()}"
 
 
-def demanda_obrigatoria_no_dia(tarefa):
-    """HOJE/VENCIDA é compromisso do dia, salvo adiamento operacional explícito."""
-    urgencia = remover_acentos(str((tarefa or {}).get('Urgência', '') or '')).upper()
-    return any(marcador in urgencia for marcador in ('HOJE', 'VENCIDA', 'PRIORIDADE OPERACIONAL'))
-
-
 def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
-    """Aplica endereços e prioridades operacionais antes de montar a rota."""
+    """Aplica origem/destino manuais antes do otimizador montar a rota."""
     if df is None or df.empty or not isinstance(ajustes, dict):
         return df
     mapa = ajustes.get("acoes", {}) or {}
-    ids_adiados_operacionais = {
-        str(demanda_id or "").strip()
-        for demanda_id in (ajustes.get("adiar_para_proximo_dia", []) or [])
-        if str(demanda_id or "").strip()
-    }
-    prioridades_operacionais = {
-        str(demanda_id or "").strip()
-        for demanda_id in (ajustes.get("prioridades_operacionais", []) or [])
-        if str(demanda_id or "").strip()
-    } - ids_adiados_operacionais
-    if not mapa and not prioridades_operacionais:
+    if not mapa:
         return df
     resultado = df.copy()
     for idx, linha in resultado.iterrows():
@@ -5279,20 +4317,6 @@ def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
             resultado.at[idx, "Origem"] = alvo_coleta
         if alvo_entrega:
             resultado.at[idx, "Destino"] = alvo_entrega
-        if demanda_id in prioridades_operacionais:
-            # A solicitação do engenheiro desempata a seleção do que cabe no dia,
-            # mas nunca autoriza ultrapassar o encerramento real das 17h.
-            try:
-                peso_atual = float(linha.get("Peso", 1) or 1)
-            except (TypeError, ValueError):
-                peso_atual = 1.0
-            resultado.at[idx, "Peso"] = max(peso_atual, 9.0)
-            urgencia_atual = str(linha.get("Urgência", "") or "").strip()
-            if "PRIORIDADE OPERACIONAL" not in urgencia_atual.upper():
-                resultado.at[idx, "Urgência"] = (
-                    f"PRIORIDADE OPERACIONAL • {urgencia_atual}"
-                    if urgencia_atual else "PRIORIDADE OPERACIONAL"
-                )
     return resultado
 
 
@@ -5765,17 +4789,6 @@ def _obter_componente_drag_rota():
     os.makedirs(pasta, exist_ok=True)
     index_path = os.path.join(pasta, "index.html")
     frontend = '<!doctype html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n*{box-sizing:border-box}\nhtml,body{margin:0;padding:0;height:100vh;overflow:hidden;background:#070913;color:#e5e7eb;font-family:Inter,Arial,sans-serif}\n#app{height:100vh;overflow-y:auto;overflow-x:hidden;padding:0 6px 0 0;scrollbar-gutter:stable}\n#app::-webkit-scrollbar{width:9px}\n#app::-webkit-scrollbar-track{background:#0b1020;border-radius:8px}\n#app::-webkit-scrollbar-thumb{background:#475569;border-radius:8px;border:2px solid #0b1020}\n#app::-webkit-scrollbar-thumb:hover{background:#64748b}\n.aviso{font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.45}\n.secao{border:1px solid #263452;background:#0b1020;border-radius:12px;margin:0 0 10px;overflow:hidden}\n.secao-head{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:#11182d;border-bottom:1px solid #263452;font-size:13px}\n.secao-head span{color:#9fb1ca;font-weight:700}\n.zona{min-height:62px;padding:8px;transition:.12s ease}\n.zona.over{outline:2px dashed #60a5fa;outline-offset:-4px;background:#0f1c37}\n.demanda{padding:9px 10px;margin:5px 0;border-radius:9px;border:1px solid #334155;background:#10182b;cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.18);user-select:none}\n.demanda:active{cursor:grabbing}\n.demanda.dragging{opacity:.28}\n.demanda.coleta{border-left:5px solid #f59e0b}\n.demanda.entrega{border-left:5px solid #22c55e}\n.top{display:flex;align-items:center;gap:7px;font-size:12px}\n.handle{font-size:18px;color:#93c5fd;line-height:1}\n.manual{margin-left:auto;background:#1d4ed8;color:#dbeafe;padding:2px 6px;border-radius:999px;font-size:10px}\n.obra{font-size:12.5px;font-weight:800;margin-top:3px;color:#f1f5f9}\n.mat{font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.vazio{font-size:11px;color:#64748b;text-align:center;padding:12px;border:1px dashed #334155;border-radius:8px}\n</style>\n</head>\n<body><div id="app"></div>\n<script>\nconst app=document.getElementById(\'app\');\nlet arrastado=null;\nlet argsAtuais={};\nfunction post(type, extra={}){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type:type},extra),\'*\');}\nfunction ready(){post(\'streamlit:componentReady\',{apiVersion:1});}\nfunction setValue(value){post(\'streamlit:setComponentValue\',{value:value,dataType:\'json\'});}\nfunction setHeight(){\n  const desejada=Number(argsAtuais.requested_height||0);\n  const altura=Math.max(360,desejada>0?desejada:720);\n  post(\'streamlit:setFrameHeight\',{height:altura});\n}\nfunction el(tag, cls, texto){const n=document.createElement(tag);if(cls)n.className=cls;if(texto!==undefined&&texto!==null)n.textContent=String(texto);return n;}\nfunction habilitarCard(card){\n  card.addEventListener(\'dragstart\',e=>{arrastado=card;card.classList.add(\'dragging\');e.dataTransfer.effectAllowed=\'move\';try{e.dataTransfer.setData(\'text/plain\',card.dataset.id||\'demanda\');}catch(_){}});\n  card.addEventListener(\'dragend\',()=>{card.classList.remove(\'dragging\');document.querySelectorAll(\'.zona\').forEach(z=>z.classList.remove(\'over\'));arrastado=null;});\n}\nfunction habilitarZona(zona){\n  zona.addEventListener(\'dragenter\',e=>{e.preventDefault();zona.classList.add(\'over\');});\n  zona.addEventListener(\'dragover\',e=>{e.preventDefault();zona.classList.add(\'over\');e.dataTransfer.dropEffect=\'move\';});\n  zona.addEventListener(\'dragleave\',e=>{if(!zona.contains(e.relatedTarget))zona.classList.remove(\'over\');});\n  zona.addEventListener(\'drop\',e=>{\n    e.preventDefault();e.stopPropagation();zona.classList.remove(\'over\');if(!arrastado)return;\n    const outros=[...zona.querySelectorAll(\'.demanda\')].filter(x=>x!==arrastado);let indice=outros.length;\n    for(let i=0;i<outros.length;i++){const r=outros[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){indice=i;break;}}\n    zona.querySelectorAll(\'.vazio\').forEach(v=>v.remove());\n    if(indice<outros.length)zona.insertBefore(arrastado,outros[indice]);else zona.appendChild(arrastado);\n    setValue({nonce:String(Date.now())+\'-\'+Math.random().toString(36).slice(2),demanda_id:arrastado.dataset.id||\'\',acao:arrastado.dataset.acao||\'\',destino:zona.dataset.destino||\'\',ordem:indice});\n    setTimeout(setHeight,20);\n  });\n}\nfunction render(args){\n  argsAtuais=args||{};app.replaceChildren();\n  app.appendChild(el(\'div\',\'aviso\',\'Arraste pelo ⠿. Solte dentro de outra parada para mudar o local da ação; solte acima ou abaixo para mudar a ordem. Role dentro deste painel para ver todas as paradas. O Trello não é alterado.\'));\n  const secoes=((argsAtuais.payload||{}).secoes)||[];\n  secoes.forEach(sec=>{\n    const section=el(\'section\',\'secao\');const head=el(\'div\',\'secao-head\');head.appendChild(el(\'b\',\'\',sec.rotulo||\'\'));head.appendChild(el(\'span\',\'\',sec.local||\'\'));section.appendChild(head);\n    const zona=el(\'div\',\'zona\');zona.dataset.destino=sec.local||\'\';const cards=sec.cards||[];\n    if(!cards.length)zona.appendChild(el(\'div\',\'vazio\',\'Solte uma demanda aqui\'));\n    cards.forEach(c=>{const card=el(\'div\',\'demanda \'+(c.acao===\'COLETAR\'?\'coleta\':\'entrega\'));card.draggable=true;card.dataset.id=c.id||\'\';card.dataset.acao=c.acao||\'\';const top=el(\'div\',\'top\');top.appendChild(el(\'span\',\'handle\',\'⠿\'));top.appendChild(el(\'b\',\'\',c.acao===\'COLETAR\'?\'📦 COLETA\':\'📬 ENTREGA\'));if(c.manual)top.appendChild(el(\'span\',\'manual\',\'manual\'));card.appendChild(top);card.appendChild(el(\'div\',\'obra\',c.obra||\'Demanda\'));card.appendChild(el(\'div\',\'mat\',c.materiais||\'\'));habilitarCard(card);zona.appendChild(card);});\n    habilitarZona(zona);section.appendChild(zona);app.appendChild(section);\n  });\n  setTimeout(setHeight,0);\n}\nwindow.addEventListener(\'message\',e=>{const d=e.data||{};if(d.type===\'streamlit:render\')render(d.args||{});});\nready();\n</script></body></html>\n'
-    frontend = frontend.replace(
-        "<style>\n",
-        "<style>\n@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');\n",
-        1,
-    ).replace(
-        "font-family:Inter,Arial,sans-serif",
-        "font-family:Manrope,Arial,sans-serif",
-        1,
-    )
-    for cor_legenda_editor in ("#94a3b8", "#64748b", "#9fb1ca"):
-        frontend = frontend.replace(cor_legenda_editor, "#ffffff")
     with open(index_path, "w", encoding="utf-8") as arquivo:
         arquivo.write(frontend)
 
@@ -6776,29 +5789,6 @@ def calcular_matriz_rotas(coords, horario_partida=None):
     return distancias, duracoes, 'Estimativa geográfica de contingência'
 
 
-def priorizar_pontos_sem_revisita(candidatos, tarefas_a_coletar):
-    """Mantém um destino fechado até todas as coletas que irão para ele estarem no veículo.
-
-    Isso transforma, sempre que a rede origem→destino não possui um ciclo, várias
-    idas ao mesmo endereço em uma única visita consolidada. Se existir um ciclo
-    real (A entrega em B e B entrega em A), nenhum ponto fica liberado; nesse caso
-    devolvemos os candidatos originais para o planejador quebrar o ciclo com a
-    menor repetição possível.
-    """
-    candidatos = set(candidatos or [])
-    if len(candidatos) <= 1:
-        return candidatos
-
-    consolidados = {
-        ponto for ponto in candidatos
-        if not any(
-            tarefa.get('Destino') == ponto and tarefa.get('Origem') != ponto
-            for tarefa in (tarefas_a_coletar or [])
-        )
-    }
-    return consolidados or candidatos
-
-
 
 def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
     """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
@@ -6846,10 +5836,9 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
                 volta, _ = get_dist_dur(origem, ponto)
                 ciclos_de_retorno.append(ida + volta)
 
-            # Repetir uma unidade é uma exceção operacional, não apenas um pequeno
-            # custo de distância. A penalidade só atua quando um ciclo impedir a
-            # consolidação rígida aplicada pelo planejador.
-            penalidade_retorno = max(60.0, min(ciclos_de_retorno or [20.0]) * 3.0)
+            # O piso de 8 km impede que uma pequena vantagem local provoque
+            # uma visita duplicada; o ciclo viário mede o prejuízo real.
+            penalidade_retorno = max(8.0, min(ciclos_de_retorno or [8.0]) * 1.35)
 
     coleta_completa_carga = is_pickup and any(
         t['Destino'] in destinos_no_carro for t in coletas_aqui
@@ -6875,9 +5864,7 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
             # FUTURO passassem na frente de uma demanda HOJE. O multiplicador é
             # forte para prazo crítico, mas ainda divide o custo de deslocamento,
             # preservando a eficiência geográfica entre alternativas equivalentes.
-            if urgencia_local >= 9:
-                fator_prazo = 24.0
-            elif urgencia_local >= 7:
+            if urgencia_local >= 7:
                 fator_prazo = 16.0
             elif urgencia_local >= 6:
                 fator_prazo = 12.0
@@ -6938,7 +5925,6 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
             if not candidatos:
                 break
-            candidatos = priorizar_pontos_sem_revisita(candidatos, pendentes)
             proximo = min(candidatos, key=lambda p: pontuar_parada_rota(atual, p, pendentes, no_carro, estrategia, get_dist_dur)[0])
             ordem.append(proximo)
             no_carro = [t for t in no_carro if t['Destino'] != proximo]
@@ -7010,9 +5996,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 bit = 1 << i
                 if entregues_mask & bit:
                     continue
-                if peso >= 9:
-                    divida_prazo += 260.0
-                elif peso >= 7:
+                if peso >= 7:
                     divida_prazo += 150.0
                 elif peso >= 6:
                     divida_prazo += 110.0
@@ -7050,15 +6034,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 concluidos.append(estado)
                 continue
 
-            pontos_estado = pontos_disponiveis(estado["coletadas"], estado["entregues"])
-            tarefas_a_coletar_estado = [
-                tarefas[i] for i in range(total_tarefas)
-                if not (estado["coletadas"] & (1 << i))
-            ]
-            pontos_estado = priorizar_pontos_sem_revisita(
-                pontos_estado, tarefas_a_coletar_estado
-            )
-            for ponto in pontos_estado:
+            for ponto in pontos_disponiveis(estado["coletadas"], estado["entregues"]):
                 distancia, duracao = get_dist_dur(estado["atual"], ponto)
 
                 ids_entrega = [
@@ -7107,7 +6083,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
 
                 visitas_anteriores = estado["ordem"].count(ponto)
                 if visitas_anteriores:
-                    incremento += 500.0 * visitas_anteriores
+                    incremento += 75.0 * visitas_anteriores
 
                 # Evita entregar em um destino se ainda falta coletar outro
                 # material que também será entregue nele.
@@ -7120,7 +6096,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                     urgente_depois = max([pesos[i] for i in ainda_falta_para_o_ponto] + [1])
                     excecao_urgente = "Urgências" in estrategia and urgente_agora >= 4 and urgente_agora > urgente_depois
                     if not excecao_urgente:
-                        incremento += 450.0
+                        incremento += 95.0
 
                 tempo_decorrido = max(0.0, nova_hora - horario_inicio)
                 if "Menor Distância" not in estrategia:
@@ -7131,9 +6107,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                         elif "Equilibrada" in estrategia:
                             # Custo por adiar uma entrega: quanto mais crítico o
                             # prazo, mais caro é deixá-la para o fim da rota.
-                            if peso_i >= 9:
-                                fator_urgencia = 3.60
-                            elif peso_i >= 7:
+                            if peso_i >= 7:
                                 fator_urgencia = 2.40
                             elif peso_i >= 6:
                                 fator_urgencia = 1.85
@@ -7200,15 +6174,12 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     if estados:
         def _valor_prioridade_entregue(mask):
             valor = 0.0
-            prioritarias = 0
             criticas = 0
             vencidas = 0
             for i, peso in enumerate(pesos):
                 if not (mask & (1 << i)):
                     continue
-                if peso >= 9:
-                    valor += 300.0; prioritarias += 1
-                elif peso >= 7:
+                if peso >= 7:
                     valor += 180.0; vencidas += 1; criticas += 1
                 elif peso >= 6:
                     valor += 130.0; criticas += 1
@@ -7220,15 +6191,15 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                     valor += 4.0
                 else:
                     valor += 1.0
-            return prioritarias, vencidas, criticas, valor
+            return vencidas, criticas, valor
 
         def chave_parcial(estado):
             entregues_mask = int(estado["entregues"])
             entregues_qtd = entregues_mask.bit_count()
             carregadas_sem_entrega = int(estado["coletadas"] & ~estado["entregues"]).bit_count()
-            prioritarias, vencidas, criticas, valor_prazo = _valor_prioridade_entregue(entregues_mask)
+            vencidas, criticas, valor_prazo = _valor_prioridade_entregue(entregues_mask)
             if "Equilibrada" in estrategia or "Urgências" in estrategia:
-                return (-prioritarias, -vencidas, -criticas, -valor_prazo, -entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
+                return (-vencidas, -criticas, -valor_prazo, -entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
             return (-entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
         melhor_parcial = min(estados, key=chave_parcial)
         if melhor_parcial.get("ordem"):
@@ -7244,7 +6215,6 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
         if not candidatos:
             break
-        candidatos = priorizar_pontos_sem_revisita(candidatos, pendentes)
         proximo = min(candidatos, key=lambda p: pontuar_parada_rota(atual, p, pendentes, no_carro, estrategia, get_dist_dur)[0])
         ordem.append(proximo)
         no_carro = [t for t in no_carro if t['Destino'] != proximo]
@@ -7253,65 +6223,6 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         no_carro.extend(coletadas)
         atual = proximo
     return ordem
-
-
-def identificar_demandas_concluidas_na_ordem(tarefas, ordem, tarefas_pre_coletadas=None):
-    """Retorna os IDs cuja cadeia logística completa cabe na ordem escolhida.
-
-    Uma demanda só é considerada planejável quando chega ao DESTINO depois de
-    ter sido coletada (ou quando já estava no veículo). Isso impede o roteiro de
-    usar o fim do expediente apenas para fazer coletas que não serão entregues.
-    """
-    tarefas = list(tarefas or [])
-    ids_pre = {
-        str(t.get('id', '') or '') for t in (tarefas_pre_coletadas or [])
-        if str(t.get('id', '') or '')
-    }
-    coletadas = set(ids_pre)
-    entregues = set()
-
-    for ponto in (ordem or []):
-        # Primeiro descarrega o que já estava no veículo ao chegar ao local.
-        for tarefa in tarefas:
-            tid = str(tarefa.get('id', '') or '')
-            if not tid or tid in entregues:
-                continue
-            if tid in coletadas and tarefa.get('Destino') == ponto:
-                entregues.add(tid)
-
-        # Depois registra as coletas feitas neste mesmo endereço.
-        for tarefa in tarefas:
-            tid = str(tarefa.get('id', '') or '')
-            if not tid or tid in coletadas:
-                continue
-            if tarefa.get('Origem') == ponto:
-                coletadas.add(tid)
-                # Origem = destino: resolve a cadeia na própria parada.
-                if tarefa.get('Destino') == ponto:
-                    entregues.add(tid)
-
-    return entregues
-
-
-def selecionar_candidatas_para_otimizacao(tarefas, limite=24):
-    """Mantém o beam search controlado sem permitir que FUTURO expulse HOJE."""
-    tarefas = list(tarefas or [])
-    if len(tarefas) <= limite:
-        return tarefas
-
-    def chave(item):
-        indice, tarefa = item
-        try:
-            peso = float(tarefa.get('Peso', 1) or 1)
-        except (TypeError, ValueError):
-            peso = 1.0
-        obrigatoria = 1 if demanda_obrigatoria_no_dia(tarefa) else 0
-        prioridade_operacional = 1 if 'PRIORIDADE OPERACIONAL' in remover_acentos(str(tarefa.get('Urgência', '') or '')).upper() else 0
-        return (-prioridade_operacional, -obrigatoria, -peso, indice)
-
-    ordenadas = [t for _i, t in sorted(enumerate(tarefas), key=chave)]
-    return ordenadas[:limite]
-
 
 def _decodificar_polyline_google(polyline):
     pontos = []
@@ -7849,27 +6760,6 @@ def carregar_config_protege():
         return usuario, senha, ",".join(str(v).strip() for v in veiculos) if isinstance(veiculos, (list, tuple)) else str(veiculos).strip()
     except: return "", "", RASTREADOR_VEICULOS_PADRAO
 
-
-@st.cache_resource(show_spinner=False)
-def obter_executor_gps_rota():
-    """Um único trabalhador consulta o GPS sem bloquear a renderização da Torre."""
-    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="aproar-gps-rota")
-
-
-def consultar_gps_rota_em_background(usuario, senha, veiculos, sessao=None, pagina=None):
-    """Consulta/reautentica fora da thread que desenha a página."""
-    if sessao is not None and pagina:
-        try:
-            posicoes = consultar_posicoes_protege(sessao, pagina, veiculos)
-            return {"sessao": sessao, "pagina": pagina, "posicoes": posicoes, "erro": ""}
-        except Exception:
-            pass
-    try:
-        nova_sessao, nova_pagina, posicoes = autenticar_protege(usuario, senha, veiculos)
-        return {"sessao": nova_sessao, "pagina": nova_pagina, "posicoes": posicoes, "erro": ""}
-    except Exception as erro:
-        return {"sessao": None, "pagina": "", "posicoes": [], "erro": str(erro)[:180]}
-
 def loop_automacoes_background(processar_rastreador=True):
     agora_loop = datetime.now(FUSO_LOCAL)
     try:
@@ -7975,10 +6865,6 @@ def loop_automacoes_background(processar_rastreador=True):
                     st.session_state["_teams_ultimo_erro"] = f"{short_name}: {detalhe}"
 
             if novas_entregas > 0:
-                try:
-                    carregar_conclusoes_rota.clear()
-                except Exception:
-                    pass
                 st.toast(
                     f"🔔 {novas_entregas} {plural_pt(novas_entregas, 'nova baixa registrada', 'novas baixas registradas')} no Trello!",
                     icon="✅",
@@ -8133,7 +7019,10 @@ def loop_automacoes_background(processar_rastreador=True):
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
-renderizar_cabecalho_torre()
+try:
+    with open("logo.png", "rb") as image_file: encoded_string = base64.b64encode(image_file.read()).decode()
+    st.markdown(f'<div style="display: flex; align-items: center; gap: 30px; margin-bottom: 25px; margin-top: -20px;"><img src="data:image/png;base64,{encoded_string}" width="260" style="flex-shrink: 0;"><h1 style="margin: 0; padding: 0; line-height: 1.2; color: #e4e8f4;">TORRE DE CONTROLE LOGÍSTICO</h1></div>', unsafe_allow_html=True)
+except: st.title("🚚 TORRE DE CONTROLE LOGÍSTICO")
 
 # NAVEGAÇÃO PRIMEIRO: nenhuma consulta de rede/banco deve bloquear a troca de módulo.
 MODULOS_PRINCIPAIS = [
@@ -8144,17 +7033,14 @@ MODULOS_PRINCIPAIS = [
     "📍 Endereços",
     "🚗 Frota e custos",
 ]
-with st.sidebar:
-    logo_sidebar = _html_logo_aproar("aproar-logo-sidebar")
-    st.markdown(f"""
-        <div class="aproar-sidebar-brand">
-            {logo_sidebar}
-            <div><strong>Painel de operações</strong><small>Central logística</small></div>
-        </div>
-        <div class="aproar-sidebar-section">Navegação</div>
-    """, unsafe_allow_html=True)
+if hasattr(st, "segmented_control"):
+    modulo_principal = st.segmented_control(
+        "Módulo", MODULOS_PRINCIPAIS, default=MODULOS_PRINCIPAIS[0],
+        key="modulo_principal", label_visibility="collapsed",
+    )
+else:
     modulo_principal = st.radio(
-        "Módulo", MODULOS_PRINCIPAIS, index=0,
+        "Módulo", MODULOS_PRINCIPAIS, index=0, horizontal=True,
         key="modulo_principal", label_visibility="collapsed",
     )
 modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
@@ -8162,7 +7048,7 @@ modulo_principal = modulo_principal or MODULOS_PRINCIPAIS[0]
 if "demandas" not in st.session_state: st.session_state.demandas = pd.DataFrame(columns=COLUNAS_DEMANDAS)
 
 with st.sidebar:
-    st.markdown('<div class="aproar-sidebar-section">Sincronização e ajustes</div>', unsafe_allow_html=True)
+    st.header("⚙️ Painel de operações")
     st.caption(f"📅 Planejamento ativo para: **{DATA_REF_ROTA_STR}**")
     # Sincronização automática leve: Trello + baixas + Teams a cada 2 minutos.
     # O primeiro carregamento NÃO consulta o Trello, para a página abrir rápido.
@@ -8995,98 +7881,12 @@ if modulo_principal == "🚗 Frota e custos":
         )
 
 if modulo_principal == "🗺️ Roteiro do Davi":
-    # O GPS é buscado em outra thread. A Torre abre primeiro com a última posição
-    # conhecida e recebe a nova leitura depois, sem spinner nem espera de rede.
-    if hasattr(st, "fragment"):
-        @st.fragment(run_every="5s")
-        def _ciclo_gps_mapa_rota():
-            agora_gps = time.time()
-            job = st.session_state.get("_gps_rota_future")
-
-            if job is not None and job.done():
-                try:
-                    resultado = job.result()
-                except Exception as erro_job:
-                    resultado = {"sessao": None, "pagina": "", "posicoes": [], "erro": str(erro_job)}
-                st.session_state.pop("_gps_rota_future", None)
-                st.session_state["_gps_rota_ultimo_erro"] = resultado.get("erro", "")
-                if resultado.get("sessao") is not None:
-                    st.session_state["protege_sessao"] = resultado["sessao"]
-                    st.session_state["protege_pagina"] = resultado.get("pagina", "")
-                posicoes_novas = resultado.get("posicoes") or []
-                if posicoes_novas:
-                    assinatura_antiga = json.dumps(
-                        st.session_state.get("_gps_rota_posicoes") or [],
-                        ensure_ascii=False, sort_keys=True, default=str,
-                    )
-                    assinatura_nova = json.dumps(
-                        posicoes_novas, ensure_ascii=False, sort_keys=True, default=str,
-                    )
-                    st.session_state["_gps_rota_posicoes"] = posicoes_novas
-                    st.session_state["_gps_rota_atualizado_em"] = agora_gps
-                    if assinatura_nova != assinatura_antiga:
-                        try:
-                            st.rerun(scope="app")
-                        except TypeError:
-                            st.rerun()
-
-            sem_job = st.session_state.get("_gps_rota_future") is None
-            ultimo_envio = float(st.session_state.get("_gps_rota_consulta_em", 0) or 0)
-            if sem_job and agora_gps - ultimo_envio >= 30:
-                usuario, senha, veiculos = carregar_config_protege()
-                if usuario and senha and veiculos:
-                    st.session_state["_gps_rota_consulta_em"] = agora_gps
-                    st.session_state["_gps_rota_future"] = obter_executor_gps_rota().submit(
-                        consultar_gps_rota_em_background,
-                        usuario,
-                        senha,
-                        veiculos,
-                        st.session_state.get("protege_sessao"),
-                        st.session_state.get("protege_pagina"),
-                    )
-
-        _ciclo_gps_mapa_rota()
-
     if (st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') != DATA_REF_ROTA_STR):
         st.session_state['rota_gerada'] = False
     if not st.session_state.get('rota_gerada', False):
         carregar_rota_salva_para_sessao(DATA_REF_ROTA_STR)
 
     df_ativos = st.session_state.demandas.copy()
-    # Uma rota salva não pode esconder cartões que chegaram depois. Ao abrir o
-    # roteiro de hoje, fazemos uma única leitura atual do quadro mesmo quando a
-    # sessão já contém outras demandas. A geocodificação continua desativada aqui;
-    # o objetivo é garantir que todos os prazos do dia disputem a matriz atual.
-    if (
-        st.session_state.get('rota_gerada', False)
-        and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
-        and DATA_REF_ROTA_DATE == AGORA_REAL.date()
-        and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
-        and not st.session_state.get('_tentou_hidratar_demandas_direto_v2')
-    ):
-        st.session_state['_tentou_hidratar_demandas_direto_v2'] = True
-        if sincronizar_demandas(forcar=True, geocodificar=False):
-            df_ativos = st.session_state.demandas.copy()
-
-    _locais_repetidos_rota = detectar_locais_repetidos_rota(
-        st.session_state.get('route_steps') or [], ponto_saida
-    )
-    st.session_state['_rota_locais_repetidos_carregada'] = _locais_repetidos_rota
-
-    # No primeiro acesso, a rota salva chega antes do quadro do Trello. Se ela foi
-    # criada pelo motor antigo e repete locais, hidratamos as demandas pelo cache do
-    # Supabase agora mesmo para que o recálculo V5 não dependa de um clique manual.
-    _chave_hidratacao_repetidos = f"_hidratou_repetidos_{DATA_REF_ROTA_STR}"
-    if (
-        _locais_repetidos_rota
-        and isinstance(df_ativos, pd.DataFrame)
-        and df_ativos.empty
-        and not st.session_state.get(_chave_hidratacao_repetidos)
-    ):
-        st.session_state[_chave_hidratacao_repetidos] = True
-        if sincronizar_demandas(forcar=False, geocodificar=False, somente_cache=True):
-            df_ativos = st.session_state.demandas.copy()
-
     ajustes_manuais = carregar_ajustes_manuais_rota(DATA_REF_ROTA_STR)
     if not df_ativos.empty:
         df_ativos["Origem"] = df_ativos["Origem"].apply(canonicalizar_ponto_rota)
@@ -9192,111 +7992,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
 
-    # HOJE/VENCIDA é obrigação por padrão. Quando a capacidade real do expediente
-    # não comportar tudo, a equipe pode registrar duas decisões humanas do dia:
-    # (1) o que deve ter preferência; (2) o que o engenheiro autorizou deixar para
-    # o próximo dia. Nada aqui altera prazo ou cartão no Trello.
-    if isinstance(df_ativos, pd.DataFrame) and not df_ativos.empty and 'Urgência' in df_ativos.columns:
-        df_priorizaveis = df_ativos[
-            df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
-        ].copy()
-    else:
-        df_priorizaveis = pd.DataFrame()
-
-    ids_adiados_operacionais_atuais = {
-        str(demanda_id or '').strip()
-        for demanda_id in (ajustes_manuais.get('adiar_para_proximo_dia', []) or [])
-        if str(demanda_id or '').strip()
-    }
-
-    if not df_priorizaveis.empty:
-        ids_priorizaveis = df_priorizaveis['id'].astype(str).drop_duplicates().tolist()
-        rotulos_prioridade = {}
-        for _, linha_prioridade in df_priorizaveis.drop_duplicates(subset=['id']).iterrows():
-            demanda_id_prioridade = str(linha_prioridade.get('id', '') or '')
-            obra_prioridade = str(linha_prioridade.get('Obra', '') or 'Demanda sem nome')
-            origem_prioridade = str(linha_prioridade.get('Origem', '') or '?')
-            destino_prioridade = str(linha_prioridade.get('Destino', '') or '?')
-            rotulos_prioridade[demanda_id_prioridade] = (
-                f"{obra_prioridade} · {origem_prioridade} → {destino_prioridade}"
-            )
-
-        ids_prioritarios_atuais = {
-            str(demanda_id or '').strip()
-            for demanda_id in (ajustes_manuais.get('prioridades_operacionais', []) or [])
-            if str(demanda_id or '').strip()
-        } - ids_adiados_operacionais_atuais
-
-        with st.expander("📌 Ajustes combinados com os engenheiros", expanded=False):
-            st.caption(
-                "Por padrão, toda demanda HOJE/VENCIDA é obrigatória. Use este quadro somente "
-                "quando a capacidade real até 17h não comportar tudo ou quando houver acordo para adiar."
-            )
-            with st.form(f"prioridades_operacionais_{DATA_REF_ROTA_STR}"):
-                prioridades_escolhidas = st.multiselect(
-                    "Demandas que devem ter preferência hoje",
-                    options=ids_priorizaveis,
-                    default=[
-                        demanda_id for demanda_id in ids_priorizaveis
-                        if demanda_id in ids_prioritarios_atuais
-                    ],
-                    format_func=lambda demanda_id: rotulos_prioridade.get(demanda_id, demanda_id),
-                )
-                adiadas_escolhidas = st.multiselect(
-                    "Autorizadas pelo engenheiro para o próximo dia",
-                    options=ids_priorizaveis,
-                    default=[
-                        demanda_id for demanda_id in ids_priorizaveis
-                        if demanda_id in ids_adiados_operacionais_atuais
-                    ],
-                    format_func=lambda demanda_id: rotulos_prioridade.get(demanda_id, demanda_id),
-                )
-                aplicar_prioridades = st.form_submit_button("Aplicar decisão e recalcular")
-
-            if aplicar_prioridades:
-                adiadas_escolhidas = set(adiadas_escolhidas)
-                prioridades_escolhidas = [
-                    demanda_id for demanda_id in prioridades_escolhidas
-                    if demanda_id not in adiadas_escolhidas
-                ]
-                novos_ajustes = dict(ajustes_manuais)
-                if prioridades_escolhidas:
-                    novos_ajustes['prioridades_operacionais'] = list(prioridades_escolhidas)
-                else:
-                    novos_ajustes.pop('prioridades_operacionais', None)
-                if adiadas_escolhidas:
-                    novos_ajustes['adiar_para_proximo_dia'] = sorted(adiadas_escolhidas)
-                else:
-                    novos_ajustes.pop('adiar_para_proximo_dia', None)
-                salvar_ajustes_manuais_rota(DATA_REF_ROTA_STR, novos_ajustes)
-                st.session_state['_recalcular_rota_automatico'] = True
-                st.session_state['_mensagem_ajuste_rota'] = (
-                    "Decisão operacional atualizada. O sistema refez a melhor rota possível sem planejar nada após 17h."
-                )
-                st.rerun()
-
-    # Rotas gravadas por uma versão anterior — ou que ainda tragam o mesmo local
-    # em várias paradas — são recalculadas uma única vez por data quando as
-    # demandas ativas estiverem disponíveis.
-    versao_rota_salva = max(
-        [int(step.get('_motor_rota_versao', 0) or 0) for step in (st.session_state.get('route_steps') or [])]
-        + [0]
-    )
-    if (
-        rota_ativa_hoje
-        and (versao_rota_salva < ROTA_ENGINE_VERSION or bool(_locais_repetidos_rota))
-        and isinstance(df_ativos, pd.DataFrame)
-        and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v4_solicitado_em') != DATA_REF_ROTA_STR
-    ):
-        st.session_state['_motor_rota_v4_solicitado_em'] = DATA_REF_ROTA_STR
-        st.session_state['_recalcular_rota_automatico'] = True
-        _nomes_repetidos = ', '.join(_locais_repetidos_rota)
-        st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V6 aplicado. A rota foi reorganizada para consolidar cada local '
-            f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
-        )
-
     # Recebe um movimento do editor arrastável e o transforma em regra persistente.
     _mr_id = str(st.query_params.get("mr_demanda", "") or "").strip()
     _mr_acao = str(st.query_params.get("mr_acao", "") or "").strip().upper()
@@ -9336,43 +8031,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             st.query_params.clear()
             st.warning(f"Não foi possível mover essa demanda agora: {_erro_movimento_rota}")
 
-    # Se um cartão de hoje/vencido chegou após a criação da rota salva, ele precisa
-    # disputar imediatamente o tempo restante. O otimizador pode retirar demandas
-    # futuras para preservar o expediente, mas a urgente deixa de ficar invisível.
-    ids_rota_atuais = {
-        str(tarefa.get('id', '') or '')
-        for step in (st.session_state.get('route_steps') or [])
-        for _acao, tarefa in (step.get('actions', []) or [])
-        if str(tarefa.get('id', '') or '')
-    }
-    if isinstance(df_ativos, pd.DataFrame) and not df_ativos.empty and 'Urgência' in df_ativos.columns:
-        df_criticas_fora_rota = df_ativos[
-            df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
-            & ~df_ativos['id'].astype(str).isin(ids_rota_atuais)
-            & ~df_ativos['id'].astype(str).isin(ids_adiados_operacionais_atuais)
-        ].copy()
-    else:
-        df_criticas_fora_rota = pd.DataFrame()
-
-    ids_criticos_fora_rota = sorted(df_criticas_fora_rota['id'].astype(str).tolist()) if not df_criticas_fora_rota.empty else []
-    assinatura_criticos_fora_rota = '|'.join(ids_criticos_fora_rota)
-    if (
-        rota_ativa_hoje
-        and DATA_REF_ROTA_DATE == AGORA_REAL.date()
-        and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
-        and ids_criticos_fora_rota
-        and st.session_state.get('_ultimo_lote_urgente_incorporado_v6') != assinatura_criticos_fora_rota
-    ):
-        # A chave versionada também libera uma nova tentativa depois de mudanças
-        # no critério de viabilidade, mesmo que o conjunto de cartões seja igual.
-        st.session_state['_ultimo_lote_urgente_incorporado_v6'] = assinatura_criticos_fora_rota
-        st.session_state['_recalcular_rota_automatico'] = True
-        nomes_criticos = ', '.join(df_criticas_fora_rota['Obra'].astype(str).tolist())
-        st.session_state['_mensagem_ajuste_rota'] = (
-            f"📌 Demanda de hoje/vencida incorporada ao recálculo: {nomes_criticos}. "
-            "O restante do roteiro foi reorganizado por prazo e viabilidade."
-        )
-
     # A rota pode ser recalculada sem apagar as baixas já registradas.
     # As etapas concluídas são reaproveitadas logo abaixo a partir de historico_concluidos.
     txt_botao = "🔄 Recalcular / Atualizar Rota" if rota_ativa_hoje else "🚀 Calcular Rota Otimizada"
@@ -9384,9 +8042,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         if recalculo_automatico:
             st.toast("🔄 Recalculando o restante do expediente...", icon="🗺️")
         with st.spinner("Analisando histórico e inteligência de nomes para traçar rota..."):
+            st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
             
-            df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
+            df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
             dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
             
             past_route_steps = []
@@ -9397,22 +8056,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             # Tudo que sai da base deve ser carregado UMA VEZ na preparação das
             # 07:30–08:00. Ao recalcular a rota durante o dia, essas coletas não
             # podem voltar como uma nova "PARADA: ESCRITÓRIO".
-            todos_registros_ativos_rota = df_ativos.to_dict('records')
-            ids_adiados_operacionais = {
-                str(demanda_id or '').strip()
-                for demanda_id in (ajustes_manuais.get('adiar_para_proximo_dia', []) or [])
-                if str(demanda_id or '').strip()
-            }
-            tarefas_adiadas_por_acordo = [
-                t for t in todos_registros_ativos_rota
-                if str(t.get('id', '') or '') in ids_adiados_operacionais
-                and str(t.get('id', '') or '') not in dict_concluidos_torre
-            ]
-            st.session_state['demandas_adiadas'] = list(tarefas_adiadas_por_acordo)
-            registros_ativos_rota = [
-                t for t in todos_registros_ativos_rota
-                if str(t.get('id', '') or '') not in ids_adiados_operacionais
-            ]
+            registros_ativos_rota = df_ativos.to_dict('records')
             base_canonica = canonicalizar_ponto_rota(ponto_saida)
             tarefas_base_ativas = [
                 t for t in registros_ativos_rota
@@ -9629,32 +8273,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         if matches: encontrado = matches[0]
                     if encontrado: alvo = encontrado
 
-                # Fornecedores recorrentes podem vir no cartão sem endereço. O
-                # fallback oficial é usado sob demanda e nunca substitui um local
-                # que a equipe já cadastrou/ajustou na aba Endereços.
-                if alvo in locais_db:
-                    endereco_existente, lat_existente, lon_existente = locais_db[alvo]
-                    if not str(endereco_existente or '').strip() and lat_existente is None and lon_existente is None:
-                        endereco_fallback = obter_endereco_fornecedor_fallback(p)
-                        if endereco_fallback:
-                            execute_db(
-                                "UPDATE locais SET endereco=:end WHERE apelido=:apelido "
-                                "AND (endereco IS NULL OR TRIM(endereco)='') AND lat IS NULL AND lon IS NULL",
-                                {"apelido": alvo, "end": endereco_fallback},
-                            )
-                            locais_db[alvo] = (endereco_fallback, None, None)
-
-                if alvo not in locais_db:
-                    endereco_fallback = obter_endereco_fornecedor_fallback(p)
-                    if endereco_fallback:
-                        execute_db(
-                            "INSERT INTO locais (apelido, endereco) VALUES (:apelido, :end) "
-                            "ON CONFLICT (apelido) DO NOTHING",
-                            {"apelido": p, "end": endereco_fallback},
-                        )
-                        locais_db[p] = (endereco_fallback, None, None)
-                        alvo = p
-
                 if alvo in locais_db:
                     end_str, lat_db, lon_db = locais_db[alvo]
                     if lat_db is not None and lon_db is not None:
@@ -9693,76 +8311,21 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
             tarefas_planejamento = list(unpicked) + list(tarefas_base_ativas)
-
-            # O motor escolhe DEMANDAS COMPLETAS, e não paradas isoladas. Primeiro
-            # monta uma sequência candidata dentro do expediente; depois só mantém
-            # no roteiro os cartões que chegam efetivamente ao destino nessa ordem.
-            # Assim uma coleta nunca consome o fim do turno se a entrega não couber.
-            tarefas_otimizacao = selecionar_candidatas_para_otimizacao(tarefas_planejamento, limite=24)
-            ids_otimizacao = {str(t.get('id', '') or '') for t in tarefas_otimizacao}
-            pre_coletadas_otimizacao = [
-                t for t in tarefas_base_ativas
-                if str(t.get('id', '') or '') in ids_otimizacao
-            ]
             ordem_otimizada = otimizar_sequencia_rota(
-                tarefas_otimizacao,
+                tarefas_planejamento,
                 current_point,
                 estrategia,
                 get_dist_dur,
                 current_time_tsp,
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
-                tarefas_pre_coletadas=pre_coletadas_otimizacao,
+                tarefas_pre_coletadas=tarefas_base_ativas,
             )
-            ids_planejados = identificar_demandas_concluidas_na_ordem(
-                tarefas_otimizacao, ordem_otimizada, pre_coletadas_otimizacao
-            )
-
-            # HOJE/VENCIDA continua obrigatória por padrão. Se não apareceu entre
-            # as cadeias completas escolhidas, fica explicitamente fora por falta
-            # de capacidade (ou já foi adiada por acordo com o engenheiro).
-            obrigatorias_sem_capacidade = [
-                t for t in tarefas_planejamento
-                if demanda_obrigatoria_no_dia(t)
-                and str(t.get('id', '') or '') not in ids_planejados
-            ]
-            existentes_adiadas = {str(t.get('id', '') or '') for t in st.session_state['demandas_adiadas']}
-            for tarefa in obrigatorias_sem_capacidade:
-                tid = str(tarefa.get('id', '') or '')
-                if tid and tid not in existentes_adiadas:
-                    st.session_state['demandas_adiadas'].append(tarefa)
-                    existentes_adiadas.add(tid)
-
-            # O executor recebe somente demandas que o plano demonstrou conseguir
-            # concluir. FUTURO não planejado simplesmente fica para outro roteiro;
-            # obrigação do dia não planejada aparece no quadro de capacidade.
-            unpicked = [
-                t for t in unpicked
-                if str(t.get('id', '') or '') in ids_planejados
-            ]
-            tarefas_base_ativas = [
-                t for t in tarefas_base_ativas
-                if str(t.get('id', '') or '') in ids_planejados
-            ]
-
-            # Corrige também a preparação já reconstruída: só entram como carga do
-            # dia as demandas selecionadas, além das que já foram concluídas.
-            for step_prep in past_route_steps:
-                if (
-                    step_prep.get('type') == 'stop'
-                    and canonicalizar_ponto_rota(step_prep.get('destino', '')) == base_canonica
-                    and 'preparacao' in remover_acentos(str(step_prep.get('tempo_local_fonte', '') or '')).lower()
-                ):
-                    step_prep['actions'] = [
-                        (acao, tarefa) for acao, tarefa in (step_prep.get('actions', []) or [])
-                        if str(tarefa.get('id', '') or '') in ids_planejados
-                        or str(tarefa.get('id', '') or '') in dict_concluidos_torre
-                    ]
-
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
-            # Materiais da base selecionados para esta rota já começam no veículo.
+            # Materiais coletados no escritório durante a preparação já começam
+            # no veículo e não geram uma parada futura na base.
             carrying = list(tarefas_base_ativas)
             current = current_point
             route_steps_new = []
@@ -9816,10 +8379,12 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 return dist, dur_api, dur
 
             while unpicked or carrying:
-                # Regra central do planejamento: HOJE/VENCIDA é obrigação. FUTURO
-                # só entra quando os compromissos do dia já foram atendidos ou
-                # reconhecidos como inviáveis até 17h. Assim o sistema aproveita o
-                # expediente sem fabricar uma rota otimista ou trocar prazo por km.
+                # Não existe mais corte artificial às 15h30. Enquanto uma demanda
+                # ainda couber operacionalmente no tempo restante — deslocamento,
+                # atendimento e, quando configurado, retorno à base até 17h — ela
+                # continua elegível. A prioridade decide QUAL entra primeiro, mas
+                # demandas futuras podem preencher o restante do expediente para
+                # evitar ociosidade do motorista.
 
                 # Se o relógio entrou no almoço, a pausa acontece antes de escolher
                 # a próxima parada. Isso deixa a simulação de viabilidade consistente.
@@ -9828,29 +8393,22 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     current_time = 13 * 60
                     lunch_taken = True
 
-                # A sequência já foi selecionada por cadeia completa e prioridade.
-                # Não fazemos uma segunda filtragem por "tipo de parada" aqui, pois
-                # isso distorcia a solução do otimizador e podia transformar um plano
-                # completo em várias coletas sem as respectivas entregas.
                 candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
                 if not candidates:
                     break
 
                 avaliacoes = {p: _avaliar_candidato_expediente(p) for p in candidates}
                 candidates_viaveis = {p for p, avaliacao in avaliacoes.items() if avaliacao is not None}
+
                 if not candidates_viaveis:
-                    # A validação dinâmica ficou mais conservadora que a busca. Não
-                    # cria coleta solta: compromissos do dia restantes ficam fora e
-                    # o roteiro é encerrado no último ponto realmente executável.
-                    restantes = list(unpicked) + list(carrying)
-                    _registrar_adiadas([t for t in restantes if demanda_obrigatoria_no_dia(t)])
+                    # Nada restante cabe no expediente considerando deslocamento,
+                    # atendimento e retorno à base até 17h. Só nesse caso o restante
+                    # fica para o próximo planejamento.
+                    _registrar_adiadas(list(unpicked) + list(carrying))
                     unpicked.clear()
                     carrying.clear()
                     break
 
-                # A ordem do otimizador é soberana porque ela foi avaliada como
-                # cadeia completa. A regra de evitar revisitas só entra no fallback;
-                # antes ela podia bloquear justamente uma entrega urgente já prevista.
                 best_point = None
                 while ordem_otimizada:
                     ponto_planejado = ordem_otimizada.pop(0)
@@ -9859,11 +8417,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         break
 
                 if best_point is None:
-                    candidatos_fallback = priorizar_pontos_sem_revisita(
-                        candidates_viaveis, unpicked
-                    ) or candidates_viaveis
                     best_point = min(
-                        candidatos_fallback,
+                        candidates_viaveis,
                         key=lambda p: pontuar_parada_rota(current, p, unpicked, carrying, estrategia, get_dist_dur)[0],
                     )
 
@@ -9945,11 +8500,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 route_steps, ajustes_manuais, ponto_saida
             )
             route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais)
-            if route_steps:
-                route_steps[0]['_motor_rota_versao'] = ROTA_ENGINE_VERSION
-            st.session_state['_rota_locais_repetidos_carregada'] = detectar_locais_repetidos_rota(
-                route_steps, ponto_saida
-            )
 
             # Recalcula a quilometragem a partir das etapas que realmente ficaram
             # na rota; uma antiga "PARADA: ESCRITÓRIO" absorvida pela preparação
@@ -10025,88 +8575,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         # Qualquer COLETA arrastada para a base vira PREPARAÇÃO e nunca uma
         # parada operacional separada.
 
-        if st.session_state.get('retorno_omitido_expediente'):
-            st.markdown(
-                '<div class="aproar-inline-note warn">⚠️ <span><b>Registro real após 17h.</b> '
-                'A conclusão foi preservada; nenhuma nova parada será criada depois do expediente.</span></div>',
-                unsafe_allow_html=True,
+        if st.session_state.get('demandas_adiadas'):
+            qtd_adiadas = len(st.session_state['demandas_adiadas'])
+            st.warning(
+                f"⏰ **Limite do expediente:** {qtd_adiadas} "
+                f"{plural_pt(qtd_adiadas, 'demanda ficou', 'demandas ficaram')} para o próximo planejamento, "
+                f"por prioridade, capacidade ou falta de tempo hábil até as 17h."
             )
-
-        # Reconstitui a lista em toda abertura, inclusive depois de reiniciar a
-        # sessão: uma demanda de hoje nunca some só porque não coube na rota salva.
-        demandas_fora_rota = {
-            str(t.get('id', '') or ''): t
-            for t in (st.session_state.get('demandas_adiadas') or [])
-            if str(t.get('id', '') or '')
-        }
-        ids_na_rota_final = {
-            str(tarefa.get('id', '') or '')
-            for etapa in route_steps
-            for _acao, tarefa in (etapa.get('actions', []) or [])
-            if str(tarefa.get('id', '') or '')
-        }
-        if isinstance(df_ativos, pd.DataFrame) and not df_ativos.empty and 'Urgência' in df_ativos.columns:
-            df_hoje_fora = df_ativos[
-                df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
-                & ~df_ativos['id'].astype(str).isin(ids_na_rota_final)
-            ]
-            for tarefa_fora in df_hoje_fora.to_dict('records'):
-                demanda_id_fora = str(tarefa_fora.get('id', '') or '')
-                if demanda_id_fora:
-                    demandas_fora_rota[demanda_id_fora] = tarefa_fora
-
-        if demandas_fora_rota:
-            demandas_adiadas = list(demandas_fora_rota.values())
-            qtd_adiadas = len(demandas_adiadas)
-            qtd_acordo = sum(
-                1 for t in demandas_adiadas
-                if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
-            )
-            qtd_capacidade = qtd_adiadas - qtd_acordo
-            partes_limite = []
-            if qtd_capacidade:
-                partes_limite.append(
-                    f"{qtd_capacidade} {plural_pt(qtd_capacidade, 'não cabe', 'não cabem')} com segurança até 17h"
-                )
-            if qtd_acordo:
-                partes_limite.append(
-                    f"{qtd_acordo} {plural_pt(qtd_acordo, 'foi autorizado', 'foram autorizadas')} para o próximo dia"
-                )
-            st.markdown(
-                '<div class="aproar-inline-note warn">⏰ <span><b>Capacidade do expediente:</b> ' +
-                html_escape('; '.join(partes_limite)) +
-                '. O que não couber até 17h fica fora do roteiro de hoje.</span></div>',
-                unsafe_allow_html=True,
-            )
-            with st.expander(
-                f"⏭️ FORA DA ROTA ATÉ 17H · {qtd_adiadas} "
-                f"{plural_pt(qtd_adiadas, 'demanda', 'demandas')} — ver detalhes",
-                expanded=False,
-            ):
-                df_adiadas_compacto = pd.DataFrame([
-                    {
-                        "Demanda": str(t.get('Obra', 'Demanda sem nome') or 'Demanda sem nome'),
-                        "Prazo": str(t.get('Urgência', 'sem prazo') or 'sem prazo'),
-                        "Percurso": (
-                            f"{canonicalizar_ponto_rota(t.get('Origem', ''))} → "
-                            f"{canonicalizar_ponto_rota(t.get('Destino', ''))}"
-                        ),
-                        "Motivo": (
-                            "Acordado para o próximo dia"
-                            if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
-                            else "Não coube até 17h"
-                        ),
-                    }
-                    for t in demandas_adiadas
-                ])
-                st.dataframe(
-                    df_adiadas_compacto,
-                    use_container_width=True,
-                    hide_index=True,
-                    height=min(320, 38 + 35 * qtd_adiadas),
-                )
         
-        df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
+        df_torre = get_df("SELECT id, hora_conclusao FROM historico_concluidos WHERE data_conclusao = :data", {"data": DATA_REF_ROTA_STR})
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
         try:
             dict_checkins_torre = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
@@ -10235,59 +8712,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 )
                 st.rerun()
 
-        total_paradas_resumo = sum(
-            1 for etapa in route_steps
-            if etapa.get('type') == 'stop' and etapa.get('destino') != p_saida
-        )
-        qtd_fora_resumo = len(demandas_fora_rota) if 'demandas_fora_rota' in locals() else 0
-        status_resumo = "Dentro do expediente" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "Registro após 17h"
-        status_cor = "#4ade80" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "#fbbf24"
-        st.markdown(
-            f"""
-            <div class="aproar-industrial-summary" style="margin-bottom:12px;">
-                <section class="aproar-route-panel">
-                    <div class="aproar-summary-title"><strong>Rota 01 — Davi</strong><span style="color:{status_cor}">{status_resumo}</span></div>
-                    <div class="aproar-summary-times">
-                        <div><span>Agora</span><strong>{AGORA_REAL.strftime('%H:%M')}</strong></div>
-                        <div class="aproar-summary-line"><i></i></div>
-                        <div><span>Término previsto</span><strong>{format_mins_to_time(final_dyn_min)}</strong></div>
-                    </div>
-                    <div class="aproar-summary-data">
-                        <div><span>Início</span><strong>{html_escape(hora_inicio_real)}</strong></div>
-                        <div><span>Expediente</span><strong>07:00–17:00</strong></div>
-                        <div><span>Paradas</span><strong>{total_paradas_resumo}</strong></div>
-                        <div><span>Distância</span><strong>{float(total_km):.1f} km</strong></div>
-                    </div>
-                </section>
-                <section class="aproar-fleet-panel">
-                    <div class="aproar-summary-title"><strong>Operação</strong><span>{qtd_fora_resumo} FORA</span></div>
-                    <div class="aproar-fleet-body">
-                        <span>Veículo / custeio</span><strong>Davi · {html_escape(veiculo_selecionado.split('(')[0].strip())}</strong>
-                        <small>{html_escape(estrategia)} • Motor V6</small>
-                        <div class="aproar-fleet-cost"><span>Prioridade</span><b>HOJE/VENCIDA antes de FUTURO</b></div>
-                    </div>
-                </section>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # Uma única página, em ordem de uso: resumo/roteiro primeiro e mapa depois.
-        # Não há abas nem subpáginas dentro do Roteiro do Davi.
-        col_paradas = st.container()
-        col_mapa = st.container()
-        with col_paradas:
-            st.markdown(
-                f'<div class="aproar-industrial-heading"><h2>Paradas</h2>'
-                f'<span>{sum(1 for etapa in route_steps if etapa.get("type") == "stop")} NA ROTA</span></div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f'<div class="aproar-route-meta-line"><span>🕖 Expediente <b>07:00–17:00</b></span>'
-                f'<span>🚚 Início da rota <b>{html_escape(hora_inicio_real)}</b></span>'
-                '<span>✅ Abaixo aparecem somente as etapas pendentes</span></div>',
-                unsafe_allow_html=True,
-            )
+        col_esq, col_dir = st.columns([1.2, 0.8])
+        with col_esq:
+            st.subheader(f"📋 Roteiro de viagem do Davi — {DATA_REF_ROTA_STR}")
+            st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -10320,68 +8748,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             fonte_matriz_exibicao = st.session_state.get('fonte_matriz_rota', 'OSRM — rota viária')
             horario_matriz_exibicao = st.session_state.get('horario_matriz_rota', '')
             referencia_txt = f" • referência {horario_matriz_exibicao}" if horario_matriz_exibicao else ""
+            st.caption(f"🛣️ Otimização viária: **{fonte_matriz_exibicao}**{referencia_txt} • ETAs com validação operacional de trecho")
+
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
-            st.caption(f"🛣️ {fonte_matriz_exibicao}{referencia_txt} • agora {hora_atual_str} • término previsto {nova_previsao_str}")
-
-            # Uma demanda concluída pode aparecer como COLETA e ENTREGA em pontos
-            # diferentes. Reunimos por ID para mostrar uma linha por demanda, sem
-            # repetir cartões nem ocupar a sequência operacional ainda pendente.
-            concluidas_por_id = {}
-            for etapa_concluida in route_steps:
-                for _acao_concluida, tarefa_concluida in (etapa_concluida.get('actions', []) or []):
-                    id_concluida = str(tarefa_concluida.get('id', '') or '')
-                    if not id_concluida or id_concluida not in dict_concluidos_torre:
-                        continue
-                    if id_concluida not in concluidas_por_id:
-                        chave_compacta = _nome_seguro_comprovante(id_concluida, 40)
-                        estado_compacta = comprovantes_torre.get(chave_compacta, {}) or {}
-                        status_comprovante = (
-                            "Finalizado" if estado_compacta.get('finalizado')
-                            else "Em aberto" if estado_compacta.get('fotos')
-                            else "—"
-                        )
-                        concluidas_por_id[id_concluida] = {
-                            "Baixa": str(dict_concluidos_torre[id_concluida]),
-                            "Demanda": str(tarefa_concluida.get('Obra', 'Obra não informada') or 'Obra não informada'),
-                            "Percurso": (
-                                f"{canonicalizar_ponto_rota(tarefa_concluida.get('Origem', ''))} → "
-                                f"{canonicalizar_ponto_rota(tarefa_concluida.get('Destino', ''))}"
-                            ),
-                            "Materiais": str(tarefa_concluida.get('Materiais', '') or 'Material não informado'),
-                            "Comprovante": status_comprovante,
-                        }
-
-            if concluidas_por_id:
-                df_concluidas_compacto = pd.DataFrame(concluidas_por_id.values()).sort_values(
-                    by=["Baixa", "Demanda"], kind="stable"
-                )
-                qtd_concluidas_compacto = len(df_concluidas_compacto)
-                with st.expander(
-                    f"✅ CONCLUÍDAS HOJE · {qtd_concluidas_compacto} "
-                    f"{plural_pt(qtd_concluidas_compacto, 'demanda', 'demandas')} — abrir resumo",
-                    expanded=False,
-                ):
-                    st.dataframe(
-                        df_concluidas_compacto,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(390, 38 + 35 * qtd_concluidas_compacto),
-                        column_config={
-                            "Baixa": st.column_config.TextColumn("Baixa", width="small"),
-                            "Demanda": st.column_config.TextColumn("Demanda", width="medium"),
-                            "Percurso": st.column_config.TextColumn("Percurso", width="medium"),
-                            "Materiais": st.column_config.TextColumn("Materiais", width="large"),
-                            "Comprovante": st.column_config.TextColumn("Comprovante", width="small"),
-                        },
-                    )
+            renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
             _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
             if _msg_ajuste:
-                st.markdown(
-                    f'<div class="aproar-inline-note ok">🔄 <span>{html_escape(str(_msg_ajuste))}</span></div>',
-                    unsafe_allow_html=True,
-                )
+                st.success(_msg_ajuste)
 
             with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
                 st.caption(
@@ -10454,59 +8829,25 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             num_parada = 1
             for i, step in enumerate(route_steps):
                 if step['type'] == 'lunch':
-                    st.markdown(
-                        f'<div class="aproar-special-row"><span>🍔 <b>Pausa para almoço</b></span>'
-                        f'<span>{html_escape(str(step["dyn_chegada"]))}–{html_escape(str(step["dyn_saida"]))}</span></div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
                     texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
                     continue
                 if step['type'] == 'return':
-                    st.markdown(
-                        f'<div class="aproar-special-row"><span>🏁 <b>Retorno à base</b> · {html_escape(str(step["destino"]))}</span>'
-                        f'<span>{html_escape(str(step["dyn_chegada"]))}</span></div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.info(f"🏁 **Retorno à base:** {step['destino']} (Chegada prevista: {step['dyn_chegada']})")
                     texto_whatsapp += f"🏁 Retorno: {step['destino']} ({step['dyn_chegada']})\n"
                     continue
 
                 is_start = (i == 0 and step['destino'] == p_saida)
-                acoes_pendentes_torre = [
-                    (acao_pendente, tarefa_pendente)
-                    for acao_pendente, tarefa_pendente in (step.get('actions', []) or [])
-                    if str(tarefa_pendente.get('id', '') or '') not in dict_concluidos_torre
-                ]
-                if not acoes_pendentes_torre:
-                    if not is_start:
-                        num_parada += 1
-                    continue
-
-                # A tabela acima já contém as concluídas; a sequência principal
-                # mostra apenas o trabalho restante desta parada.
-                step = dict(step)
-                step['actions'] = acoes_pendentes_torre
-                step['is_concluded'] = False
                 endereco_db = enderecos_dict.get(step['destino'], "")
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
-                etapa_totalmente_concluida = bool(step.get('is_concluded'))
-                if etapa_totalmente_concluida:
-                    titulo_etapa_recolhida = (
-                        f"✅ PREPARAÇÃO: {step['destino']} — concluída"
-                        if is_start
-                        else f"✅ PARADA {num_parada}: {step['destino']} — concluída às {step['dyn_saida']}"
-                    )
-                    contexto_etapa_torre = st.expander(titulo_etapa_recolhida, expanded=False)
-                else:
-                    contexto_etapa_torre = st.container(border=True)
-
-                with contexto_etapa_torre:
+                with st.container(border=True):
                     if is_start:
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"🕖 Preparação planejada: **{step['chegada']} às {step['saida']}**")
                         texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     else:
-                        status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #aeb7b4; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
+                        status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"{status_tempo} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
 
@@ -10551,61 +8892,30 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
-                        obra_torre_texto = str(t.get('Obra', 'Obra não informada') or 'Obra não informada')
-                        obra_torre_html = html_escape(obra_torre_texto)
-                        campo_unidade_torre = 'Origem' if eh_coleta_torre else 'Destino'
-                        unidade_torre = canonicalizar_ponto_rota(
-                            t.get(campo_unidade_torre, '') or step.get('destino', '')
-                        )
-                        unidade_torre_html = html_escape(str(unidade_torre or 'Unidade não informada'))
-                        classe_acao_torre = "coleta" if eh_coleta_torre else "entrega"
 
-                        # Em uma etapa mista, cada demanda já baixada vira uma linha
-                        # recolhida. Se a etapa inteira acabou, o expander externo já
-                        # compacta o conjunto e evitamos expanders aninhados.
-                        if concluida and not etapa_totalmente_concluida:
-                            hora_baixa_torre = str(dict_concluidos_torre.get(card_id_torre, "") or "")
-                            contexto_demanda_torre = st.expander(
-                                f"✅ {rotulo_torre} · {obra_torre_texto} · baixa às {hora_baixa_torre}",
-                                expanded=False,
-                            )
-                        else:
-                            contexto_demanda_torre = st.container(border=True)
+                        cor_torre = "#22c55e" if not eh_coleta_torre else "#f59e0b"
+                        fundo_torre = "rgba(34,197,94,.10)" if not eh_coleta_torre else "rgba(245,158,11,.10)"
+                        texto_cor_torre = "#bbf7d0" if not eh_coleta_torre else "#fde68a"
+                        obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
 
-                        with contexto_demanda_torre:
+                        with st.container(border=True):
                             st.markdown(
                                 f"""
-                                <div class="aproar-stop-header">
-                                    <span class="aproar-stop-action {classe_acao_torre}">{icone_torre} {rotulo_torre}</span>
-                                    <div class="aproar-stop-copy">
-                                        <strong>{obra_torre_html}</strong>
-                                        <small>UNIDADE · {unidade_torre_html}</small>
-                                    </div>
-                                    <span class="aproar-stop-number">#{indice_demanda:02d}</span>
+                                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;
+                                            padding:9px 11px;margin:-2px 0 8px;border-left:5px solid {cor_torre};
+                                            border-radius:9px;background:{fundo_torre};">
+                                    <div style="font-weight:900;color:{texto_cor_torre};white-space:nowrap;">{icone_torre} {rotulo_torre} {indice_demanda}</div>
+                                    <div style="font-weight:800;color:#e4e8f4;text-align:right;">🏗️ {obra_torre_html}</div>
                                 </div>
                                 """,
                                 unsafe_allow_html=True,
                             )
 
                             if materiais_torre:
-                                linhas_materiais_torre = []
                                 for material_torre in materiais_torre:
-                                    nome_material_torre, quantidade_material_torre = _dividir_material_quantidade(material_torre)
-                                    linhas_materiais_torre.append(
-                                        f'<div class="aproar-material-row">'
-                                        f'<span>{html_escape(nome_material_torre)}</span>'
-                                        f'<strong>{html_escape(quantidade_material_torre)}</strong></div>'
-                                    )
-                                st.markdown(
-                                    '<div class="aproar-material-table">' + ''.join(linhas_materiais_torre) + '</div>',
-                                    unsafe_allow_html=True,
-                                )
+                                    st.markdown(f"• {material_torre}")
                             else:
-                                st.markdown(
-                                    '<div class="aproar-material-table"><div class="aproar-material-row">'
-                                    '<span>Material não informado</span><strong>—</strong></div></div>',
-                                    unsafe_allow_html=True,
-                                )
+                                st.caption("Material não informado")
 
                             if concluida:
                                 st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
@@ -10647,25 +8957,22 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
-            st.caption(f"Planejamento-base: término às {horario_base_fim} considerando a saída prevista.")
+            st.success(f"📍 **Planejamento original (considerando a saída no horário):** término às {horario_base_fim}.")
+            if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
+                st.info(f"🟢 **Previsão real atualizada:** término às {horario_dyn_fim} (dentro do expediente).")
+            else:
+                st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
+
+            st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
             if valor_km_veiculo_proprio is not None:
                 custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
                 tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
                 custo_estimado_txt = f"R$ {custo_estimado_veiculo_proprio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
                 valor_km_txt = f"R$ {valor_km_veiculo_proprio:.2f}/km".replace('.', ',')
-                custo_linha = f" • {tipo_veiculo_proprio}: {custo_estimado_txt} ({valor_km_txt})"
-            else:
-                custo_linha = ""
-            classe_fim = "ok" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "warn"
-            texto_fim = (
-                f"Término previsto {horario_dyn_fim} • {total_km:.1f} km{custo_linha}"
-                if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN
-                else f"Registro real {horario_dyn_fim} • nenhuma nova parada será planejada após 17h • {total_km:.1f} km{custo_linha}"
-            )
-            st.markdown(
-                f'<div class="aproar-inline-note {classe_fim}"><span><b>Resumo da rota:</b> {html_escape(texto_fim)}</span></div>',
-                unsafe_allow_html=True,
-            )
+                st.info(
+                    f"💰 **Custeio estimado — {tipo_veiculo_proprio}:** "
+                    f"{custo_estimado_txt} (**{valor_km_txt}**)."
+                )
 
             if len(route_steps) > 1:
                 waypts_addr = []
@@ -10678,62 +8985,49 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
 
             st.divider()
-            with st.expander("⚙️ Fechamento, compartilhamento e texto da rota", expanded=False):
-                @fragmento_independente
-                def formulario_fechamento_rota():
-                    with st.form("fechamento_km_rota"):
-                        st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
-                        total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
-                        acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
+            @fragmento_independente
+            def formulario_fechamento_rota():
+                with st.form("fechamento_km_rota"):
+                    st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
+                    total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
+                    acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
                     
-                        if acoes_concluidas < total_acoes:
-                            st.warning(
-                                f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
-                                f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
-                                f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
-                            )
-                        else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
+                    if acoes_concluidas < total_acoes:
+                        st.warning(
+                            f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
+                            f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
+                            f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
+                        )
+                    else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
                         
-                        km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
-                        veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
-                        if st.form_submit_button("Registrar quilometragem no painel de custos"):
-                            execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
-                            carregar_registro_km_df.clear()
-                            st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
+                    km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
+                    veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
+                    if st.form_submit_button("Registrar quilometragem no painel de custos"):
+                        execute_db("INSERT INTO registro_km (data, km, obs, veiculo) VALUES (:data, :km, :obs, :veic)", {"data": DATA_REF_ROTA_STR, "km": km_real, "obs": f"Fechamento Automático ({acoes_concluidas}/{total_acoes})", "veic": veiculo_fechamento})
+                        carregar_registro_km_df.clear()
+                        st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
 
-                formulario_fechamento_rota()
+            formulario_fechamento_rota()
 
-                url_geral, _ = obter_webhook_teams("Geral / Logística")
+            url_geral, _ = obter_webhook_teams("Geral / Logística")
 
-                @fragmento_independente
-                def compartilhamento_rota():
-                    if url_geral:
-                        if st.button("📢 Enviar roteiro ao grupo geral (Teams)", use_container_width=True):
-                            resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
-                            enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
-                            if enviado: st.success("✅ Roteiro enviado!")
-                            else: st.error(f"Erro ao enviar: {detalhe}")
+            @fragmento_independente
+            def compartilhamento_rota():
+                if url_geral:
+                    if st.button("📢 Enviar roteiro ao grupo geral (Teams)", use_container_width=True):
+                        resumo = f"O roteiro do Davi já está pronto.\n\n**Data da rota:** {DATA_REF_ROTA_STR}\n\n**Saída real do pátio (TIF-2123 - Strada):** {hora_inicio_real}\n\n**Previsão dinâmica de conclusão:** {nova_previsao_str}\n\n**Total de paradas:** {num_parada-1}\n\n**Quilometragem:** {total_km:.1f} km\n\n[Abrir GPS da rota completa]({link_maps})"
+                        enviado, detalhe = disparar_teams(url_geral, "🚚 Roteiro diário atualizado!", resumo)
+                        if enviado: st.success("✅ Roteiro enviado!")
+                        else: st.error(f"Erro ao enviar: {detalhe}")
 
-                    st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
+                st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
 
-                compartilhamento_rota()
+            compartilhamento_rota()
 
-        with col_mapa:
-            st.markdown(
-                '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO EM TEMPO REAL</span></div>',
-                unsafe_allow_html=True,
-            )
-            # MAPA DA ROTA — OpenStreetMap não exige API key e permanece com as
-            # cores cartográficas originais (vias, parques, água e bairros).
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles=None)
-            folium.TileLayer(
-                tiles="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                attr="© OpenStreetMap contributors",
-                name="OpenStreetMap — sem chave",
-                overlay=False,
-                control=False,
-                max_zoom=19,
-            ).add_to(m)
+        with col_dir:
+            st.subheader("🗺️ Mapa da rota")
+            # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
+            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
 
             # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
             # existem somente para impedir que um número fique escondido por outro.
@@ -10828,8 +9122,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             st.session_state['geometria_viaria'] = geometria_viaria
 
             if len(geometria_rota) > 1:
-                # Contorno claro + azul da referência sobre as cores reais do mapa.
-                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.88).add_to(m)
+                # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
+                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.82).add_to(m)
                 folium.PolyLine(
                     geometria_rota,
                     color="#2563EB", weight=5.5, opacity=0.98,
@@ -10855,7 +9149,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-                    fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #22c55e 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#22c55e"
+                    fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
                     popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
                     folium.Marker(
                         [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
@@ -10864,82 +9158,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     ).add_to(m)
                     p_num += 1
 
-            # Última posição real do Davi. Ela é atualizada pela consulta em
-            # background acima; desenhar o caminhão nunca bloqueia o mapa.
-            posicoes_gps_rota = st.session_state.get("_gps_rota_posicoes") or []
-            placa_davi_normalizada = re.sub(r"[^A-Z0-9]", "", PLACA_DAVI.upper())
-            posicao_davi = next(
-                (
-                    pos for pos in posicoes_gps_rota
-                    if re.sub(r"[^A-Z0-9]", "", str(pos.get("Placa", "")).upper())
-                    == placa_davi_normalizada
-                ),
-                None,
-            )
-
-            if posicao_davi:
-                try:
-                    lat_caminhao = float(posicao_davi.get("Latitude"))
-                    lon_caminhao = float(posicao_davi.get("Longitude"))
-                    coordenada_gps_valida = (
-                        -90 <= lat_caminhao <= 90 and -180 <= lon_caminhao <= 180
-                        and abs(lat_caminhao) + abs(lon_caminhao) > 0.01
-                    )
-                except (TypeError, ValueError):
-                    coordenada_gps_valida = False
-
-                if coordenada_gps_valida:
-                    destino_provavel_davi, distancia_destino_davi = inferir_destino_provavel_por_distancia(
-                        lat_caminhao, lon_caminhao, route_steps, locais_dict,
-                        p_saida, dict_concluidos_torre,
-                    )
-
-                    velocidade_davi = float(posicao_davi.get("Velocidade (km/h)", 0) or 0)
-                    situacao_davi = str(posicao_davi.get("Situação", "") or "Posição localizada")
-                    atualizacao_davi = str(posicao_davi.get("Última atualização", "") or "")
-                    rua_atual_davi = resumir_rua_rastreador(posicao_davi.get("Endereço", ""))
-                    destino_gps_texto = (
-                        f"Provavelmente indo para {destino_provavel_davi}"
-                        if destino_provavel_davi
-                        else "Roteiro concluído"
-                    )
-                    distancia_gps_texto = (
-                        f"{distancia_destino_davi:.1f} km em linha reta"
-                        if distancia_destino_davi is not None else ""
-                    )
-                    distancia_popup_davi = (
-                        f"<span style='font-size:11px'>{html_escape(distancia_gps_texto)}</span><br>"
-                        if distancia_gps_texto else ""
-                    )
-                    popup_caminhao = (
-                        f"<b>🚚 Davi — {html_escape(str(PLACA_DAVI))}</b><br>"
-                        f"<span style='font-size:11px;color:#64748b'>📍 {html_escape(rua_atual_davi)}</span><br>"
-                        f"<b>{html_escape(destino_gps_texto)}</b><br>"
-                        f"{distancia_popup_davi}"
-                        f"{html_escape(situacao_davi)} — {velocidade_davi:.0f} km/h<br>"
-                        f"Atualização: {html_escape(atualizacao_davi)}"
-                    )
-                    tooltip_caminhao = (
-                        "<div style='min-width:245px;max-width:310px;white-space:normal;line-height:1.25'>"
-                        f"<div style='font-size:10px;font-weight:600;color:#64748b;margin-bottom:3px'>"
-                        f"📍 {html_escape(rua_atual_davi)}</div>"
-                        f"<div style='font-size:13px;font-weight:800;color:#0f172a'>"
-                        f"🚚 Davi • {html_escape(destino_gps_texto)}</div>"
-                        "</div>"
-                    )
-                    folium.Marker(
-                        [lat_caminhao, lon_caminhao],
-                        popup=folium.Popup(popup_caminhao, max_width=310),
-                        tooltip=tooltip_caminhao,
-                        z_index_offset=5000,
-                        icon=folium.DivIcon(html='''
-                            <div style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;
-                                        border-radius:50%;background:#ffffff;border:3px solid #2563eb;
-                                        box-shadow:0 3px 12px rgba(0,0,0,.55);font-size:23px;line-height:1;">🚚</div>
-                        '''),
-                    ).add_to(m)
-                    pontos_reais_mapa.append([lat_caminhao, lon_caminhao])
-
             if len(pontos_reais_mapa) > 1:
                 m.fit_bounds(pontos_reais_mapa, padding=(45, 45), max_zoom=14)
             if p_saida in locais_dict and pos_base_visual is not None:
@@ -10947,15 +9165,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     [pos_base_visual[0], pos_base_visual[1]],
                     popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
                     z_index_offset=2500,
-                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid #dbeafe; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.55); font-size: 16px;">🏁</div>''')
+                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
                 ).add_to(m)
 
             st_folium(
-                m, height=430, use_container_width=True, returned_objects=[],
+                m, height=540, use_container_width=True, returned_objects=[],
                 key=f"mapa_rota_{DATA_REF_ROTA_STR}",
             )
             legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
-            st.caption(f"🟡 Coleta • 🟢 Entrega • 🏁 Início/retorno • azul = {legenda_tracado}.")
+            st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
