@@ -22,7 +22,6 @@ import pandas as pd
 import requests
 import streamlit as st
 import folium
-from branca.element import Element
 from streamlit_folium import st_folium
 from sqlalchemy import text
 
@@ -4101,13 +4100,13 @@ st.markdown("""
             --ap-surface-2:#151a19;
             --ap-surface-3:#1a201f;
             --ap-line:rgba(226,232,240,.13);
-            --ap-line-strong:rgba(113,149,196,.38);
+            --ap-line-strong:rgba(226,232,230,.34);
             --ap-text:#f4f5f4;
             --ap-muted:#8e9895;
-            --ap-blue:#4779b9;
-            --ap-blue-2:#7195c4;
+            --ap-blue:#aeb7b4;
+            --ap-blue-2:#e2e7e5;
             --ap-green:#3aa978;
-            --ap-amber:#8192a6;
+            --ap-amber:#9ba4a1;
             --ap-red:#c96767;
             --ap-radius-sm:4px;
             --ap-radius:6px;
@@ -4172,7 +4171,7 @@ st.markdown("""
         }
         [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:#141817; color:#fff; }
         [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-            color:#eef2f1; background:linear-gradient(90deg,rgba(71,121,185,.14),rgba(71,121,185,.025));
+            color:#f5f7f6; background:linear-gradient(90deg,rgba(226,231,229,.12),rgba(226,231,229,.02));
             border-left-color:var(--ap-blue-2);
         }
         [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child,
@@ -4188,10 +4187,10 @@ st.markdown("""
         }
         button[kind="primary"], [data-testid="baseButton-primary"],
         section[data-testid="stMain"] .stButton > button[kind="primary"] {
-            min-height:42px; border-radius:4px !important; color:#f5f7f6 !important;
-            background:#315d92 !important; border:1px solid #4779b9 !important; box-shadow:none !important;
+            min-height:42px; border-radius:4px !important; color:#101413 !important;
+            background:#dadddc !important; border:1px solid #eef1f0 !important; box-shadow:none !important;
         }
-        button[kind="primary"]:hover { transform:none; background:#3b6ca7 !important; box-shadow:none !important; }
+        button[kind="primary"]:hover { transform:none; color:#080b0a !important; background:#f3f5f4 !important; box-shadow:none !important; }
 
         div[data-testid="stMetric"], div[data-testid="stForm"],
         div[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stExpander"],
@@ -4200,9 +4199,10 @@ st.markdown("""
             border:1px solid var(--ap-line) !important; box-shadow:none !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] { padding:14px !important; }
-        [data-testid="stAlert"] {
+        [data-testid="stAlert"], [data-testid="stAlert"] > div,
+        div[data-baseweb="notification"] {
             border-radius:5px !important; color:#d7dcda !important;
-            background:#141817 !important; border-color:rgba(201,166,84,.24) !important;
+            background:#141817 !important; border-color:rgba(226,232,230,.18) !important;
         }
         .aproar-eta-card {
             margin:9px 0 14px; border-radius:6px; background:#101414;
@@ -4236,8 +4236,8 @@ st.markdown("""
             padding:4px 7px; border-radius:4px; font-size:10px; font-weight:900;
             letter-spacing:.08em;
         }
-        .aproar-stop-action.coleta { color:#e7c675; background:rgba(200,155,53,.11); border:1px solid rgba(200,155,53,.34); }
-        .aproar-stop-action.entrega { color:#7dcba6; background:rgba(58,169,120,.10); border:1px solid rgba(58,169,120,.30); }
+        .aproar-stop-action.coleta { color:#f0f2f1; background:rgba(226,231,229,.09); border:1px solid rgba(226,231,229,.26); }
+        .aproar-stop-action.entrega { color:#c7cecb; background:rgba(151,162,158,.08); border:1px solid rgba(178,188,184,.22); }
         .aproar-stop-copy { min-width:0; }
         .aproar-stop-copy strong { display:block; overflow:hidden; color:#f4f5f4; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
         .aproar-stop-copy small { display:block; margin-top:3px; color:#87918e; font-size:10px; }
@@ -4293,7 +4293,7 @@ st.markdown("""
 
         ::-webkit-scrollbar-track { background:#080b0b; }
         ::-webkit-scrollbar-thumb { background:#2c3331; border-color:#080b0b; border-radius:2px; }
-        ::-webkit-scrollbar-thumb:hover { background:#4779b9; }
+        ::-webkit-scrollbar-thumb:hover { background:#aeb7b4; }
 
         @media (max-width:1100px) {
             [data-testid="stSidebar"] { width:250px !important; min-width:250px !important; }
@@ -5508,6 +5508,28 @@ def _obter_componente_drag_rota():
         "font-family:Manrope,Arial,sans-serif",
         1,
     )
+    # O editor vive em um iframe próprio, portanto recebe também a paleta
+    # monocromática APROAR em vez do antigo azul/dourado.
+    for cor_antiga, cor_aproar in {
+        "#070913": "#080b0b",
+        "#0b1020": "#0b0f0f",
+        "#11182d": "#151a19",
+        "#263452": "#303735",
+        "#0f1c37": "#1a201f",
+        "#10182b": "#101414",
+        "#334155": "#3b4340",
+        "#60a5fa": "#dadddc",
+        "#9fb1ca": "#b8c0bd",
+        "#f59e0b": "#dadddc",
+        "#22c55e": "#737d79",
+        "#93c5fd": "#dadddc",
+        "#1d4ed8": "#4b5350",
+        "#dbeafe": "#f1f3f2",
+        "#475569": "#68716e",
+        "#64748b": "#8c9692",
+        "#94a3b8": "#98a29e",
+    }.items():
+        frontend = frontend.replace(cor_antiga, cor_aproar)
     with open(index_path, "w", encoding="utf-8") as arquivo:
         arquivo.write(frontend)
 
@@ -9658,7 +9680,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         st.caption(f"🕖 Preparação planejada: **{step['chegada']} às {step['saida']}**")
                         texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     else:
-                        status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #f59e0b; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
+                        status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #aeb7b4; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"{status_tempo} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
 
@@ -9858,9 +9880,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO EM TEMPO REAL</span></div>',
                 unsafe_allow_html=True,
             )
-            # MAPA DA ROTA — OpenStreetMap não exige API key. O tema escuro é
-            # aplicado localmente apenas aos tiles, sem afetar rota e marcadores.
-            # Evita a marca d'água "API KEY REQUIRED" do antigo provedor Carto.
+            # MAPA DA ROTA — OpenStreetMap não exige API key e permanece com as
+            # cores cartográficas originais (vias, parques, água e bairros).
             m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles=None)
             folium.TileLayer(
                 tiles="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -9870,14 +9891,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 control=False,
                 max_zoom=19,
             ).add_to(m)
-            m.get_root().header.add_child(Element("""
-                <style>
-                    .leaflet-tile-pane {
-                        filter: grayscale(1) invert(.90) sepia(.05)
-                                saturate(.55) brightness(.72) contrast(1.22);
-                    }
-                </style>
-            """))
 
             # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
             # existem somente para impedir que um número fique escondido por outro.
@@ -9972,11 +9985,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             st.session_state['geometria_viaria'] = geometria_viaria
 
             if len(geometria_rota) > 1:
-                # Contorno claro + azul APROAR para o percurso não sumir sobre ruas/avenidas.
-                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.82).add_to(m)
+                # Contorno claro + grafite APROAR: contraste sobre as cores reais do mapa.
+                folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.92).add_to(m)
                 folium.PolyLine(
                     geometria_rota,
-                    color="#4779B9", weight=5.5, opacity=0.96,
+                    color="#252B29", weight=5.5, opacity=0.96,
                     dash_array=None if geometria_viaria else "9,7",
                     tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
                 ).add_to(m)
@@ -9999,7 +10012,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-                    fundo_marcador = "linear-gradient(90deg, #4779b9 0 50%, #3aa978 50% 100%)" if (tem_coleta and tem_entrega) else "#4779b9" if tem_coleta else "#3aa978"
+                    fundo_marcador = "linear-gradient(90deg, #202523 0 50%, #737d79 50% 100%)" if (tem_coleta and tem_entrega) else "#202523" if tem_coleta else "#737d79"
                     popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
                     folium.Marker(
                         [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
@@ -10015,7 +10028,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     [pos_base_visual[0], pos_base_visual[1]],
                     popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
                     z_index_offset=2500,
-                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #4779b9, #315d92); color: white; border: 3px solid #d8dddb; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
+                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #111514, #3d4542); color: white; border: 3px solid #f0f2f1; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.55); font-size: 16px;">🏁</div>''')
                 ).add_to(m)
 
             st_folium(
