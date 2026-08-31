@@ -30,6 +30,7 @@ Como confirmar que o código novo está publicado:
 - o cabeçalho da Torre mostra discretamente `MOTOR V3`;
 - o botão de recalcular é azul, não amarelo;
 - coletas usam azul APROAR e entregas usam verde discreto;
+- o mapa escuro usa OpenStreetMap e não solicita API key;
 - ao abrir uma rota antiga com Barra/FIEC repetidas, o sistema a recalcula
   automaticamente com uma visita por local sempre que as dependências permitirem.
 

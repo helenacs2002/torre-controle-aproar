@@ -22,6 +22,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import folium
+from branca.element import Element
 from streamlit_folium import st_folium
 from sqlalchemy import text
 
@@ -9857,8 +9858,26 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO EM TEMPO REAL</span></div>',
                 unsafe_allow_html=True,
             )
-            # MAPA DA ROTA — traçado sempre visível e marcadores com afastamento visual.
-            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="CartoDB dark_matter")
+            # MAPA DA ROTA — OpenStreetMap não exige API key. O tema escuro é
+            # aplicado localmente apenas aos tiles, sem afetar rota e marcadores.
+            # Evita a marca d'água "API KEY REQUIRED" do antigo provedor Carto.
+            m = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles=None)
+            folium.TileLayer(
+                tiles="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                attr="© OpenStreetMap contributors",
+                name="OpenStreetMap — sem chave",
+                overlay=False,
+                control=False,
+                max_zoom=19,
+            ).add_to(m)
+            m.get_root().header.add_child(Element("""
+                <style>
+                    .leaflet-tile-pane {
+                        filter: grayscale(1) invert(.90) sepia(.05)
+                                saturate(.55) brightness(.72) contrast(1.22);
+                    }
+                </style>
+            """))
 
             # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
             # existem somente para impedir que um número fique escondido por outro.
