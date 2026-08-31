@@ -4649,6 +4649,7 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("SV ELÉTRICA CD", "R. Licurgo Montenegro, 585 - Padre Andrade, Fortaleza - CE, 60356-215"),
     ("SV ELÉTRICA WASHINGTON SOARES", "Av. Washington Soares, 6450 - Cambeba, Fortaleza - CE, 60822-142"),
     ("SV ELÉTRICA MARACANAÚ", "Av. Dr. Mendel Steinbruch, 6340 - Aracapé, Fortaleza - CE, 60765-242"),
+    ("FORTEX", "Rodovia 4º Anel Viário, 1515 - KM 9,5 - Distrito Industrial III, Maracanaú - CE, 61930-220"),
 ]
 
 SCHEMA_APP_VERSION = "2026-08-28-v13"
@@ -5154,6 +5155,15 @@ def canonicalizar_ponto_rota(nome):
             
     if texto in ALIASES_LOCAL_BASE: return "ESCRITÓRIO"
     return texto
+
+
+def obter_endereco_fornecedor_fallback(nome):
+    """Obtém endereço conhecido sem substituir cadastros manuais do banco."""
+    chave = canonicalizar_ponto_rota(nome)
+    for apelido, endereco in ENDERECOS_FORNECEDORES_FALLBACK:
+        if canonicalizar_ponto_rota(apelido) == chave:
+            return endereco
+    return ""
 
 
 def detectar_locais_repetidos_rota(route_steps, ponto_saida=""):
@@ -8925,6 +8935,22 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         carregar_rota_salva_para_sessao(DATA_REF_ROTA_STR)
 
     df_ativos = st.session_state.demandas.copy()
+    # Uma rota salva não pode esconder cartões que chegaram depois. Ao abrir o
+    # roteiro de hoje, hidratamos uma vez o cache já mantido pelo ciclo do Trello;
+    # não há chamada externa nem geocodificação nesta etapa.
+    if (
+        st.session_state.get('rota_gerada', False)
+        and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
+        and DATA_REF_ROTA_DATE == AGORA_REAL.date()
+        and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
+        and isinstance(df_ativos, pd.DataFrame)
+        and df_ativos.empty
+        and not st.session_state.get('_tentou_hidratar_demandas_cache_turno')
+    ):
+        st.session_state['_tentou_hidratar_demandas_cache_turno'] = True
+        if sincronizar_demandas(forcar=False, geocodificar=False, somente_cache=True):
+            df_ativos = st.session_state.demandas.copy()
+
     _locais_repetidos_rota = detectar_locais_repetidos_rota(
         st.session_state.get('route_steps') or [], ponto_saida
     )
@@ -9109,6 +9135,40 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         except Exception as _erro_movimento_rota:
             st.query_params.clear()
             st.warning(f"Não foi possível mover essa demanda agora: {_erro_movimento_rota}")
+
+    # Se um cartão de hoje/vencido chegou após a criação da rota salva, ele precisa
+    # disputar imediatamente o tempo restante. O otimizador pode retirar demandas
+    # futuras para preservar o expediente, mas a urgente deixa de ficar invisível.
+    ids_rota_atuais = {
+        str(tarefa.get('id', '') or '')
+        for step in (st.session_state.get('route_steps') or [])
+        for _acao, tarefa in (step.get('actions', []) or [])
+        if str(tarefa.get('id', '') or '')
+    }
+    if isinstance(df_ativos, pd.DataFrame) and not df_ativos.empty and 'Urgência' in df_ativos.columns:
+        df_criticas_fora_rota = df_ativos[
+            df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
+            & ~df_ativos['id'].astype(str).isin(ids_rota_atuais)
+        ].copy()
+    else:
+        df_criticas_fora_rota = pd.DataFrame()
+
+    ids_criticos_fora_rota = sorted(df_criticas_fora_rota['id'].astype(str).tolist()) if not df_criticas_fora_rota.empty else []
+    assinatura_criticos_fora_rota = '|'.join(ids_criticos_fora_rota)
+    if (
+        rota_ativa_hoje
+        and DATA_REF_ROTA_DATE == AGORA_REAL.date()
+        and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
+        and ids_criticos_fora_rota
+        and st.session_state.get('_ultimo_lote_urgente_incorporado') != assinatura_criticos_fora_rota
+    ):
+        st.session_state['_ultimo_lote_urgente_incorporado'] = assinatura_criticos_fora_rota
+        st.session_state['_recalcular_rota_automatico'] = True
+        nomes_criticos = ', '.join(df_criticas_fora_rota['Obra'].astype(str).tolist())
+        st.session_state['_mensagem_ajuste_rota'] = (
+            f"📌 Demanda de hoje/vencida incorporada ao recálculo: {nomes_criticos}. "
+            "O restante do roteiro foi reorganizado por prazo e viabilidade."
+        )
 
     # A rota pode ser recalculada sem apagar as baixas já registradas.
     # As etapas concluídas são reaproveitadas logo abaixo a partir de historico_concluidos.
@@ -9351,6 +9411,20 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         matches = difflib.get_close_matches(p, locais_db.keys(), n=1, cutoff=0.8)
                         if matches: encontrado = matches[0]
                     if encontrado: alvo = encontrado
+
+                # Fornecedores recorrentes podem vir no cartão sem endereço. O
+                # fallback oficial é usado sob demanda e nunca substitui um local
+                # que a equipe já cadastrou/ajustou na aba Endereços.
+                if alvo not in locais_db:
+                    endereco_fallback = obter_endereco_fornecedor_fallback(p)
+                    if endereco_fallback:
+                        execute_db(
+                            "INSERT INTO locais (apelido, endereco) VALUES (:apelido, :end) "
+                            "ON CONFLICT (apelido) DO NOTHING",
+                            {"apelido": p, "end": endereco_fallback},
+                        )
+                        locais_db[p] = (endereco_fallback, None, None)
+                        alvo = p
 
                 if alvo in locais_db:
                     end_str, lat_db, lon_db = locais_db[alvo]
@@ -9816,6 +9890,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 unsafe_allow_html=True,
             )
             st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
+            st.caption("✅ Paradas e demandas concluídas ficam recolhidas. Clique nelas para consultar materiais, horários e comprovantes.")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -9941,7 +10016,18 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 endereco_db = enderecos_dict.get(step['destino'], "")
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
-                with st.container(border=True):
+                etapa_totalmente_concluida = bool(step.get('is_concluded'))
+                if etapa_totalmente_concluida:
+                    titulo_etapa_recolhida = (
+                        f"✅ PREPARAÇÃO: {step['destino']} — concluída"
+                        if is_start
+                        else f"✅ PARADA {num_parada}: {step['destino']} — concluída às {step['dyn_saida']}"
+                    )
+                    contexto_etapa_torre = st.expander(titulo_etapa_recolhida, expanded=False)
+                else:
+                    contexto_etapa_torre = st.container(border=True)
+
+                with contexto_etapa_torre:
                     if is_start:
                         st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>🏁 PREPARAÇÃO: {step['destino']}</h3>", unsafe_allow_html=True)
                         st.caption(f"🕖 Preparação planejada: **{step['chegada']} às {step['saida']}**")
@@ -9992,7 +10078,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         card_id_torre = str(t.get('id', ''))
                         concluida = card_id_torre in dict_concluidos_torre
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
-                        obra_torre_html = html_escape(str(t.get('Obra', 'Obra não informada') or 'Obra não informada'))
+                        obra_torre_texto = str(t.get('Obra', 'Obra não informada') or 'Obra não informada')
+                        obra_torre_html = html_escape(obra_torre_texto)
                         campo_unidade_torre = 'Origem' if eh_coleta_torre else 'Destino'
                         unidade_torre = canonicalizar_ponto_rota(
                             t.get(campo_unidade_torre, '') or step.get('destino', '')
@@ -10000,7 +10087,19 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         unidade_torre_html = html_escape(str(unidade_torre or 'Unidade não informada'))
                         classe_acao_torre = "coleta" if eh_coleta_torre else "entrega"
 
-                        with st.container(border=True):
+                        # Em uma etapa mista, cada demanda já baixada vira uma linha
+                        # recolhida. Se a etapa inteira acabou, o expander externo já
+                        # compacta o conjunto e evitamos expanders aninhados.
+                        if concluida and not etapa_totalmente_concluida:
+                            hora_baixa_torre = str(dict_concluidos_torre.get(card_id_torre, "") or "")
+                            contexto_demanda_torre = st.expander(
+                                f"✅ {rotulo_torre} · {obra_torre_texto} · baixa às {hora_baixa_torre}",
+                                expanded=False,
+                            )
+                        else:
+                            contexto_demanda_torre = st.container(border=True)
+
+                        with contexto_demanda_torre:
                             st.markdown(
                                 f"""
                                 <div class="aproar-stop-header">
