@@ -35,6 +35,12 @@ Como confirmar que o código novo está publicado:
   horário e próximo destino, sem bloquear a abertura da página;
 - leituras repetidas de rota, conclusões, check-ins e paradas usam cache curto
   para deixar cliques e atualizações mais rápidos;
+- no `/davi`, a próxima entrega é selecionada automaticamente e o registro pede
+  somente quem recebeu, uma foto e o botão **Registrar entrega**;
+- o roteiro do motorista aparece em lista vertical simples e o mapa completo só
+  carrega quando ele solicitar;
+- na Torre, o mapa fica no topo e as paradas ocupam a largura total abaixo,
+  eliminando o grande espaço vazio entre as colunas;
 - ao abrir uma rota antiga com Barra/FIEC repetidas, o sistema a recalcula
   automaticamente com uma visita por local sempre que as dependências permitirem.
 

@@ -423,6 +423,15 @@ def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=
     chegada = str(proxima[1].get("dyn_chegada", "--:--")) if proxima else format_mins_to_time(final_dyn_min)
     numero = (paradas.index(proxima) + 1) if proxima in paradas else len(paradas)
     progresso = int(round((concluidas / max(1, len(paradas))) * 100))
+    acoes_proxima = [str(acao) for acao, _tarefa in (proxima[1].get("actions", []) if proxima else [])]
+    tem_coleta = "COLETAR" in acoes_proxima
+    tem_entrega = "ENTREGAR" in acoes_proxima
+    tipo_proxima = (
+        "COLETAR E ENTREGAR" if tem_coleta and tem_entrega
+        else "ENTREGAR" if tem_entrega
+        else "COLETAR" if tem_coleta
+        else "SEGUIR ROTEIRO"
+    )
     link_gps = ""
     endereco = str((enderecos or {}).get(destino, "") or "")
     coordenadas = (locais or {}).get(destino, [None, None])
@@ -438,21 +447,20 @@ def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=
     )
     st.markdown(f"""
         <section class="aproar-driver-summary" id="rota">
-            <div class="aproar-driver-kpis">
-                <div class="driver-kpi"><span>PARADAS</span><strong>{len(paradas)}</strong><small>{concluidas} concluídas</small></div>
-                <div class="driver-kpi"><span>DISTÂNCIA</span><strong>{float(total_km or 0):.1f}</strong><small>quilômetros</small></div>
-                <div class="driver-kpi"><span>CONCLUSÃO</span><strong>{format_mins_to_time(final_dyn_min)}</strong><small>previsão atual</small></div>
-            </div>
-            <div class="driver-progress"><span style="width:{progresso}%"></span></div>
             <div class="driver-next-stop">
                 <div class="driver-stop-index">{numero}</div>
                 <div class="driver-stop-copy">
                     <span>PRÓXIMA PARADA</span>
                     <strong>{html_escape(destino)}</strong>
-                    <small>Chegada prevista <b>{html_escape(chegada)}</b></small>
+                    <small><b>{tipo_proxima}</b> • chegada {html_escape(chegada)}</small>
                 </div>
                 {botao_gps}
             </div>
+            <div class="driver-simple-progress">
+                <span><b>{concluidas}/{len(paradas)}</b> paradas concluídas</span>
+                <span>{float(total_km or 0):.1f} km • término {format_mins_to_time(final_dyn_min)}</span>
+            </div>
+            <div class="driver-progress"><span style="width:{progresso}%"></span></div>
         </section>
     """, unsafe_allow_html=True)
 
@@ -3087,6 +3095,7 @@ def carregar_resumo_comprovantes_davi(data_rota):
     return estados
 
 
+@st.cache_data(ttl=5, show_spinner=False)
 def carregar_comprovantes_davi(data_rota):
     estados = {}
     linhas = fetch_all(
@@ -3146,6 +3155,7 @@ def registrar_foto_comprovante_davi(data_rota, tarefa, recebedor, arquivo, tipo_
     )
     try:
         carregar_resumo_comprovantes_davi.clear()
+        carregar_comprovantes_davi.clear()
     except Exception:
         pass
 
@@ -3165,6 +3175,7 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
     )
     try:
         carregar_resumo_comprovantes_davi.clear()
+        carregar_comprovantes_davi.clear()
     except Exception:
         pass
 
@@ -3204,8 +3215,8 @@ if modo_davi:
                 padding:14px 14px 92px !important;
             }
             .aproar-driver-header {
-                position:relative; overflow:hidden; margin:0 0 12px; padding:18px 18px 20px;
-                border:1px solid rgba(96,165,250,.20); border-radius:22px;
+                position:relative; overflow:hidden; margin:0 0 8px; padding:14px 15px 15px;
+                border:1px solid rgba(96,165,250,.20); border-radius:16px;
                 background:linear-gradient(145deg,rgba(15,27,48,.98),rgba(9,14,27,.98));
                 box-shadow:0 20px 45px rgba(0,0,0,.26);
             }
@@ -3216,7 +3227,7 @@ if modo_davi:
             .aproar-driver-topline { display:flex; align-items:center; justify-content:space-between; gap:12px; position:relative; z-index:1; }
             .aproar-driver-brand { display:flex; align-items:center; gap:9px; color:#f8fafc; font-size:14px; font-weight:900; letter-spacing:.12em; }
             .aproar-logo-driver {
-                display:block; width:112px; max-width:38vw; height:34px;
+                display:block; width:92px; max-width:34vw; height:28px;
                 object-fit:contain; object-position:left center;
                 filter:drop-shadow(0 8px 16px rgba(0,0,0,.25));
             }
@@ -3226,7 +3237,7 @@ if modo_davi:
                 border-radius:999px; background:rgba(34,197,94,.08);
             }
             .aproar-driver-live i { width:7px; height:7px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 4px rgba(34,197,94,.10); }
-            .aproar-driver-greeting { position:relative; z-index:1; margin-top:24px; color:#f8fafc; font-size:27px; font-weight:700; letter-spacing:-.045em; }
+            .aproar-driver-greeting { position:relative; z-index:1; margin-top:12px; color:#f8fafc; font-size:22px; font-weight:700; letter-spacing:-.045em; }
             .aproar-driver-greeting strong { color:#60a5fa; font-weight:800; }
             .aproar-driver-date { position:relative; z-index:1; margin-top:5px; color:#94a3b8; font-size:12.5px; font-weight:600; }
 
@@ -3242,6 +3253,8 @@ if modo_davi:
             .driver-kpi small { display:block; overflow:hidden; margin-top:5px; color:#94a3b8; font-size:9.5px; white-space:nowrap; text-overflow:ellipsis; }
             .driver-progress { height:4px; margin:10px 3px 12px; overflow:hidden; border-radius:999px; background:#172036; }
             .driver-progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#22c55e); }
+            .driver-simple-progress { display:flex; justify-content:space-between; gap:10px; margin:9px 3px 0; color:#cbd5e1; font-size:10.5px; }
+            .driver-simple-progress b { color:#fff; }
             .driver-next-stop {
                 display:grid; grid-template-columns:42px minmax(0,1fr) auto; align-items:center; gap:12px;
                 padding:15px; border-radius:17px; border:1px solid rgba(96,165,250,.25);
@@ -3274,6 +3287,8 @@ if modo_davi:
             [data-testid="stExpander"] details > summary { min-height:52px; font-weight:800; }
             [data-testid="stCameraInput"] { border-radius:15px; overflow:hidden; }
             [data-testid="stFileUploader"] { margin-top:4px; }
+            [data-testid="stFileUploader"] section { min-height:108px !important; }
+            [data-testid="stTextInput"] input { min-height:48px; font-size:16px; }
             iframe[title*="streamlit_folium"] { min-height:390px; border:1px solid rgba(148,163,184,.16); }
 
             .aproar-driver-bottom-nav {
@@ -3403,7 +3418,6 @@ if modo_davi:
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
     renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos_dict, locais_dict)
-    renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
 
     # ---------------------------------------------------------------
@@ -3412,10 +3426,10 @@ if modo_davi:
     # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
     # ---------------------------------------------------------------
     st.markdown("""
-        <div class="aproar-section-anchor" id="comprovante">
-            <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
-            <div class="aproar-section-title">Comprovante digital</div>
-            <div class="aproar-section-help">Recebedor, materiais e fotos vinculados à parada ativa</div>
+            <div class="aproar-section-anchor" id="comprovante">
+                <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
+            <div class="aproar-section-title">Confirmar entrega</div>
+            <div class="aproar-section-help">Digite quem recebeu e envie uma foto</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -3470,9 +3484,19 @@ if modo_davi:
     except Exception:
         foco_comprovante = None
 
+    # Sem seleção manual: abre automaticamente a primeira entrega que ainda
+    # não possui comprovante finalizado.
+    if foco_comprovante is None:
+        for indice_entrega, itens_entrega in sorted(entregas_por_etapa.items()):
+            if any(
+                not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
+                for item in itens_entrega
+            ):
+                foco_comprovante = indice_entrega
+                break
+
     if entregas_por_etapa:
-        with st.expander("COMPROVANTE DA ENTREGA", expanded=True):
-            st.caption("↔️ Não precisa escolher a demanda aqui. Deslize o roteiro e pare na parada desejada; ela é selecionada automaticamente.")
+        with st.expander("📸 REGISTRAR ENTREGA", expanded=True):
 
             if not persistencia_comprovantes_ok:
                 st.warning("O comprovante continua funcionando, mas o histórico interno não pôde ser sincronizado agora. Evite recarregar a página até concluir a entrega.")
@@ -3481,10 +3505,10 @@ if modo_davi:
 
             if not entregas_foco:
                 if foco_comprovante is None:
-                    st.info("👇 Deslize o roteiro abaixo até uma parada com **ENTREGA**. Ao soltar o dedo, o comprovante dessa parada abre automaticamente.")
+                    st.success("✅ Todos os comprovantes de entrega foram finalizados.")
                 else:
                     destino_foco = str(route_steps[foco_comprovante].get("destino", "") or "")
-                    st.info(f"📍 **{destino_foco or 'Esta etapa'}** não possui entrega para comprovar. Continue deslizando até uma parada com entrega.")
+                    st.info(f"📍 **{destino_foco or 'Esta etapa'}** não possui entrega para registrar.")
             else:
                 pendentes_foco = []
                 for item_foco in entregas_foco:
@@ -3591,43 +3615,19 @@ if modo_davi:
                             help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
                         )
 
-                    opcoes_material = ["📦 GERAL — todos os materiais"]
-                    opcoes_material += [f"🔹 {material}" for material in materiais_sel]
-                    escolha_material = st.selectbox(
-                        "2️⃣ O que aparece nesta foto?",
-                        opcoes_material,
-                        key=f"davi_comprovante_material_{chave_comprovante}",
-                    )
-                    material_foto = "GERAL" if escolha_material.startswith("📦 GERAL") else escolha_material[2:].strip()
-
-                    modo_foto_comprovante = st.radio(
-                        "3️⃣ Foto",
-                        ["📸 Melhor qualidade", "⚡ Câmera rápida"],
-                        horizontal=True,
-                        key=f"davi_comprovante_modo_foto_{chave_comprovante}",
-                        help="Melhor qualidade usa a câmera/galeria nativa do celular e preserva melhor a resolução. Câmera rápida usa a captura do navegador.",
-                    )
-
+                    material_foto = "GERAL"
                     versao_input = int(estado.get("input_version", 0))
-                    if modo_foto_comprovante == "📸 Melhor qualidade":
-                        st.caption("📱 Recomendado: toque abaixo e escolha **Câmera** no celular. A imagem é enviada sem redimensionamento pelo app.")
-                        foto_comprovante = st.file_uploader(
-                            "Tirar ou selecionar foto",
-                            type=["jpg", "jpeg", "png", "webp"],
-                            accept_multiple_files=False,
-                            key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
-                            help="No celular, o seletor normalmente oferece Câmera, Fotos/Galeria ou Arquivos.",
-                        )
-                    else:
-                        st.caption("⚡ Mais rápido, mas a qualidade pode ser menor porque a captura é feita pelo navegador.")
-                        foto_comprovante = st.camera_input(
-                            "Foto do material entregue",
-                            key=f"davi_comprovante_camera_{chave_comprovante}_{versao_input}",
-                        )
+                    foto_comprovante = st.file_uploader(
+                        "2️⃣ Tirar ou escolher a foto",
+                        type=["jpg", "jpeg", "png", "webp"],
+                        accept_multiple_files=False,
+                        key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                        help="No celular, escolha Câmera ou Fotos/Galeria.",
+                    )
 
                     numero_proxima_foto = len(estado["fotos"]) + 1
                     if st.button(
-                        f"📤 ENVIAR FOTO {numero_proxima_foto}",
+                        "✅ REGISTRAR ENTREGA",
                         type="primary",
                         use_container_width=True,
                         key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
@@ -3648,6 +3648,7 @@ if modo_davi:
                                 )
                             if sucesso_comprovante:
                                 tipo_registro = "Foto geral" if material_foto == "GERAL" else material_foto
+                                finalizacao_automatica_ok = True
                                 try:
                                     registrar_foto_comprovante_davi(
                                         DATA_REF_ROTA_STR,
@@ -3656,8 +3657,12 @@ if modo_davi:
                                         retorno_comprovante,
                                         tipo_registro,
                                     )
+                                    definir_comprovante_finalizado_davi(
+                                        DATA_REF_ROTA_STR, demanda_id_sel, True
+                                    )
                                 except Exception:
                                     persistencia_comprovantes_ok = False
+                                    finalizacao_automatica_ok = False
 
                                 estado["recebedor"] = nome_recebedor
                                 estado["fotos"].append({
@@ -3666,9 +3671,11 @@ if modo_davi:
                                     "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
                                 })
                                 estado["input_version"] = versao_input + 1
+                                estado["finalizado"] = finalizacao_automatica_ok
                                 estado["mensagem"] = (
-                                    f"Foto {numero_proxima_foto} enviada. "
-                                    "Você pode adicionar outra ou finalizar o comprovante."
+                                    "✅ Entrega registrada com foto e nome do recebedor."
+                                    if finalizacao_automatica_ok
+                                    else "Foto enviada. Toque em finalizar para concluir o registro."
                                 )
                                 st.rerun()
                             else:
@@ -3701,10 +3708,11 @@ if modo_davi:
     st.markdown(f"""
         <div class="aproar-section-anchor" id="roteiro">
             <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
-            <div class="aproar-section-title">Roteiro passo a passo</div>
-            <div class="aproar-section-help">{total_km:.1f} km • deslize para avançar entre as etapas</div>
+            <div class="aproar-section-title">Roteiro do dia</div>
+            <div class="aproar-section-help">{total_km:.1f} km • toque em uma parada para ver o que fazer</div>
         </div>
     """, unsafe_allow_html=True)
+    MODO_DAVI_SIMPLES = True
     cartoes_mobile = []
     numero_parada_mobile = 1
 
@@ -3822,7 +3830,101 @@ if modo_davi:
             f"<div class='conteudo-card'>{corpo_acoes}</div>{rodape_card}</article>"
         )
 
-    if cartoes_mobile:
+    if MODO_DAVI_SIMPLES:
+        numero_lista = 0
+        for indice_lista, etapa_lista in enumerate(route_steps):
+            tipo_lista = str(etapa_lista.get("type", "") or "")
+            destino_lista = str(etapa_lista.get("destino", "") or "")
+            inicio_lista = indice_lista == 0 and destino_lista == p_saida
+            checkin_lista = dict_checkins_mobile.get(indice_lista)
+            concluida_lista = bool(etapa_lista.get("is_concluded")) or bool(checkin_lista)
+
+            if tipo_lista == "lunch":
+                titulo_lista = "🍔 Pausa para almoço"
+            elif tipo_lista == "return":
+                titulo_lista = f"🏁 Retorno — {destino_lista}"
+            elif inicio_lista:
+                titulo_lista = f"🏁 Preparação — {destino_lista}"
+            else:
+                numero_lista += 1
+                titulo_lista = f"{'✅' if concluida_lista else str(numero_lista) + '.'} {destino_lista}"
+
+            expandir_lista = indice_lista == foco_comprovante
+            with st.expander(titulo_lista, expanded=expandir_lista):
+                if tipo_lista == "lunch":
+                    st.write(
+                        f"Horário previsto: **{etapa_lista.get('dyn_chegada', '12:00')} às "
+                        f"{etapa_lista.get('dyn_saida', '13:00')}**"
+                    )
+                    continue
+                if tipo_lista == "return":
+                    st.write(f"Chegada prevista: **{etapa_lista.get('dyn_chegada', '--:--')}**")
+                    continue
+
+                if inicio_lista:
+                    st.caption(
+                        f"Preparação: {etapa_lista.get('chegada', '--:--')} às "
+                        f"{etapa_lista.get('saida', '--:--')}"
+                    )
+                else:
+                    st.caption(
+                        f"Chegada prevista: {etapa_lista.get('dyn_chegada', '--:--')} • "
+                        f"Trecho: {float(etapa_lista.get('dist', 0) or 0):.1f} km"
+                    )
+
+                tem_entrega_lista = False
+                for acao_lista, tarefa_lista in (etapa_lista.get("actions") or []):
+                    eh_entrega_lista = acao_lista == "ENTREGAR"
+                    tem_entrega_lista = tem_entrega_lista or eh_entrega_lista
+                    icone_lista = "📬" if eh_entrega_lista else "📦"
+                    rotulo_lista = "ENTREGAR" if eh_entrega_lista else "COLETAR"
+                    st.markdown(
+                        f"**{icone_lista} {rotulo_lista} — {tarefa_lista.get('Obra', 'Obra não informada')}**"
+                    )
+                    materiais_lista = _separar_materiais_comprovante(tarefa_lista.get("Materiais", ""))
+                    if materiais_lista:
+                        st.markdown("\n".join(f"- {material}" for material in materiais_lista))
+                    else:
+                        st.caption("Material não informado")
+
+                if not inicio_lista:
+                    endereco_lista = str(enderecos_dict.get(destino_lista, "") or "")
+                    coordenadas_lista = locais_dict.get(destino_lista, [None, None])
+                    if endereco_lista.startswith("http"):
+                        link_lista = endereco_lista
+                    elif endereco_lista:
+                        link_lista = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_lista)}"
+                    elif len(coordenadas_lista) >= 2 and coordenadas_lista[0] is not None:
+                        link_lista = f"https://www.google.com/maps/dir/?api=1&destination={coordenadas_lista[0]},{coordenadas_lista[1]}"
+                    else:
+                        link_lista = ""
+
+                    if link_lista:
+                        st.link_button("🧭 ABRIR GPS", link_lista, use_container_width=True)
+
+                    if tem_entrega_lista and not concluida_lista:
+                        if st.button(
+                            "📸 REGISTRAR ENTREGA DESTA PARADA",
+                            use_container_width=True,
+                            key=f"davi_ir_comprovante_simples_{indice_lista}",
+                        ):
+                            st.query_params.clear()
+                            st.query_params["foco"] = str(indice_lista)
+                            st.rerun()
+
+                if tipo_lista == "stop" and not etapa_lista.get("is_concluded"):
+                    texto_checkin = "↩️ DESFAZER CONCLUSÃO" if checkin_lista else "✅ MARCAR PARADA COMO FEITA"
+                    if st.button(
+                        texto_checkin,
+                        use_container_width=True,
+                        key=f"davi_checkin_simples_{indice_lista}_{'1' if checkin_lista else '0'}",
+                    ):
+                        salvar_checkin_davi(
+                            DATA_REF_ROTA_STR, indice_lista, destino_lista, not bool(checkin_lista)
+                        )
+                        st.rerun()
+
+    elif cartoes_mobile:
         html_carrossel = """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
         <style>
@@ -4006,6 +4108,11 @@ if modo_davi:
         st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
+    mostrar_mapa_davi = st.toggle("🗺️ Mostrar mapa completo", value=False, key="davi_mostrar_mapa_completo")
+    if not mostrar_mapa_davi:
+        st.caption("O botão **ABRIR GPS** de cada parada leva direto ao destino.")
+        st.stop()
+
     st.markdown("""
         <div class="aproar-section-anchor" id="mapa-rota">
             <div class="aproar-section-kicker">VISÃO GERAL</div>
@@ -9645,7 +9752,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 )
                 st.rerun()
 
-        col_mapa, col_paradas = st.columns([1.58, 0.92])
+        # O mapa/resumo ocupa o topo e o roteiro vem abaixo em largura total.
+        # Dois containers preservam o código existente sem criar a coluna vazia
+        # que aparecia quando as paradas eram muito mais altas que o mapa.
+        col_mapa = st.container()
+        col_paradas = st.container()
         with col_paradas:
             st.markdown(
                 f'<div class="aproar-industrial-heading"><h2>Paradas</h2>'
