@@ -4103,11 +4103,11 @@ st.markdown("""
             --ap-line-strong:rgba(244,180,0,.42);
             --ap-text:#f4f5f4;
             --ap-muted:#8e9895;
-            --ap-blue:#2f75ff;
-            --ap-blue-2:#5b91ff;
-            --ap-green:#20c977;
-            --ap-amber:#f4b400;
-            --ap-red:#ef5f5f;
+            --ap-blue:#4779b9;
+            --ap-blue-2:#7195c4;
+            --ap-green:#3aa978;
+            --ap-amber:#c89b35;
+            --ap-red:#c96767;
             --ap-radius-sm:4px;
             --ap-radius:6px;
             --ap-radius-lg:8px;
@@ -4171,8 +4171,8 @@ st.markdown("""
         }
         [data-testid="stSidebar"] div[role="radiogroup"] > label:hover { background:#141817; color:#fff; }
         [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-            color:#ffd452; background:linear-gradient(90deg,rgba(244,180,0,.13),rgba(244,180,0,.035));
-            border-left-color:var(--ap-amber);
+            color:#eef2f1; background:linear-gradient(90deg,rgba(71,121,185,.14),rgba(71,121,185,.025));
+            border-left-color:var(--ap-blue-2);
         }
         [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child { display:none; }
         [data-testid="stSidebar"] div[role="radiogroup"] p { font-size:12px; font-weight:700; }
@@ -4182,13 +4182,13 @@ st.markdown("""
             border:1px solid var(--ap-line) !important; box-shadow:none !important;
         }
         .stButton > button:hover, .stDownloadButton > button:hover {
-            transform:none; color:#ffd452 !important; border-color:rgba(244,180,0,.48) !important;
+            transform:none; color:#d9e5f3 !important; border-color:rgba(113,149,196,.46) !important;
         }
         button[kind="primary"], [data-testid="baseButton-primary"] {
-            min-height:42px; border-radius:4px !important; color:#151000 !important;
-            background:var(--ap-amber) !important; box-shadow:none !important;
+            min-height:42px; border-radius:4px !important; color:#f5f7f6 !important;
+            background:#315d92 !important; border:1px solid #4779b9 !important; box-shadow:none !important;
         }
-        button[kind="primary"]:hover { transform:none; background:#ffc928 !important; box-shadow:none !important; }
+        button[kind="primary"]:hover { transform:none; background:#3b6ca7 !important; box-shadow:none !important; }
 
         div[data-testid="stMetric"], div[data-testid="stForm"],
         div[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stExpander"],
@@ -4197,7 +4197,10 @@ st.markdown("""
             border:1px solid var(--ap-line) !important; box-shadow:none !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] { padding:14px !important; }
-        [data-testid="stAlert"] { border-radius:5px !important; }
+        [data-testid="stAlert"] {
+            border-radius:5px !important; color:#d7dcda !important;
+            background:#141817 !important; border-color:rgba(201,166,84,.24) !important;
+        }
         .aproar-eta-card {
             margin:9px 0 14px; border-radius:6px; background:#101414;
             border:1px solid var(--ap-line); box-shadow:none;
@@ -4208,7 +4211,7 @@ st.markdown("""
             border:1px solid var(--ap-line); border-radius:6px;
         }
         [data-testid="stExpander"] details > summary { min-height:46px; }
-        [data-testid="stExpander"] details > summary:hover { color:#ffd452; }
+        [data-testid="stExpander"] details > summary:hover { color:#d9e5f3; }
 
         .aproar-industrial-heading {
             display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -4230,8 +4233,8 @@ st.markdown("""
             padding:4px 7px; border-radius:4px; font-size:10px; font-weight:900;
             letter-spacing:.08em;
         }
-        .aproar-stop-action.coleta { color:#2b1d00; background:var(--ap-amber); }
-        .aproar-stop-action.entrega { color:#021e11; background:var(--ap-green); }
+        .aproar-stop-action.coleta { color:#e7c675; background:rgba(200,155,53,.11); border:1px solid rgba(200,155,53,.34); }
+        .aproar-stop-action.entrega { color:#7dcba6; background:rgba(58,169,120,.10); border:1px solid rgba(58,169,120,.30); }
         .aproar-stop-copy { min-width:0; }
         .aproar-stop-copy strong { display:block; overflow:hidden; color:#f4f5f4; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
         .aproar-stop-copy small { display:block; margin-top:3px; color:#87918e; font-size:10px; }
@@ -4261,7 +4264,7 @@ st.markdown("""
             padding-bottom:9px; border-bottom:1px solid var(--ap-line);
         }
         .aproar-summary-title strong { color:#f4f5f4; font-size:13px; text-transform:uppercase; }
-        .aproar-summary-title span { color:#5b91ff; font-size:9px; font-weight:800; letter-spacing:.08em; }
+        .aproar-summary-title span { color:var(--ap-blue-2); font-size:9px; font-weight:800; letter-spacing:.08em; }
         .aproar-summary-times { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:12px 0; }
         .aproar-summary-times div:last-child { text-align:right; }
         .aproar-summary-times span, .aproar-summary-times strong { display:block; }
@@ -4283,11 +4286,11 @@ st.markdown("""
         .aproar-fleet-body strong { margin-top:5px; color:#f4f5f4; font-size:14px; }
         .aproar-fleet-body small { margin-top:3px; color:#8b9592; }
         .aproar-fleet-cost { margin-top:12px; padding-top:10px; border-top:1px solid var(--ap-line); }
-        .aproar-fleet-cost b { color:#ffd452; font-size:15px; }
+        .aproar-fleet-cost b { color:#cbd9e9; font-size:15px; }
 
         ::-webkit-scrollbar-track { background:#080b0b; }
         ::-webkit-scrollbar-thumb { background:#2c3331; border-color:#080b0b; border-radius:2px; }
-        ::-webkit-scrollbar-thumb:hover { background:#f4b400; }
+        ::-webkit-scrollbar-thumb:hover { background:#4779b9; }
 
         @media (max-width:1100px) {
             [data-testid="stSidebar"] { width:250px !important; min-width:250px !important; }
@@ -4305,6 +4308,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
+ROTA_ENGINE_VERSION = 2
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -6476,6 +6480,29 @@ def calcular_matriz_rotas(coords, horario_partida=None):
     return distancias, duracoes, 'Estimativa geográfica de contingência'
 
 
+def priorizar_pontos_sem_revisita(candidatos, tarefas_a_coletar):
+    """Mantém um destino fechado até todas as coletas que irão para ele estarem no veículo.
+
+    Isso transforma, sempre que a rede origem→destino não possui um ciclo, várias
+    idas ao mesmo endereço em uma única visita consolidada. Se existir um ciclo
+    real (A entrega em B e B entrega em A), nenhum ponto fica liberado; nesse caso
+    devolvemos os candidatos originais para o planejador quebrar o ciclo com a
+    menor repetição possível.
+    """
+    candidatos = set(candidatos or [])
+    if len(candidatos) <= 1:
+        return candidatos
+
+    consolidados = {
+        ponto for ponto in candidatos
+        if not any(
+            tarefa.get('Destino') == ponto and tarefa.get('Origem') != ponto
+            for tarefa in (tarefas_a_coletar or [])
+        )
+    }
+    return consolidados or candidatos
+
+
 
 def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_dur):
     """Pontua a próxima parada considerando distância, prioridade e retornos evitáveis."""
@@ -6523,9 +6550,10 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
                 volta, _ = get_dist_dur(origem, ponto)
                 ciclos_de_retorno.append(ida + volta)
 
-            # O piso de 8 km impede que uma pequena vantagem local provoque
-            # uma visita duplicada; o ciclo viário mede o prejuízo real.
-            penalidade_retorno = max(8.0, min(ciclos_de_retorno or [8.0]) * 1.35)
+            # Repetir uma unidade é uma exceção operacional, não apenas um pequeno
+            # custo de distância. A penalidade só atua quando um ciclo impedir a
+            # consolidação rígida aplicada pelo planejador.
+            penalidade_retorno = max(60.0, min(ciclos_de_retorno or [20.0]) * 3.0)
 
     coleta_completa_carga = is_pickup and any(
         t['Destino'] in destinos_no_carro for t in coletas_aqui
@@ -6612,6 +6640,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
             if not candidatos:
                 break
+            candidatos = priorizar_pontos_sem_revisita(candidatos, pendentes)
             proximo = min(candidatos, key=lambda p: pontuar_parada_rota(atual, p, pendentes, no_carro, estrategia, get_dist_dur)[0])
             ordem.append(proximo)
             no_carro = [t for t in no_carro if t['Destino'] != proximo]
@@ -6721,7 +6750,15 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 concluidos.append(estado)
                 continue
 
-            for ponto in pontos_disponiveis(estado["coletadas"], estado["entregues"]):
+            pontos_estado = pontos_disponiveis(estado["coletadas"], estado["entregues"])
+            tarefas_a_coletar_estado = [
+                tarefas[i] for i in range(total_tarefas)
+                if not (estado["coletadas"] & (1 << i))
+            ]
+            pontos_estado = priorizar_pontos_sem_revisita(
+                pontos_estado, tarefas_a_coletar_estado
+            )
+            for ponto in pontos_estado:
                 distancia, duracao = get_dist_dur(estado["atual"], ponto)
 
                 ids_entrega = [
@@ -6770,7 +6807,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
 
                 visitas_anteriores = estado["ordem"].count(ponto)
                 if visitas_anteriores:
-                    incremento += 75.0 * visitas_anteriores
+                    incremento += 500.0 * visitas_anteriores
 
                 # Evita entregar em um destino se ainda falta coletar outro
                 # material que também será entregue nele.
@@ -6783,7 +6820,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                     urgente_depois = max([pesos[i] for i in ainda_falta_para_o_ponto] + [1])
                     excecao_urgente = "Urgências" in estrategia and urgente_agora >= 4 and urgente_agora > urgente_depois
                     if not excecao_urgente:
-                        incremento += 95.0
+                        incremento += 450.0
 
                 tempo_decorrido = max(0.0, nova_hora - horario_inicio)
                 if "Menor Distância" not in estrategia:
@@ -6902,6 +6939,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
         if not candidatos:
             break
+        candidatos = priorizar_pontos_sem_revisita(candidatos, pendentes)
         proximo = min(candidatos, key=lambda p: pontuar_parada_rota(atual, p, pendentes, no_carro, estrategia, get_dist_dur)[0])
         ordem.append(proximo)
         no_carro = [t for t in no_carro if t['Destino'] != proximo]
@@ -8679,6 +8717,26 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
 
+    # Rotas gravadas por uma versão anterior são recalculadas uma única vez
+    # quando as demandas ativas já estiverem disponíveis. Isso aplica a nova
+    # consolidação sem exigir que o operador descubra o botão manualmente.
+    versao_rota_salva = max(
+        [int(step.get('_motor_rota_versao', 0) or 0) for step in (st.session_state.get('route_steps') or [])]
+        + [0]
+    )
+    if (
+        rota_ativa_hoje
+        and versao_rota_salva < ROTA_ENGINE_VERSION
+        and isinstance(df_ativos, pd.DataFrame)
+        and not df_ativos.empty
+        and not st.session_state.get('_motor_rota_v2_solicitado')
+    ):
+        st.session_state['_motor_rota_v2_solicitado'] = True
+        st.session_state['_recalcular_rota_automatico'] = True
+        st.session_state['_mensagem_ajuste_rota'] = (
+            '✅ A rota foi reorganizada para consolidar cada unidade em uma única visita sempre que possível.'
+        )
+
     # Recebe um movimento do editor arrastável e o transforma em regra persistente.
     _mr_id = str(st.query_params.get("mr_demanda", "") or "").strip()
     _mr_acao = str(st.query_params.get("mr_acao", "") or "").strip().upper()
@@ -9096,6 +9154,14 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     carrying.clear()
                     break
 
+                # Não fecha um destino enquanto ainda existe material a buscar
+                # em outra unidade para esse mesmo destino. Assim FIEC, Barra do
+                # Ceará etc. recebem tudo em uma única visita sempre que a cadeia
+                # de coletas permitir uma ordem sem ciclos.
+                candidates_viaveis = priorizar_pontos_sem_revisita(
+                    candidates_viaveis, unpicked
+                )
+
                 best_point = None
                 while ordem_otimizada:
                     ponto_planejado = ordem_otimizada.pop(0)
@@ -9187,6 +9253,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 route_steps, ajustes_manuais, ponto_saida
             )
             route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais)
+            if route_steps:
+                route_steps[0]['_motor_rota_versao'] = ROTA_ENGINE_VERSION
+            st.session_state.pop('_motor_rota_v2_solicitado', None)
 
             # Recalcula a quilometragem a partir das etapas que realmente ficaram
             # na rota; uma antiga "PARADA: ESCRITÓRIO" absorvida pela preparação
@@ -9838,7 +9907,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 folium.PolyLine(geometria_rota, color="#FFFFFF", weight=9, opacity=0.82).add_to(m)
                 folium.PolyLine(
                     geometria_rota,
-                    color="#2563EB", weight=5.5, opacity=0.98,
+                    color="#4779B9", weight=5.5, opacity=0.96,
                     dash_array=None if geometria_viaria else "9,7",
                     tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
                 ).add_to(m)
@@ -9861,7 +9930,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-                    fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
+                    fundo_marcador = "linear-gradient(90deg, #c89b35 0 50%, #3aa978 50% 100%)" if (tem_coleta and tem_entrega) else "#c89b35" if tem_coleta else "#3aa978"
                     popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
                     folium.Marker(
                         [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
@@ -9877,7 +9946,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     [pos_base_visual[0], pos_base_visual[1]],
                     popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
                     z_index_offset=2500,
-                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
+                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #4779b9, #315d92); color: white; border: 3px solid #d8dddb; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
                 ).add_to(m)
 
             st_folium(
