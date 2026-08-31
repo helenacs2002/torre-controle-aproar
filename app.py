@@ -389,7 +389,7 @@ def renderizar_cabecalho_torre():
                 </div>
             </div>
             <div class="aproar-header-meta">
-                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V3</div>
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V5</div>
                 <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
             </div>
         </header>
@@ -4517,7 +4517,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 3
+ROTA_ENGINE_VERSION = 5
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -5223,12 +5223,28 @@ def _chave_acao_rota(tarefa, acao):
     return f"{str((tarefa or {}).get('id', '') or '')}|{str(acao or '').upper()}"
 
 
+def demanda_obrigatoria_no_dia(tarefa):
+    """HOJE/VENCIDA é compromisso do dia, salvo adiamento operacional explícito."""
+    urgencia = remover_acentos(str((tarefa or {}).get('Urgência', '') or '')).upper()
+    return any(marcador in urgencia for marcador in ('HOJE', 'VENCIDA', 'PRIORIDADE OPERACIONAL'))
+
+
 def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
-    """Aplica origem/destino manuais antes do otimizador montar a rota."""
+    """Aplica endereços e prioridades operacionais antes de montar a rota."""
     if df is None or df.empty or not isinstance(ajustes, dict):
         return df
     mapa = ajustes.get("acoes", {}) or {}
-    if not mapa:
+    ids_adiados_operacionais = {
+        str(demanda_id or "").strip()
+        for demanda_id in (ajustes.get("adiar_para_proximo_dia", []) or [])
+        if str(demanda_id or "").strip()
+    }
+    prioridades_operacionais = {
+        str(demanda_id or "").strip()
+        for demanda_id in (ajustes.get("prioridades_operacionais", []) or [])
+        if str(demanda_id or "").strip()
+    } - ids_adiados_operacionais
+    if not mapa and not prioridades_operacionais:
         return df
     resultado = df.copy()
     for idx, linha in resultado.iterrows():
@@ -5243,6 +5259,20 @@ def aplicar_ajustes_manuais_demandas(df, ajustes, ponto_saida):
             resultado.at[idx, "Origem"] = alvo_coleta
         if alvo_entrega:
             resultado.at[idx, "Destino"] = alvo_entrega
+        if demanda_id in prioridades_operacionais:
+            # A solicitação do engenheiro desempata a seleção do que cabe no dia,
+            # mas nunca autoriza ultrapassar o encerramento real das 17h.
+            try:
+                peso_atual = float(linha.get("Peso", 1) or 1)
+            except (TypeError, ValueError):
+                peso_atual = 1.0
+            resultado.at[idx, "Peso"] = max(peso_atual, 9.0)
+            urgencia_atual = str(linha.get("Urgência", "") or "").strip()
+            if "PRIORIDADE OPERACIONAL" not in urgencia_atual.upper():
+                resultado.at[idx, "Urgência"] = (
+                    f"PRIORIDADE OPERACIONAL • {urgencia_atual}"
+                    if urgencia_atual else "PRIORIDADE OPERACIONAL"
+                )
     return resultado
 
 
@@ -6825,7 +6855,9 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
             # FUTURO passassem na frente de uma demanda HOJE. O multiplicador é
             # forte para prazo crítico, mas ainda divide o custo de deslocamento,
             # preservando a eficiência geográfica entre alternativas equivalentes.
-            if urgencia_local >= 7:
+            if urgencia_local >= 9:
+                fator_prazo = 24.0
+            elif urgencia_local >= 7:
                 fator_prazo = 16.0
             elif urgencia_local >= 6:
                 fator_prazo = 12.0
@@ -6958,7 +6990,9 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 bit = 1 << i
                 if entregues_mask & bit:
                     continue
-                if peso >= 7:
+                if peso >= 9:
+                    divida_prazo += 260.0
+                elif peso >= 7:
                     divida_prazo += 150.0
                 elif peso >= 6:
                     divida_prazo += 110.0
@@ -7077,7 +7111,9 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                         elif "Equilibrada" in estrategia:
                             # Custo por adiar uma entrega: quanto mais crítico o
                             # prazo, mais caro é deixá-la para o fim da rota.
-                            if peso_i >= 7:
+                            if peso_i >= 9:
+                                fator_urgencia = 3.60
+                            elif peso_i >= 7:
                                 fator_urgencia = 2.40
                             elif peso_i >= 6:
                                 fator_urgencia = 1.85
@@ -7144,12 +7180,15 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     if estados:
         def _valor_prioridade_entregue(mask):
             valor = 0.0
+            prioritarias = 0
             criticas = 0
             vencidas = 0
             for i, peso in enumerate(pesos):
                 if not (mask & (1 << i)):
                     continue
-                if peso >= 7:
+                if peso >= 9:
+                    valor += 300.0; prioritarias += 1
+                elif peso >= 7:
                     valor += 180.0; vencidas += 1; criticas += 1
                 elif peso >= 6:
                     valor += 130.0; criticas += 1
@@ -7161,15 +7200,15 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                     valor += 4.0
                 else:
                     valor += 1.0
-            return vencidas, criticas, valor
+            return prioritarias, vencidas, criticas, valor
 
         def chave_parcial(estado):
             entregues_mask = int(estado["entregues"])
             entregues_qtd = entregues_mask.bit_count()
             carregadas_sem_entrega = int(estado["coletadas"] & ~estado["entregues"]).bit_count()
-            vencidas, criticas, valor_prazo = _valor_prioridade_entregue(entregues_mask)
+            prioritarias, vencidas, criticas, valor_prazo = _valor_prioridade_entregue(entregues_mask)
             if "Equilibrada" in estrategia or "Urgências" in estrategia:
-                return (-vencidas, -criticas, -valor_prazo, -entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
+                return (-prioritarias, -vencidas, -criticas, -valor_prazo, -entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
             return (-entregues_qtd, carregadas_sem_entrega, estado["hora"], estado["custo"])
         melhor_parcial = min(estados, key=chave_parcial)
         if melhor_parcial.get("ordem"):
@@ -8936,19 +8975,18 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     df_ativos = st.session_state.demandas.copy()
     # Uma rota salva não pode esconder cartões que chegaram depois. Ao abrir o
-    # roteiro de hoje, hidratamos uma vez o cache já mantido pelo ciclo do Trello;
-    # não há chamada externa nem geocodificação nesta etapa.
+    # roteiro de hoje, fazemos uma única leitura atual do quadro mesmo quando a
+    # sessão já contém outras demandas. A geocodificação continua desativada aqui;
+    # o objetivo é garantir que todos os prazos do dia disputem a matriz atual.
     if (
         st.session_state.get('rota_gerada', False)
         and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
         and DATA_REF_ROTA_DATE == AGORA_REAL.date()
         and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
-        and isinstance(df_ativos, pd.DataFrame)
-        and df_ativos.empty
-        and not st.session_state.get('_tentou_hidratar_demandas_cache_turno')
+        and not st.session_state.get('_tentou_hidratar_demandas_direto_v2')
     ):
-        st.session_state['_tentou_hidratar_demandas_cache_turno'] = True
-        if sincronizar_demandas(forcar=False, geocodificar=False, somente_cache=True):
+        st.session_state['_tentou_hidratar_demandas_direto_v2'] = True
+        if sincronizar_demandas(forcar=True, geocodificar=False):
             df_ativos = st.session_state.demandas.copy()
 
     _locais_repetidos_rota = detectar_locais_repetidos_rota(
@@ -8958,7 +8996,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     # No primeiro acesso, a rota salva chega antes do quadro do Trello. Se ela foi
     # criada pelo motor antigo e repete locais, hidratamos as demandas pelo cache do
-    # Supabase agora mesmo para que o recálculo V3 não dependa de um clique manual.
+    # Supabase agora mesmo para que o recálculo V5 não dependa de um clique manual.
     _chave_hidratacao_repetidos = f"_hidratou_repetidos_{DATA_REF_ROTA_STR}"
     if (
         _locais_repetidos_rota
@@ -9075,6 +9113,89 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     rota_ativa_hoje = st.session_state.get('rota_gerada', False) and st.session_state.get('data_rota') == DATA_REF_ROTA_STR
 
+    # HOJE/VENCIDA é obrigação por padrão. Quando a capacidade real do expediente
+    # não comportar tudo, a equipe pode registrar duas decisões humanas do dia:
+    # (1) o que deve ter preferência; (2) o que o engenheiro autorizou deixar para
+    # o próximo dia. Nada aqui altera prazo ou cartão no Trello.
+    if isinstance(df_ativos, pd.DataFrame) and not df_ativos.empty and 'Urgência' in df_ativos.columns:
+        df_priorizaveis = df_ativos[
+            df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
+        ].copy()
+    else:
+        df_priorizaveis = pd.DataFrame()
+
+    ids_adiados_operacionais_atuais = {
+        str(demanda_id or '').strip()
+        for demanda_id in (ajustes_manuais.get('adiar_para_proximo_dia', []) or [])
+        if str(demanda_id or '').strip()
+    }
+
+    if not df_priorizaveis.empty:
+        ids_priorizaveis = df_priorizaveis['id'].astype(str).drop_duplicates().tolist()
+        rotulos_prioridade = {}
+        for _, linha_prioridade in df_priorizaveis.drop_duplicates(subset=['id']).iterrows():
+            demanda_id_prioridade = str(linha_prioridade.get('id', '') or '')
+            obra_prioridade = str(linha_prioridade.get('Obra', '') or 'Demanda sem nome')
+            origem_prioridade = str(linha_prioridade.get('Origem', '') or '?')
+            destino_prioridade = str(linha_prioridade.get('Destino', '') or '?')
+            rotulos_prioridade[demanda_id_prioridade] = (
+                f"{obra_prioridade} · {origem_prioridade} → {destino_prioridade}"
+            )
+
+        ids_prioritarios_atuais = {
+            str(demanda_id or '').strip()
+            for demanda_id in (ajustes_manuais.get('prioridades_operacionais', []) or [])
+            if str(demanda_id or '').strip()
+        } - ids_adiados_operacionais_atuais
+
+        with st.expander("📌 Ajustes combinados com os engenheiros", expanded=False):
+            st.caption(
+                "Por padrão, toda demanda HOJE/VENCIDA é obrigatória. Use este quadro somente "
+                "quando a capacidade real até 17h não comportar tudo ou quando houver acordo para adiar."
+            )
+            with st.form(f"prioridades_operacionais_{DATA_REF_ROTA_STR}"):
+                prioridades_escolhidas = st.multiselect(
+                    "Demandas que devem ter preferência hoje",
+                    options=ids_priorizaveis,
+                    default=[
+                        demanda_id for demanda_id in ids_priorizaveis
+                        if demanda_id in ids_prioritarios_atuais
+                    ],
+                    format_func=lambda demanda_id: rotulos_prioridade.get(demanda_id, demanda_id),
+                )
+                adiadas_escolhidas = st.multiselect(
+                    "Autorizadas pelo engenheiro para o próximo dia",
+                    options=ids_priorizaveis,
+                    default=[
+                        demanda_id for demanda_id in ids_priorizaveis
+                        if demanda_id in ids_adiados_operacionais_atuais
+                    ],
+                    format_func=lambda demanda_id: rotulos_prioridade.get(demanda_id, demanda_id),
+                )
+                aplicar_prioridades = st.form_submit_button("Aplicar decisão e recalcular")
+
+            if aplicar_prioridades:
+                adiadas_escolhidas = set(adiadas_escolhidas)
+                prioridades_escolhidas = [
+                    demanda_id for demanda_id in prioridades_escolhidas
+                    if demanda_id not in adiadas_escolhidas
+                ]
+                novos_ajustes = dict(ajustes_manuais)
+                if prioridades_escolhidas:
+                    novos_ajustes['prioridades_operacionais'] = list(prioridades_escolhidas)
+                else:
+                    novos_ajustes.pop('prioridades_operacionais', None)
+                if adiadas_escolhidas:
+                    novos_ajustes['adiar_para_proximo_dia'] = sorted(adiadas_escolhidas)
+                else:
+                    novos_ajustes.pop('adiar_para_proximo_dia', None)
+                salvar_ajustes_manuais_rota(DATA_REF_ROTA_STR, novos_ajustes)
+                st.session_state['_recalcular_rota_automatico'] = True
+                st.session_state['_mensagem_ajuste_rota'] = (
+                    "Decisão operacional atualizada. O sistema refez a melhor rota possível sem planejar nada após 17h."
+                )
+                st.rerun()
+
     # Rotas gravadas por uma versão anterior — ou que ainda tragam o mesmo local
     # em várias paradas — são recalculadas uma única vez por data quando as
     # demandas ativas estiverem disponíveis.
@@ -9087,13 +9208,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         and (versao_rota_salva < ROTA_ENGINE_VERSION or bool(_locais_repetidos_rota))
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v3_solicitado_em') != DATA_REF_ROTA_STR
+        and st.session_state.get('_motor_rota_v4_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v3_solicitado_em'] = DATA_REF_ROTA_STR
+        st.session_state['_motor_rota_v4_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
         _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V3 aplicado. A rota foi reorganizada para consolidar cada local '
+            '✅ Motor V5 aplicado. A rota foi reorganizada para consolidar cada local '
             f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
@@ -9149,6 +9270,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         df_criticas_fora_rota = df_ativos[
             df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
             & ~df_ativos['id'].astype(str).isin(ids_rota_atuais)
+            & ~df_ativos['id'].astype(str).isin(ids_adiados_operacionais_atuais)
         ].copy()
     else:
         df_criticas_fora_rota = pd.DataFrame()
@@ -9160,11 +9282,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         and DATA_REF_ROTA_DATE == AGORA_REAL.date()
         and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
         and ids_criticos_fora_rota
-        and st.session_state.get('_ultimo_lote_urgente_incorporado_v2') != assinatura_criticos_fora_rota
+        and st.session_state.get('_ultimo_lote_urgente_incorporado_v4') != assinatura_criticos_fora_rota
     ):
         # A chave versionada também libera uma nova tentativa depois de mudanças
         # no critério de viabilidade, mesmo que o conjunto de cartões seja igual.
-        st.session_state['_ultimo_lote_urgente_incorporado_v2'] = assinatura_criticos_fora_rota
+        st.session_state['_ultimo_lote_urgente_incorporado_v4'] = assinatura_criticos_fora_rota
         st.session_state['_recalcular_rota_automatico'] = True
         nomes_criticos = ', '.join(df_criticas_fora_rota['Obra'].astype(str).tolist())
         st.session_state['_mensagem_ajuste_rota'] = (
@@ -9183,7 +9305,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         if recalculo_automatico:
             st.toast("🔄 Recalculando o restante do expediente...", icon="🗺️")
         with st.spinner("Analisando histórico e inteligência de nomes para traçar rota..."):
-            st.session_state['demandas_adiadas'] = []
             garantir_gps_local_base()
             
             df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
@@ -9197,7 +9318,22 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             # Tudo que sai da base deve ser carregado UMA VEZ na preparação das
             # 07:30–08:00. Ao recalcular a rota durante o dia, essas coletas não
             # podem voltar como uma nova "PARADA: ESCRITÓRIO".
-            registros_ativos_rota = df_ativos.to_dict('records')
+            todos_registros_ativos_rota = df_ativos.to_dict('records')
+            ids_adiados_operacionais = {
+                str(demanda_id or '').strip()
+                for demanda_id in (ajustes_manuais.get('adiar_para_proximo_dia', []) or [])
+                if str(demanda_id or '').strip()
+            }
+            tarefas_adiadas_por_acordo = [
+                t for t in todos_registros_ativos_rota
+                if str(t.get('id', '') or '') in ids_adiados_operacionais
+                and str(t.get('id', '') or '') not in dict_concluidos_torre
+            ]
+            st.session_state['demandas_adiadas'] = list(tarefas_adiadas_por_acordo)
+            registros_ativos_rota = [
+                t for t in todos_registros_ativos_rota
+                if str(t.get('id', '') or '') not in ids_adiados_operacionais
+            ]
             base_canonica = canonicalizar_ponto_rota(ponto_saida)
             tarefas_base_ativas = [
                 t for t in registros_ativos_rota
@@ -9478,16 +9614,31 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
             tarefas_planejamento = list(unpicked) + list(tarefas_base_ativas)
+            tarefas_obrigatorias_planejamento = [
+                t for t in tarefas_planejamento if demanda_obrigatoria_no_dia(t)
+            ]
+            tarefas_base_obrigatorias = [
+                t for t in tarefas_base_ativas if demanda_obrigatoria_no_dia(t)
+            ]
+
+            # Fase 1: calcula a melhor sequência para os compromissos do dia.
+            # Demandas FUTURO não podem deslocar HOJE/VENCIDA do expediente.
+            tarefas_primeira_fase = tarefas_obrigatorias_planejamento or tarefas_planejamento
+            pre_coletadas_primeira_fase = (
+                tarefas_base_obrigatorias if tarefas_obrigatorias_planejamento
+                else tarefas_base_ativas
+            )
             ordem_otimizada = otimizar_sequencia_rota(
-                tarefas_planejamento,
+                tarefas_primeira_fase,
                 current_point,
                 estrategia,
                 get_dist_dur,
                 current_time_tsp,
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
-                tarefas_pre_coletadas=tarefas_base_ativas,
+                tarefas_pre_coletadas=pre_coletadas_primeira_fase,
             )
+            fase_oportunidades_planejada = not bool(tarefas_obrigatorias_planejamento)
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
 
@@ -9528,13 +9679,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if not entregas and not coletas:
                     return None
 
-                tarefas_no_ponto = entregas + coletas
-                demanda_critica_no_ponto = any(
-                    float(t.get('Peso', 1) or 1) >= 5
-                    or bool(re.search(r'HOJE|VENCIDA', str(t.get('Urgência', '') or ''), flags=re.IGNORECASE))
-                    for t in tarefas_no_ponto
-                )
-
                 servico = estimar_tempo_parada(ponto, entregas, coletas)
                 fim = arr + servico
                 if arr < 12 * 60 <= fim and not pausa_consumida:
@@ -9547,21 +9691,16 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if retornar_base and ponto != ponto_saida:
                     d_volta, dur_volta_api = get_dist_dur_bruto(ponto, ponto_saida)
                     dur_volta = ajustar_tempo_deslocamento_operacional(d_volta, dur_volta_api, fim)
-                    # Uma demanda de hoje não pode desaparecer apenas porque o
-                    # RETORNO à base ultrapassa 17h. O atendimento ainda precisa
-                    # terminar até 17h; só a volta fica sinalizada como excepcional.
-                    if fim + dur_volta > LIMITE_EXPEDIENTE_DAVI_MIN and not demanda_critica_no_ponto:
+                    if fim + dur_volta > LIMITE_EXPEDIENTE_DAVI_MIN:
                         return None
 
                 return dist, dur_api, dur
 
             while unpicked or carrying:
-                # Não existe mais corte artificial às 15h30. Enquanto uma demanda
-                # ainda couber operacionalmente no tempo restante — deslocamento,
-                # atendimento e, quando configurado, retorno à base até 17h — ela
-                # continua elegível. A prioridade decide QUAL entra primeiro, mas
-                # demandas futuras podem preencher o restante do expediente para
-                # evitar ociosidade do motorista.
+                # Regra central do planejamento: HOJE/VENCIDA é obrigação. FUTURO
+                # só entra quando os compromissos do dia já foram atendidos ou
+                # reconhecidos como inviáveis até 17h. Assim o sistema aproveita o
+                # expediente sem fabricar uma rota otimista ou trocar prazo por km.
 
                 # Se o relógio entrou no almoço, a pausa acontece antes de escolher
                 # a próxima parada. Isso deixa a simulação de viabilidade consistente.
@@ -9569,6 +9708,27 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     route_steps_new.append({"type": "lunch", "chegada": "12:00", "saida": "13:00"})
                     current_time = 13 * 60
                     lunch_taken = True
+
+                obrigatorias_pendentes = [
+                    t for t in (list(unpicked) + list(carrying))
+                    if demanda_obrigatoria_no_dia(t)
+                ]
+
+                # Assim que a fase obrigatória terminar, recalcula de onde o Davi
+                # realmente está e usa o tempo restante para FUTURO/Sem Prazo.
+                if not obrigatorias_pendentes and not fase_oportunidades_planejada:
+                    tarefas_restantes = list(unpicked) + list(carrying)
+                    ordem_otimizada = otimizar_sequencia_rota(
+                        tarefas_restantes,
+                        current,
+                        estrategia,
+                        get_dist_dur,
+                        current_time,
+                        retornar_base=retornar_base,
+                        ponto_base=ponto_saida,
+                        tarefas_pre_coletadas=list(carrying),
+                    ) if tarefas_restantes else []
+                    fase_oportunidades_planejada = True
 
                 candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
                 if not candidates:
@@ -9585,6 +9745,42 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     unpicked.clear()
                     carrying.clear()
                     break
+
+                if obrigatorias_pendentes:
+                    def _ponto_tem_acao_obrigatoria(ponto):
+                        return any(
+                            demanda_obrigatoria_no_dia(t) and t['Origem'] == ponto
+                            for t in unpicked
+                        ) or any(
+                            demanda_obrigatoria_no_dia(t) and t['Destino'] == ponto
+                            for t in carrying
+                        )
+
+                    candidatos_obrigatorios_viaveis = {
+                        p for p in candidates_viaveis if _ponto_tem_acao_obrigatoria(p)
+                    }
+                    if candidatos_obrigatorios_viaveis:
+                        # FUTURO pode ser atendido junto no MESMO endereço, mas não
+                        # pode criar uma parada própria enquanto há obrigação viável.
+                        candidates_viaveis = candidatos_obrigatorios_viaveis
+                    else:
+                        # Nenhum próximo passo de uma obrigação cabe mais hoje.
+                        # Formalizamos a falta de capacidade e só então liberamos o
+                        # restante do expediente para outras demandas que caibam.
+                        _registrar_adiadas(obrigatorias_pendentes)
+                        ids_obrigatorios_sem_capacidade = {
+                            str(t.get('id', '') or '') for t in obrigatorias_pendentes
+                        }
+                        unpicked = [
+                            t for t in unpicked
+                            if str(t.get('id', '') or '') not in ids_obrigatorios_sem_capacidade
+                        ]
+                        carrying = [
+                            t for t in carrying
+                            if str(t.get('id', '') or '') not in ids_obrigatorios_sem_capacidade
+                        ]
+                        ordem_otimizada = []
+                        continue
 
                 # Não fecha um destino enquanto ainda existe material a buscar
                 # em outra unidade para esse mesmo destino. Assim FIEC, Barra do
@@ -9767,22 +9963,81 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
         if st.session_state.get('retorno_omitido_expediente'):
             st.warning(
-                "⚠️ **Retorno à base após as 17h:** uma demanda crítica foi mantida porque "
-                "o atendimento cabe no expediente, mas a viagem de volta não."
+                "⚠️ **Registro real após as 17h:** uma conclusão já realizada foi preservada no histórico. "
+                "Nenhuma nova parada foi planejada além do expediente."
             )
 
-        if st.session_state.get('demandas_adiadas'):
-            demandas_adiadas = st.session_state['demandas_adiadas']
+        # Reconstitui a lista em toda abertura, inclusive depois de reiniciar a
+        # sessão: uma demanda de hoje nunca some só porque não coube na rota salva.
+        demandas_fora_rota = {
+            str(t.get('id', '') or ''): t
+            for t in (st.session_state.get('demandas_adiadas') or [])
+            if str(t.get('id', '') or '')
+        }
+        ids_na_rota_final = {
+            str(tarefa.get('id', '') or '')
+            for etapa in route_steps
+            for _acao, tarefa in (etapa.get('actions', []) or [])
+            if str(tarefa.get('id', '') or '')
+        }
+        if isinstance(df_ativos, pd.DataFrame) and not df_ativos.empty and 'Urgência' in df_ativos.columns:
+            df_hoje_fora = df_ativos[
+                df_ativos['Urgência'].astype(str).str.contains(r'HOJE|VENCIDA', case=False, na=False)
+                & ~df_ativos['id'].astype(str).isin(ids_na_rota_final)
+            ]
+            for tarefa_fora in df_hoje_fora.to_dict('records'):
+                demanda_id_fora = str(tarefa_fora.get('id', '') or '')
+                if demanda_id_fora:
+                    demandas_fora_rota[demanda_id_fora] = tarefa_fora
+
+        if demandas_fora_rota:
+            demandas_adiadas = list(demandas_fora_rota.values())
             qtd_adiadas = len(demandas_adiadas)
-            nomes_adiadas = ', '.join(
-                f"{str(t.get('Obra', 'Demanda sem nome'))} ({str(t.get('Urgência', 'sem prazo'))})"
-                for t in demandas_adiadas
+            qtd_acordo = sum(
+                1 for t in demandas_adiadas
+                if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
             )
+            qtd_capacidade = qtd_adiadas - qtd_acordo
+            partes_limite = []
+            if qtd_capacidade:
+                partes_limite.append(
+                    f"{qtd_capacidade} {plural_pt(qtd_capacidade, 'não cabe', 'não cabem')} com segurança até 17h"
+                )
+            if qtd_acordo:
+                partes_limite.append(
+                    f"{qtd_acordo} {plural_pt(qtd_acordo, 'foi autorizado', 'foram autorizadas')} para o próximo dia"
+                )
             st.warning(
-                f"⏰ **Limite do expediente:** {qtd_adiadas} "
-                f"{plural_pt(qtd_adiadas, 'demanda ficou', 'demandas ficaram')} para o próximo planejamento, "
-                f"por prioridade, capacidade ou falta de tempo hábil até as 17h: **{nomes_adiadas}**."
+                "⏰ **Capacidade real do expediente:** " + "; ".join(partes_limite) + ". "
+                "A rota exibida contém somente o que é possível planejar dentro do turno."
             )
+            with st.expander(
+                f"⏭️ FORA DA ROTA ATÉ 17H · {qtd_adiadas} "
+                f"{plural_pt(qtd_adiadas, 'demanda', 'demandas')} — ver detalhes",
+                expanded=False,
+            ):
+                df_adiadas_compacto = pd.DataFrame([
+                    {
+                        "Demanda": str(t.get('Obra', 'Demanda sem nome') or 'Demanda sem nome'),
+                        "Prazo": str(t.get('Urgência', 'sem prazo') or 'sem prazo'),
+                        "Percurso": (
+                            f"{canonicalizar_ponto_rota(t.get('Origem', ''))} → "
+                            f"{canonicalizar_ponto_rota(t.get('Destino', ''))}"
+                        ),
+                        "Motivo": (
+                            "Acordado para o próximo dia"
+                            if str(t.get('id', '') or '') in ids_adiados_operacionais_atuais
+                            else "Não coube até 17h"
+                        ),
+                    }
+                    for t in demandas_adiadas
+                ])
+                st.dataframe(
+                    df_adiadas_compacto,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=min(320, 38 + 35 * qtd_adiadas),
+                )
         
         df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
@@ -9925,7 +10180,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 unsafe_allow_html=True,
             )
             st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
-            st.caption("✅ Paradas e demandas concluídas ficam recolhidas. Clique nelas para consultar materiais, horários e comprovantes.")
+            st.caption("✅ As demandas concluídas ficam reunidas em uma tabela compacta; abaixo aparecem somente as etapas ainda pendentes.")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -9963,6 +10218,58 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             hora_atual_str = AGORA_REAL.strftime("%H:%M")
             nova_previsao_str = format_mins_to_time(final_dyn_min)
             renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
+
+            # Uma demanda concluída pode aparecer como COLETA e ENTREGA em pontos
+            # diferentes. Reunimos por ID para mostrar uma linha por demanda, sem
+            # repetir cartões nem ocupar a sequência operacional ainda pendente.
+            concluidas_por_id = {}
+            for etapa_concluida in route_steps:
+                for _acao_concluida, tarefa_concluida in (etapa_concluida.get('actions', []) or []):
+                    id_concluida = str(tarefa_concluida.get('id', '') or '')
+                    if not id_concluida or id_concluida not in dict_concluidos_torre:
+                        continue
+                    if id_concluida not in concluidas_por_id:
+                        chave_compacta = _nome_seguro_comprovante(id_concluida, 40)
+                        estado_compacta = comprovantes_torre.get(chave_compacta, {}) or {}
+                        status_comprovante = (
+                            "Finalizado" if estado_compacta.get('finalizado')
+                            else "Em aberto" if estado_compacta.get('fotos')
+                            else "—"
+                        )
+                        concluidas_por_id[id_concluida] = {
+                            "Baixa": str(dict_concluidos_torre[id_concluida]),
+                            "Demanda": str(tarefa_concluida.get('Obra', 'Obra não informada') or 'Obra não informada'),
+                            "Percurso": (
+                                f"{canonicalizar_ponto_rota(tarefa_concluida.get('Origem', ''))} → "
+                                f"{canonicalizar_ponto_rota(tarefa_concluida.get('Destino', ''))}"
+                            ),
+                            "Materiais": str(tarefa_concluida.get('Materiais', '') or 'Material não informado'),
+                            "Comprovante": status_comprovante,
+                        }
+
+            if concluidas_por_id:
+                df_concluidas_compacto = pd.DataFrame(concluidas_por_id.values()).sort_values(
+                    by=["Baixa", "Demanda"], kind="stable"
+                )
+                qtd_concluidas_compacto = len(df_concluidas_compacto)
+                with st.expander(
+                    f"✅ CONCLUÍDAS HOJE · {qtd_concluidas_compacto} "
+                    f"{plural_pt(qtd_concluidas_compacto, 'demanda', 'demandas')} — abrir resumo",
+                    expanded=False,
+                ):
+                    st.dataframe(
+                        df_concluidas_compacto,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=min(390, 38 + 35 * qtd_concluidas_compacto),
+                        column_config={
+                            "Baixa": st.column_config.TextColumn("Baixa", width="small"),
+                            "Demanda": st.column_config.TextColumn("Demanda", width="medium"),
+                            "Percurso": st.column_config.TextColumn("Percurso", width="medium"),
+                            "Materiais": st.column_config.TextColumn("Materiais", width="large"),
+                            "Comprovante": st.column_config.TextColumn("Comprovante", width="small"),
+                        },
+                    )
 
             _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
             if _msg_ajuste:
@@ -10048,6 +10355,21 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     continue
 
                 is_start = (i == 0 and step['destino'] == p_saida)
+                acoes_pendentes_torre = [
+                    (acao_pendente, tarefa_pendente)
+                    for acao_pendente, tarefa_pendente in (step.get('actions', []) or [])
+                    if str(tarefa_pendente.get('id', '') or '') not in dict_concluidos_torre
+                ]
+                if not acoes_pendentes_torre:
+                    if not is_start:
+                        num_parada += 1
+                    continue
+
+                # A tabela acima já contém as concluídas; a sequência principal
+                # mostra apenas o trabalho restante desta parada.
+                step = dict(step)
+                step['actions'] = acoes_pendentes_torre
+                step['is_concluded'] = False
                 endereco_db = enderecos_dict.get(step['destino'], "")
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
