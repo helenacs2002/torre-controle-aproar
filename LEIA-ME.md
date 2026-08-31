@@ -1,6 +1,6 @@
 # Pacote pronto para GitHub
 
-Versão: **Motor de rota V3 — locais consolidados e paleta APROAR**.
+Versão: **Motor de rota V3 — locais consolidados, GPS no mapa e paleta de referência**.
 
 Descompacte o ZIP no seu computador e envie/substitua, na raiz do repositório:
 
@@ -29,8 +29,12 @@ Como confirmar que o código novo está publicado:
 
 - o cabeçalho da Torre mostra discretamente `MOTOR V3`;
 - o botão de recalcular é azul, não amarelo;
-- o painel usa a identidade APROAR: preto, grafite, branco e cinza metálico;
+- o painel usa azul-marinho, azul, vermelho, verde, dourado e oliva conforme a referência aprovada;
 - o mapa usa as cores cartográficas originais do OpenStreetMap e não solicita API key;
+- a última posição do Davi aparece como um caminhão no mapa, com velocidade,
+  horário e próximo destino, sem bloquear a abertura da página;
+- leituras repetidas de rota, conclusões, check-ins e paradas usam cache curto
+  para deixar cliques e atualizações mais rápidos;
 - ao abrir uma rota antiga com Barra/FIEC repetidas, o sistema a recalcula
   automaticamente com uma visita por local sempre que as dependências permitirem.
 

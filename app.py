@@ -4134,7 +4134,7 @@ st.markdown("""
             --ap-line:rgba(148,163,184,.18);
             --ap-line-strong:rgba(96,165,250,.32);
             --ap-text:#f4f7fb;
-            --ap-muted:#8e99ad;
+            --ap-muted:#ffffff;
             --ap-blue:#2563eb;
             --ap-blue-2:#3b82f6;
             --ap-green:#22c55e;
@@ -4322,6 +4322,21 @@ st.markdown("""
         .aproar-fleet-body small { margin-top:3px; color:#8b9592; }
         .aproar-fleet-cost { margin-top:12px; padding-top:10px; border-top:1px solid var(--ap-line); }
         .aproar-fleet-cost b { color:#cbd9e9; font-size:15px; }
+
+        /* Legendas e subtextos brancos — somente na plataforma do computador. */
+        [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
+        .stCaption, .stCaption p,
+        [data-testid="stSidebar"] small, [data-testid="stSidebar"] .stCaption,
+        [data-testid="stSidebar"] .stCaption p,
+        .aproar-subtitle, .aproar-sidebar-brand small,
+        .aproar-stop-copy small, .aproar-stop-number,
+        .aproar-unit-line, .aproar-unit-line strong,
+        .aproar-eta-label, .aproar-industrial-heading span,
+        .aproar-summary-title span, .aproar-summary-times span,
+        .aproar-summary-data span, .aproar-fleet-body > span,
+        .aproar-fleet-body small {
+            color:#ffffff !important; opacity:1 !important;
+        }
 
         ::-webkit-scrollbar-track { background:#080b0b; }
         ::-webkit-scrollbar-thumb { background:#2c3331; border-color:#080b0b; border-radius:2px; }
@@ -5540,6 +5555,8 @@ def _obter_componente_drag_rota():
         "font-family:Manrope,Arial,sans-serif",
         1,
     )
+    for cor_legenda_editor in ("#94a3b8", "#64748b", "#9fb1ca"):
+        frontend = frontend.replace(cor_legenda_editor, "#ffffff")
     with open(index_path, "w", encoding="utf-8") as arquivo:
         arquivo.write(frontend)
 
@@ -10169,7 +10186,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         z_index_offset=5000,
                         icon=folium.DivIcon(html='''
                             <div style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;
-                                        border-radius:50%;background:#2563eb;border:3px solid #fff;
+                                        border-radius:50%;background:#ffffff;border:3px solid #2563eb;
                                         box-shadow:0 3px 12px rgba(0,0,0,.55);font-size:23px;line-height:1;">🚚</div>
                         '''),
                     ).add_to(m)
