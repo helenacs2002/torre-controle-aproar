@@ -3061,8 +3061,10 @@ def agrupar_acoes_por_obra_exibicao(acoes):
             tarefa.get('Destino', '') if acao == 'ENTREGAR' else tarefa.get('Origem', '')
         )
         chave_obra = remover_acentos(obra).upper().strip()
-        # Sem obra confiável, não misturamos cards diferentes por acidente.
-        chave = (acao, unidade, chave_obra or f"SEM-OBRA:{demanda_id}")
+        tipo_logistica = str(tarefa.get('_Tipo_Logistica', '') or '').upper().strip()
+        # Uma TROCA não é agrupada visualmente com uma coleta comum da mesma obra:
+        # são instruções operacionais diferentes, embora possam compartilhar o local.
+        chave = (acao, unidade, chave_obra or f"SEM-OBRA:{demanda_id}", tipo_logistica)
         if chave not in grupos:
             grupos[chave] = {
                 'tarefa': tarefa,
@@ -3101,28 +3103,45 @@ def agrupar_acoes_por_obra_exibicao(acoes):
     return resultado
 
 
+def _normalizar_unidade_medida_material(unidade):
+    """Padroniza a apresentação da unidade sem inventar uma medida inexistente."""
+    bruto = remover_acentos(str(unidade or "")).upper().strip().rstrip('.')
+    mapa = {
+        "UN": "UNID", "UND": "UNID", "UNID": "UNID", "UNIDADE": "UNID", "UNIDADES": "UNID",
+        "PC": "PÇ", "PCS": "PÇ", "PÇ": "PÇ", "PÇS": "PÇ", "PECA": "PÇ", "PECAS": "PÇ",
+        "SACO": "SC", "SACOS": "SC", "SC": "SC",
+        "CAIXA": "CX", "CAIXAS": "CX", "CX": "CX",
+        "ROLO": "RL", "ROLOS": "RL", "RL": "RL",
+        "METRO": "MT", "METROS": "MT", "M": "MT", "MT": "MT",
+        "METRO LINEAR": "MT", "METROS LINEARES": "MT", "ML": "MT",
+        "METRO QUADRADO": "M²", "METROS QUADRADOS": "M²", "M2": "M²", "M²": "M²",
+        "KG": "KG", "QUILO": "KG", "QUILOS": "KG",
+        "L": "L", "LT": "L", "LITRO": "L", "LITROS": "L",
+        "KIT": "KIT", "KITS": "KIT", "PAR": "PAR", "PARES": "PAR",
+        "BARRA": "BR", "BARRAS": "BR", "BR": "BR",
+    }
+    return mapa.get(bruto, str(unidade or "").upper().strip())
+
+
 def _dividir_material_quantidade(valor):
-    """Separa a quantidade inicial do nome sem confundir medidas como 2,5mm/20kg."""
+    """Material à esquerda; quantidade + unidade de medida à direita."""
     item = re.sub(r"\s+", " ", str(valor or "")).strip(" •-\t")
     if not item:
         return "Material não informado", "—"
 
     numero = r"(\d+(?:[\.,]\d+)?)"
-    unidades = r"(un(?:id(?:ades?)?)?|pçs?|pcs?|peças?|sacos?|caixas?|rolos?|metros?|m|kg|litros?|l|kits?|pares?)"
-
-    com_unidade = re.match(
-        rf"^{numero}\s+{unidades}\b\s*(?:[-xX:]\s*)?(.+)$",
-        item,
-        flags=re.IGNORECASE,
+    unidades = (
+        r"(un(?:id(?:ades?)?)?|und|pçs?|pcs?|peças?|sacos?|sc|caixas?|cx|rolos?|rl|"
+        r"metros?\s+quadrados?|m[²2]|metros?\s+lineares?|ml|metros?|mt|m|kg|quilos?|"
+        r"litros?|lt|l|kits?|pares?|barras?|br)"
     )
+
+    com_unidade = re.match(rf"^{numero}\s+{unidades}\b\s*(?:[-xX:]\s*)?(.+)$", item, flags=re.IGNORECASE)
     if com_unidade:
-        quantidade = com_unidade.group(1)
-        unidade_medida = str(com_unidade.group(2) or "").strip().upper()
-        nome_material = com_unidade.group(3).strip()
-        # Unidade de medida acompanha o nome do item à esquerda; à direita fica
-        # somente a quantidade. Ex.: "SALVA PISO · ROLO | 2".
-        nome_com_unidade = f"{nome_material} · {unidade_medida}" if unidade_medida else nome_material
-        return nome_com_unidade, quantidade
+        qtd = com_unidade.group(1)
+        un = _normalizar_unidade_medida_material(com_unidade.group(2))
+        nome = re.sub(r'(?i)^DE\s+', '', com_unidade.group(3).strip())
+        return nome, f"{qtd} {un}".strip()
 
     com_separador = re.match(rf"^{numero}\s*[-xX:]\s*(.+)$", item)
     if com_separador:
@@ -3131,6 +3150,11 @@ def _dividir_material_quantidade(valor):
     numero_e_texto = re.match(rf"^{numero}\s+([A-Za-zÀ-ÿ].+)$", item)
     if numero_e_texto:
         return numero_e_texto.group(2).strip(), numero_e_texto.group(1)
+
+    unidade_no_fim = re.match(rf"^(.+?)\s+{numero}\s+{unidades}$", item, flags=re.IGNORECASE)
+    if unidade_no_fim:
+        un = _normalizar_unidade_medida_material(unidade_no_fim.group(3))
+        return unidade_no_fim.group(1).strip(), f"{unidade_no_fim.group(2)} {un}".strip()
 
     return item, "—"
 
@@ -3952,12 +3976,20 @@ if modo_davi:
             blocos_acao = []
             for indice_acao, (acao, tarefa) in enumerate(step.get('actions', []), start=1):
                 eh_coleta = acao == "COLETAR"
-                classe_acao, icone = ("coleta", "📦") if eh_coleta else ("entrega", "📬")
+                eh_troca = eh_coleta and str(tarefa.get('_Tipo_Logistica', '') or '').upper() == 'TROCA'
+                classe_acao, icone = (("coleta", "🔁") if eh_troca else ("coleta", "📦")) if eh_coleta else ("entrega", "📬")
                 card_id = str(tarefa.get('id', ''))
                 concluido = f"<div class='baixa'>✅ Baixa às {html_escape(str(dict_concluidos_mobile[card_id]))}</div>" if card_id in dict_concluidos_mobile else ""
 
+                eh_troca_acao = eh_coleta and str(tarefa.get('_Tipo_Logistica', '') or '').upper() == 'TROCA'
                 materiais_acao = _separar_materiais_comprovante(tarefa.get('Materiais', ''))
-                if materiais_acao:
+                if eh_troca_acao:
+                    itens_devolver = _separar_materiais_comprovante(tarefa.get('_Troca_Devolver', ''))
+                    itens_retirar = _separar_materiais_comprovante(tarefa.get('_Troca_Retirar', '')) or materiais_acao
+                    devolver_html = ''.join(f"<div class='material-item'><span class='material-bullet'>↩</span><span>{html_escape(str(m))}</span></div>" for m in itens_devolver) or "<div class='material-item vazio'>Item a devolver não informado</div>"
+                    retirar_html = ''.join(f"<div class='material-item'><span class='material-bullet'>✓</span><span>{html_escape(str(m))}</span></div>" for m in itens_retirar) or "<div class='material-item vazio'>Item correto não informado</div>"
+                    materiais_html_acao = ("<div style='font-size:11px;font-weight:900;color:#fbbf24;margin:3px 0 5px'>🔁 TROCA — DEVOLVER</div>" + devolver_html + "<div style='font-size:11px;font-weight:900;color:#4ade80;margin:9px 0 5px'>📦 RETIRAR NO LUGAR</div>" + retirar_html)
+                elif materiais_acao:
                     materiais_html_acao = "".join(
                         f"<div class='material-item'><span class='material-bullet'>•</span><span>{html_escape(str(material))}</span></div>"
                         for material in materiais_acao
@@ -3966,7 +3998,7 @@ if modo_davi:
                     materiais_html_acao = "<div class='material-item vazio'>Material não informado</div>"
 
                 obra_acao = html_escape(str(tarefa.get('Obra', '') or 'Obra não informada'))
-                rotulo_acao = "COLETA" if eh_coleta else "ENTREGA"
+                rotulo_acao = "TROCA" if eh_troca else ("COLETA" if eh_coleta else "ENTREGA")
 
                 blocos_acao.append(
                     f"<div class='acao {classe_acao}'>"
@@ -4625,9 +4657,9 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 9
+ROTA_ENGINE_VERSION = 10
 
-COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
+COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello", "_Tipo_Logistica", "_Troca_Devolver", "_Troca_Retirar"]
 
 # O limite do expediente é declarado junto às constantes do Davi, antes do
 # App do Motorista, para estar disponível tanto no mobile quanto na Torre (PC).
@@ -7669,6 +7701,59 @@ def buscar_geometria_rota(coords_ordenadas, horario_partida=None):
 
 
 
+def _limpar_linha_material_trello(linha):
+    linha = re.sub(r"^[\s•▪◦*-]+", "", str(linha or "")).strip()
+    linha = re.sub(r"\s+", " ", linha)
+    return linha.strip(" -:;•")
+
+
+def extrair_operacao_troca(texto):
+    """Reconhece TROCAR/SUBSTITUIR em fornecedor, bloco POR e destino final."""
+    bruto = str(texto or "")
+    if not bruto.strip():
+        return None
+    limpo = re.sub(r"[*_`]", "", bruto).replace("\r", "")
+    normal = remover_acentos(limpo).upper()
+    if not re.search(r"\b(TROCAR|TROCA|SUBSTITUIR|SUBSTITUICAO)\b", normal):
+        return None
+    if not re.search(r"(?m)^\s*POR\s*:?[ \t]*$", normal):
+        return None
+
+    linhas = limpo.split("\n")
+    idx_por = next((i for i, l in enumerate(linhas) if remover_acentos(l).upper().strip(" :\t") == "POR"), None)
+    if idx_por is None:
+        return None
+
+    fornecedor = ""
+    idx_cab = None
+    for i, linha in enumerate(linhas[:idx_por + 1]):
+        if re.search(r"\b(TROCAR|TROCA|SUBSTITUIR|SUBSTITUICAO)\b", remover_acentos(linha).upper()):
+            idx_cab = i
+            m = re.search(r"(?i)\b(?:trocar|troca|substituir|substitui[cç][aã]o)\b.*?\b(?:na|no|em|nas|nos)\s+(.+)$", linha)
+            if m:
+                fornecedor = canonicalizar_ponto_rota(_limpar_linha_material_trello(m.group(1)))
+            break
+
+    destino = ""
+    idx_dest = len(linhas)
+    for i in range(idx_por + 1, len(linhas)):
+        m = re.search(r"(?i)\b(?:levar|entregar|encaminhar|transportar|deixar)\b\s*(?:para|em|no|na|ao|a|à)?\s+(.+)$", linhas[i])
+        if m:
+            destino = canonicalizar_ponto_rota(_limpar_linha_material_trello(m.group(1)))
+            idx_dest = i
+            break
+
+    ini = (idx_cab + 1) if idx_cab is not None else 0
+    devolver = [_limpar_linha_material_trello(x) for x in linhas[ini:idx_por]]
+    devolver = [x for x in devolver if len(x) > 1]
+    retirar = [_limpar_linha_material_trello(x) for x in linhas[idx_por + 1:idx_dest]]
+    retirar = [x for x in retirar if len(x) > 1]
+
+    if not fornecedor or not retirar:
+        return None
+    return {"tipo":"TROCA", "origem":fornecedor, "destino":destino, "devolver":devolver, "retirar":retirar}
+
+
 def extrair_dados_completos(texto, card_name):
     titulo = str(card_name or "")
 
@@ -7706,8 +7791,13 @@ def extrair_dados_completos(texto, card_name):
 
     if texto:
         texto_limpo = re.sub(r'[*_`]+', '', texto).strip()
+        troca_info = extrair_operacao_troca(texto_limpo)
 
-        if "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
+        if troca_info:
+            origem = canonicalizar_ponto_rota(troca_info.get('origem', ''))
+            destino = canonicalizar_ponto_rota(troca_info.get('destino', '') or unidade)
+            materiais = " | ".join(troca_info.get('retirar', []) or []) or "Ver Trello"
+        elif "TRANSBORDO" in texto_limpo.upper() or "TRANSBORDOS" in texto_limpo.upper():
             if unidade:
                 origem = unidade
                 destino = "ESCRITÓRIO"
@@ -7947,6 +8037,7 @@ def sincronizar_demandas(manual=False, forcar=False, geocodificar=True, somente_
     for c in data.get('cards', []):
         if c.get('closed') or lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()): continue
         short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
+        troca_info_card = extrair_operacao_troca(c.get('desc', ''))
         peso, status_prazo = classificar_prioridade(c.get('due'))
         # A exceção de revisita usa apenas a urgência explícita MUITO ALTA do
         # card/label do Trello. Prazo HOJE ou VENCIDA continua prioritário, mas
@@ -7995,6 +8086,9 @@ def sincronizar_demandas(manual=False, forcar=False, geocodificar=True, somente_
             # Fonte imutável para reconstruir o rótulo da obra no roteiro, mesmo
             # depois que o cartão for concluído/arquivado.
             "_Titulo_Trello": str(c.get('name', '') or ''),
+            "_Tipo_Logistica": "TROCA" if troca_info_card else "",
+            "_Troca_Devolver": " | ".join((troca_info_card or {}).get('devolver', []) or []),
+            "_Troca_Retirar": " | ".join((troca_info_card or {}).get('retirar', []) or []),
         })
 
     st.session_state.demandas = pd.DataFrame(demandas_extraidas, columns=COLUNAS_DEMANDAS)
@@ -8649,7 +8743,7 @@ if modulo_principal == "📦 Demandas ativas":
 
     @fragmento_independente
     def editor_tempos_demandas():
-        st.session_state.demandas = st.data_editor(st.session_state.demandas, column_config={"Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120), "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120), "Peso": None, "id": None, "Supervisor": None, "_Titulo_Trello": None}, disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"], hide_index=True, use_container_width=True, key="editor_tempos_demandas")
+        st.session_state.demandas = st.data_editor(st.session_state.demandas, column_config={"Tempo_Coleta": st.column_config.NumberColumn("Tempo Coleta (min)", min_value=1, max_value=120), "Tempo_Entrega": st.column_config.NumberColumn("Tempo Entrega (min)", min_value=1, max_value=120), "Peso": None, "id": None, "Supervisor": None, "_Titulo_Trello": None, "_Tipo_Logistica": None, "_Troca_Devolver": None, "_Troca_Retirar": None}, disabled=["Obra", "Origem", "Destino", "Materiais", "Urgência"], hide_index=True, use_container_width=True, key="editor_tempos_demandas")
 
     editor_tempos_demandas()
     st.caption("⏱️ Os tempos de coleta/entrega representam a complexidade de cada demanda. Quando várias demandas acontecem no mesmo endereço, o sistema calcula uma única permanência no local — não soma 10 ou 20 minutos completos para cada cartão.")
@@ -10793,8 +10887,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     acoes_exibicao_torre = agrupar_acoes_por_obra_exibicao(step['actions'])
                     for indice_demanda, (acao, t) in enumerate(acoes_exibicao_torre, start=1):
                         eh_coleta_torre = acao == "COLETAR"
-                        icone_torre = "📦" if eh_coleta_torre else "📬"
-                        rotulo_torre = "COLETA" if eh_coleta_torre else "ENTREGA"
+                        eh_troca_torre_card = eh_coleta_torre and str(t.get('_Tipo_Logistica', '') or '').upper() == 'TROCA'
+                        icone_torre = "🔁" if eh_troca_torre_card else ("📦" if eh_coleta_torre else "📬")
+                        rotulo_torre = "TROCA" if eh_troca_torre_card else ("COLETA" if eh_coleta_torre else "ENTREGA")
                         card_id_torre = str(t.get('id', ''))
                         ids_card_torre = [
                             str(demanda_id or '')
@@ -10911,18 +11006,35 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                                     )
                                 st.markdown(''.join(blocos_cards_trello), unsafe_allow_html=True)
                             elif materiais_torre:
-                                linhas_materiais_torre = []
-                                for material_torre in materiais_torre:
-                                    nome_material_torre, quantidade_material_torre = _dividir_material_quantidade(material_torre)
-                                    linhas_materiais_torre.append(
-                                        f'<div class="aproar-material-row">'
-                                        f'<span>{html_escape(nome_material_torre)}</span>'
-                                        f'<strong>{html_escape(quantidade_material_torre)}</strong></div>'
+                                eh_troca_torre = eh_coleta_torre and str(t.get('_Tipo_Logistica', '') or '').upper() == 'TROCA'
+                                if eh_troca_torre:
+                                    itens_devolver_torre = _separar_materiais_comprovante(t.get('_Troca_Devolver', ''))
+                                    itens_retirar_torre = _separar_materiais_comprovante(t.get('_Troca_Retirar', '')) or materiais_torre
+                                    st.markdown("<div style='font-size:11px;font-weight:900;color:#fbbf24;margin:2px 0 5px'>🔁 TROCA · DEVOLVER AO FORNECEDOR</div>", unsafe_allow_html=True)
+                                    linhas_devolver_torre = []
+                                    for material_troca in itens_devolver_torre:
+                                        nome_troca, qtd_troca = _dividir_material_quantidade(material_troca)
+                                        linhas_devolver_torre.append(f'<div class="aproar-material-row"><span>{html_escape(nome_troca)}</span><strong>{html_escape(qtd_troca)}</strong></div>')
+                                    st.markdown('<div class="aproar-material-table">' + ''.join(linhas_devolver_torre) + '</div>', unsafe_allow_html=True)
+                                    st.markdown("<div style='font-size:11px;font-weight:900;color:#4ade80;margin:9px 0 5px'>📦 RETIRAR NO LUGAR</div>", unsafe_allow_html=True)
+                                    linhas_retirar_torre = []
+                                    for material_troca in itens_retirar_torre:
+                                        nome_troca, qtd_troca = _dividir_material_quantidade(material_troca)
+                                        linhas_retirar_torre.append(f'<div class="aproar-material-row"><span>{html_escape(nome_troca)}</span><strong>{html_escape(qtd_troca)}</strong></div>')
+                                    st.markdown('<div class="aproar-material-table">' + ''.join(linhas_retirar_torre) + '</div>', unsafe_allow_html=True)
+                                else:
+                                    linhas_materiais_torre = []
+                                    for material_torre in materiais_torre:
+                                        nome_material_torre, quantidade_material_torre = _dividir_material_quantidade(material_torre)
+                                        linhas_materiais_torre.append(
+                                            f'<div class="aproar-material-row">'
+                                            f'<span>{html_escape(nome_material_torre)}</span>'
+                                            f'<strong>{html_escape(quantidade_material_torre)}</strong></div>'
+                                        )
+                                    st.markdown(
+                                        '<div class="aproar-material-table">' + ''.join(linhas_materiais_torre) + '</div>',
+                                        unsafe_allow_html=True,
                                     )
-                                st.markdown(
-                                    '<div class="aproar-material-table">' + ''.join(linhas_materiais_torre) + '</div>',
-                                    unsafe_allow_html=True,
-                                )
                             else:
                                 st.markdown(
                                     '<div class="aproar-material-table"><div class="aproar-material-row">'
