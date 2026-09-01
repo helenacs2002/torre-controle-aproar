@@ -389,7 +389,7 @@ def renderizar_cabecalho_torre():
                 </div>
             </div>
             <div class="aproar-header-meta">
-                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V6</div>
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V7</div>
                 <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
             </div>
         </header>
@@ -3042,6 +3042,65 @@ def agrupar_coletas_preparacao_exibicao(acoes):
     return resultado
 
 
+
+def agrupar_acoes_por_obra_exibicao(acoes):
+    """Agrupa cards da mesma obra em uma linha visual, sem perder o status individual.
+
+    A chave inclui tipo da ação + unidade física + obra. Assim dois cards do Trello
+    para a mesma obra (ex.: luva e pistola) aparecem juntos. A baixa continua sendo
+    conferida pelo ID de cada card, então um grupo pode ficar PARCIAL: 1/2 concluído.
+    """
+    grupos = {}
+    ordem = []
+    for acao, tarefa_original in (acoes or []):
+        tarefa = dict(tarefa_original or {})
+        acao = str(acao or '').upper()
+        demanda_id = str(tarefa.get('id', '') or '').strip()
+        obra = re.sub(r"\s+", " ", str(tarefa.get('Obra', '') or '')).strip()
+        unidade = canonicalizar_ponto_rota(
+            tarefa.get('Destino', '') if acao == 'ENTREGAR' else tarefa.get('Origem', '')
+        )
+        chave_obra = remover_acentos(obra).upper().strip()
+        # Sem obra confiável, não misturamos cards diferentes por acidente.
+        chave = (acao, unidade, chave_obra or f"SEM-OBRA:{demanda_id}")
+        if chave not in grupos:
+            grupos[chave] = {
+                'tarefa': tarefa,
+                'ids': [],
+                'cards': [],
+                'materiais': [],
+                'materiais_vistos': set(),
+            }
+            ordem.append(chave)
+        grupo = grupos[chave]
+        materiais_card = _separar_materiais_comprovante(tarefa.get('Materiais', ''))
+        if demanda_id and demanda_id not in grupo['ids']:
+            grupo['ids'].append(demanda_id)
+            grupo['cards'].append({
+                'id': demanda_id,
+                'obra': obra,
+                'origem': canonicalizar_ponto_rota(tarefa.get('Origem', '')),
+                'destino': canonicalizar_ponto_rota(tarefa.get('Destino', '')),
+                'materiais': materiais_card,
+            })
+        for material in materiais_card:
+            chave_material = remover_acentos(material).upper().strip()
+            if chave_material and chave_material not in grupo['materiais_vistos']:
+                grupo['materiais_vistos'].add(chave_material)
+                grupo['materiais'].append(material)
+
+    resultado = []
+    for chave in ordem:
+        grupo = grupos[chave]
+        tarefa = dict(grupo['tarefa'])
+        tarefa['Materiais'] = ' | '.join(grupo['materiais'])
+        tarefa['_ids_agrupados'] = list(grupo['ids'])
+        tarefa['_cards_agrupados'] = list(grupo['cards'])
+        tarefa['_qtd_demandas_agrupadas'] = max(1, len(grupo['ids']))
+        resultado.append((chave[0], tarefa))
+    return resultado
+
+
 def _dividir_material_quantidade(valor):
     """Separa a quantidade inicial do nome sem confundir medidas como 2,5mm/20kg."""
     item = re.sub(r"\s+", " ", str(valor or "")).strip(" •-\t")
@@ -4561,7 +4620,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 6
+ROTA_ENGINE_VERSION = 7
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -9097,7 +9156,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     # No primeiro acesso, a rota salva chega antes do quadro do Trello. Se ela foi
     # criada pelo motor antigo e repete locais, hidratamos as demandas pelo cache do
-    # Supabase agora mesmo para que o recálculo V6 não dependa de um clique manual.
+    # Supabase agora mesmo para que o recálculo V7 não dependa de um clique manual.
     _chave_hidratacao_repetidos = f"_hidratou_repetidos_{DATA_REF_ROTA_STR}"
     if (
         _locais_repetidos_rota
@@ -9284,13 +9343,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         )
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v6_solicitado_em') != DATA_REF_ROTA_STR
+        and st.session_state.get('_motor_rota_v7_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v6_solicitado_em'] = DATA_REF_ROTA_STR
+        st.session_state['_motor_rota_v7_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
         _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V6 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
+            '✅ Motor V7 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
             f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
@@ -9733,6 +9792,18 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if str(tarefa.get('id', '') or '') in ids_planejados_completos
             ]
 
+            # Regra física: depois que Davi atende uma unidade, ela não volta a
+            # aparecer mais tarde no mesmo roteiro. Paradas já realizadas também
+            # entram neste bloqueio quando o restante do dia é recalculado.
+            base_canonica_rota = canonicalizar_ponto_rota(ponto_saida)
+            locais_visitados_operacionais = {
+                canonicalizar_ponto_rota(passo.get('destino', ''))
+                for passo in past_route_steps
+                if passo.get('type') == 'stop'
+                and canonicalizar_ponto_rota(passo.get('destino', ''))
+                and canonicalizar_ponto_rota(passo.get('destino', '')) != base_canonica_rota
+            }
+
             # A preparação já havia sido reconstruída antes da otimização. Agora ela
             # fica limitada às demandas cujo destino também está planejado; coletas
             # históricas concluídas continuam preservadas no resumo do dia.
@@ -9812,8 +9883,40 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if not candidates:
                     break
 
+                # Nunca retorna a uma unidade já atendida. Se uma dependência tardia
+                # exigiria BARRA → outros locais → BARRA, o card dependente fica para
+                # o próximo planejamento em vez de criar uma segunda visita.
+                ids_bloqueados_revisita = {
+                    str(t.get('id', '') or '')
+                    for t in unpicked
+                    if canonicalizar_ponto_rota(t.get('Origem', '')) in locais_visitados_operacionais
+                } | {
+                    str(t.get('id', '') or '')
+                    for t in carrying
+                    if canonicalizar_ponto_rota(t.get('Destino', '')) in locais_visitados_operacionais
+                }
+                ids_bloqueados_revisita.discard('')
+                if ids_bloqueados_revisita:
+                    bloqueadas_revisita = [
+                        t for t in (list(unpicked) + list(carrying))
+                        if str(t.get('id', '') or '') in ids_bloqueados_revisita
+                    ]
+                    _registrar_adiadas(bloqueadas_revisita)
+                    unpicked = [t for t in unpicked if str(t.get('id', '') or '') not in ids_bloqueados_revisita]
+                    carrying = [t for t in carrying if str(t.get('id', '') or '') not in ids_bloqueados_revisita]
+                    candidates = set([t['Origem'] for t in unpicked] + [t['Destino'] for t in carrying])
+                    if not candidates:
+                        break
+
                 avaliacoes = {p: _avaliar_candidato_expediente(p) for p in candidates}
-                candidates_viaveis = {p for p, avaliacao in avaliacoes.items() if avaliacao is not None}
+                candidates_viaveis = {
+                    p for p, avaliacao in avaliacoes.items()
+                    if avaliacao is not None
+                    and (
+                        canonicalizar_ponto_rota(p) == base_canonica_rota
+                        or canonicalizar_ponto_rota(p) not in locais_visitados_operacionais
+                    )
+                }
 
                 if not candidates_viaveis:
                     # Nada restante cabe no expediente considerando deslocamento,
@@ -9892,6 +9995,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "travel_mins_api": best_dur_api, "tempo_local": tempo_local_exibicao, "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local), "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
                 current_time = dep_time
                 current = best_point
+                local_visitado = canonicalizar_ponto_rota(best_point)
+                if local_visitado and local_visitado != base_canonica_rota:
+                    locais_visitados_operacionais.add(local_visitado)
 
                 if pausa_almoco_depois:
                     inicio_almoco = current_time
@@ -10041,12 +10147,6 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         # Qualquer COLETA arrastada para a base vira PREPARAÇÃO e nunca uma
         # parada operacional separada.
 
-        if st.session_state.get('retorno_omitido_expediente'):
-            st.warning(
-                "⚠️ **Registro real após as 17h:** uma conclusão já realizada foi preservada no histórico. "
-                "Nenhuma nova parada foi planejada além do expediente."
-            )
-
         # Reconstitui a lista em toda abertura, inclusive depois de reiniciar a
         # sessão: uma demanda de hoje nunca some só porque não coube na rota salva.
         demandas_fora_rota = {
@@ -10073,11 +10173,10 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         if demandas_fora_rota:
             demandas_adiadas = list(demandas_fora_rota.values())
             qtd_adiadas = len(demandas_adiadas)
-            st.warning(
-                f"⏰ **Limite do expediente:** {qtd_adiadas} "
-                f"{plural_pt(qtd_adiadas, 'demanda não coube', 'demandas não couberam')} na rota possível até as 17h: "
-                "revise as prioridades com os engenheiros ou mantenha para o próximo dia."
-            )
+            avisos_compactos = [f"{qtd_adiadas} fora da rota até 17h"]
+            if st.session_state.get('retorno_omitido_expediente'):
+                avisos_compactos.append("conclusão após 17h preservada")
+            st.caption("⏰ " + " • ".join(avisos_compactos))
             with st.expander(
                 f"⏭️ FORA DA ROTA ATÉ 17H · {qtd_adiadas} "
                 f"{plural_pt(qtd_adiadas, 'demanda', 'demandas')} — ver detalhes",
@@ -10100,6 +10199,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     hide_index=True,
                     height=min(320, 38 + 35 * qtd_adiadas),
                 )
+
+        if not demandas_fora_rota and st.session_state.get('retorno_omitido_expediente'):
+            st.caption("⏰ Conclusão após 17h preservada • nenhuma nova parada foi criada")
         
         df_torre = carregar_conclusoes_rota(DATA_REF_ROTA_STR)
         dict_concluidos_torre = dict(zip(df_torre['id'].astype(str), df_torre['hora_conclusao']))
@@ -10287,7 +10389,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
             _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
             if _msg_ajuste:
-                st.success(_msg_ajuste)
+                st.caption(f"ℹ️ {_msg_ajuste}")
 
             with st.expander("✋ Ajustar rota manualmente — arraste as demandas", expanded=False):
                 st.caption(
@@ -10450,10 +10552,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                             f"{len(step.get('actions', []))} {plural_pt(len(step.get('actions', [])), 'demanda desta parada compartilha', 'demandas desta parada compartilham')} esse período."
                         )
 
-                    acoes_exibicao_torre = (
-                        agrupar_coletas_preparacao_exibicao(step['actions'])
-                        if is_start else list(step['actions'])
-                    )
+                    # Uma obra pode ter vários cards no Trello. Exibimos a obra uma
+                    # única vez e mantemos, dentro dela, o status individual de cada card.
+                    acoes_exibicao_torre = agrupar_acoes_por_obra_exibicao(step['actions'])
                     for indice_demanda, (acao, t) in enumerate(acoes_exibicao_torre, start=1):
                         eh_coleta_torre = acao == "COLETAR"
                         icone_torre = "📦" if eh_coleta_torre else "📬"
@@ -10497,31 +10598,33 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                             if qtd_demandas_card > 1 else ""
                         )
 
-                        # Em uma etapa mista, cada demanda já baixada vira uma linha
-                        # recolhida. Se a etapa inteira acabou, o expander externo já
-                        # compacta o conjunto e evitamos expanders aninhados.
-                        if concluida and not etapa_totalmente_concluida:
+                        # Status por OBRA, e não apenas por card. Isso deixa explícito
+                        # quando a visita ficou parcial: ex. luva baixada e pistola pendente.
+                        total_cards_grupo = len(cards_agrupados_torre)
+                        grupo_parcial = total_cards_grupo > 1 and 0 < qtd_cards_baixados < total_cards_grupo
+                        if total_cards_grupo > 1:
+                            qtd_itens_grupo = len(materiais_torre)
+                            if grupo_parcial:
+                                icone_estado_grupo = "⚠️"
+                                resumo_estado_grupo = (
+                                    f"{qtd_cards_baixados}/{total_cards_grupo} baixados · "
+                                    f"FALTA {qtd_cards_pendentes}"
+                                )
+                            elif qtd_cards_pendentes:
+                                icone_estado_grupo = "⏳"
+                                resumo_estado_grupo = f"{qtd_cards_pendentes} pendentes"
+                            else:
+                                icone_estado_grupo = "✅"
+                                resumo_estado_grupo = f"{total_cards_grupo}/{total_cards_grupo} baixados"
+                            contexto_demanda_torre = st.expander(
+                                f"{icone_estado_grupo} {rotulo_torre} · {obra_torre_texto} · "
+                                f"{resumo_estado_grupo} · {qtd_itens_grupo} {plural_pt(qtd_itens_grupo, 'item', 'itens')}",
+                                expanded=grupo_parcial,
+                            )
+                        elif concluida and not etapa_totalmente_concluida:
                             contexto_demanda_torre = st.expander(
                                 f"✅ {rotulo_torre} · {obra_torre_texto} · baixa às {hora_baixa_card}",
                                 expanded=False,
-                            )
-                        elif is_start:
-                            qtd_itens_grupo = len(materiais_torre)
-                            if qtd_cards_pendentes:
-                                icone_estado_grupo = "⚠️"
-                                resumo_estado_grupo = (
-                                    f"{qtd_cards_baixados}/{len(cards_agrupados_torre)} cards com baixa · "
-                                    f"{qtd_cards_pendentes} {plural_pt(qtd_cards_pendentes, 'card faltando', 'cards faltando')}"
-                                )
-                            else:
-                                icone_estado_grupo = "✅" if cards_agrupados_torre else "📦"
-                                resumo_estado_grupo = "todos os cards com baixa" if cards_agrupados_torre else ""
-                            contexto_demanda_torre = st.expander(
-                                f"{icone_estado_grupo} {obra_torre_texto} → {unidade_torre or 'Destino não informado'} · "
-                                f"{qtd_demandas_card} {plural_pt(qtd_demandas_card, 'demanda', 'demandas')} · "
-                                f"{qtd_itens_grupo} {plural_pt(qtd_itens_grupo, 'item', 'itens')}"
-                                f"{' · ' + resumo_estado_grupo if resumo_estado_grupo else ''}",
-                                expanded=bool(qtd_cards_pendentes and qtd_cards_baixados),
                             )
                         else:
                             contexto_demanda_torre = st.container(border=True)
@@ -10541,7 +10644,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                                 unsafe_allow_html=True,
                             )
 
-                            if is_start and cards_agrupados_torre:
+                            if len(cards_agrupados_torre) > 1:
                                 blocos_cards_trello = []
                                 for indice_card_grupo, card_grupo in enumerate(cards_agrupados_torre, start=1):
                                     card_grupo_id = str(card_grupo.get('id', '') or '')
@@ -10559,15 +10662,16 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                                         f"<li>{html_escape(str(material_card))}</li>"
                                         for material_card in materiais_card_grupo
                                     ) or "<li>Material não informado</li>"
-                                    identificador_curto = html_escape(card_grupo_id[-8:] or str(indice_card_grupo))
+                                    resumo_material_card = " • ".join(str(m) for m in materiais_card_grupo) or "Material não informado"
+                                    status_curto = (
+                                        f"✅ {resumo_material_card} · baixa {hora_card_grupo}"
+                                        if card_grupo_concluido
+                                        else f"⚠️ FALTA: {resumo_material_card}"
+                                    )
                                     blocos_cards_trello.append(
-                                        f'<div style="margin:7px 0;padding:9px 11px;border:1px solid {cor_card_grupo};'
-                                        f'border-left:4px solid {cor_card_grupo};border-radius:6px;background:{fundo_card_grupo};">'
-                                        f'<div style="display:flex;justify-content:space-between;gap:10px;font-size:10px;'
-                                        f'font-weight:900;color:{cor_card_grupo};"><span>CARD {indice_card_grupo} · {identificador_curto}</span>'
-                                        f'<span>{status_card_grupo}</span></div>'
-                                        f'<ul style="margin:7px 0 0;padding-left:18px;color:#d6dbd9;font-size:11px;line-height:1.45;">'
-                                        f'{materiais_card_html}</ul></div>'
+                                        f'<div style="margin:5px 0;padding:7px 9px;border-left:3px solid {cor_card_grupo};'
+                                        f'border-radius:5px;background:{fundo_card_grupo};color:{cor_card_grupo};'
+                                        f'font-size:11px;font-weight:800;">{html_escape(status_curto)}</div>'
                                     )
                                 st.markdown(''.join(blocos_cards_trello), unsafe_allow_html=True)
                             elif materiais_torre:
@@ -10630,13 +10734,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             horario_base_fim = format_time(st.session_state.get('horario_conclusao_min', 17*60))
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
-            st.success(f"📍 **Planejamento original (considerando a saída no horário):** término às {horario_base_fim}.")
-            if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN:
-                st.info(f"🟢 **Previsão real atualizada:** término às {horario_dyn_fim} (dentro do expediente).")
-            else:
-                st.warning(f"⏰ **Registro real após 17h:** {horario_dyn_fim}. Conclusões já ocorridas são preservadas, mas o sistema não planeja novas paradas depois do expediente.")
-
-            st.success(f"🛣️ **Distância total planejada:** {total_km:.1f} km")
+            situacao_eta = "🟢 dentro do expediente" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "⏰ após 17h — sem novas paradas"
+            st.info(
+                f"🕒 **Rota:** planejado **{horario_base_fim}** • previsão atual **{horario_dyn_fim}** "
+                f"({situacao_eta}) • **{total_km:.1f} km**"
+            )
             if valor_km_veiculo_proprio is not None:
                 custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
                 tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
@@ -10657,21 +10759,15 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if len(waypts_addr) > 2: link_maps += f"&waypoints={'|'.join(waypts_addr[1:-1][:9])}"
                 texto_whatsapp += f"\n🗺️ *LINK DO ROTEIRO COMPLETO:*\n{link_maps}\n"
 
-            st.divider()
             @fragmento_independente
             def formulario_fechamento_rota():
                 with st.form("fechamento_km_rota"):
-                    st.markdown("#### 💾 Fechamento da quilometragem da rota do dia")
+                    st.caption("Informe o KM real e o veículo usado.")
                     total_acoes = sum(len(step.get('actions', [])) for step in route_steps if step['type'] != 'lunch')
                     acoes_concluidas = sum(1 for step in route_steps for acao, t in step.get('actions', []) if str(t.get('id', '')) in dict_concluidos_torre)
                     
-                    if acoes_concluidas < total_acoes:
-                        st.warning(
-                            f"⚠️ **Atenção:** Apenas **{acoes_concluidas} de {total_acoes}** "
-                            f"{plural_pt(total_acoes, 'demanda', 'demandas')} da rota "
-                            f"{plural_pt(total_acoes, 'foi concluída', 'foram concluídas')} hoje."
-                        )
-                    else: st.success(f"✅ {plural_pt(total_acoes, 'A demanda desta rota foi devidamente concluída', 'Todas as demandas desta rota foram devidamente concluídas')} hoje!")
+                    status_fechamento = "✅" if acoes_concluidas >= total_acoes else "⚠️"
+                    st.caption(f"{status_fechamento} Baixas da rota: {acoes_concluidas}/{total_acoes}")
                         
                     km_real = st.number_input("Quilometragem efetivamente rodada na rota", value=float(total_km), step=1.0)
                     veiculo_fechamento = st.selectbox("Qual carro rodou esta rota?", ["Strada", "L200"])
@@ -10680,7 +10776,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         carregar_registro_km_df.clear()
                         st.success(f"✅ Quilometragem de {km_real:.1f} km registrada para o veículo {veiculo_fechamento} na nuvem!")
 
-            formulario_fechamento_rota()
+            with st.expander("💾 Fechar quilometragem da rota", expanded=False):
+                formulario_fechamento_rota()
 
             url_geral, _ = obter_webhook_teams("Geral / Logística")
 
