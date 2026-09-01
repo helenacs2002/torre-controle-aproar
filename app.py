@@ -389,7 +389,7 @@ def renderizar_cabecalho_torre():
                 </div>
             </div>
             <div class="aproar-header-meta">
-                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V5</div>
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V6</div>
                 <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
             </div>
         </header>
@@ -4421,7 +4421,14 @@ st.markdown("""
         }
         .aproar-stop-header {
             display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px;
-            margin:-2px 0 9px; padding:8px 0 10px; border-bottom:1px solid var(--ap-line);
+            margin:-2px 0 9px; padding:9px 10px; border:1px solid var(--ap-line);
+            border-left-width:4px; border-radius:5px;
+        }
+        .aproar-stop-header:has(.aproar-stop-action.coleta) {
+            background:rgba(245,158,11,.10); border-left-color:#f59e0b;
+        }
+        .aproar-stop-header:has(.aproar-stop-action.entrega) {
+            background:rgba(34,197,94,.10); border-left-color:#22c55e;
         }
         .aproar-stop-action {
             padding:4px 7px; border-radius:4px; font-size:10px; font-weight:900;
@@ -4517,7 +4524,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 5
+ROTA_ENGINE_VERSION = 6
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -6907,6 +6914,22 @@ def identificar_ids_entregues_na_ordem_rota(ordem_pontos, tarefas, tarefas_pre_c
     return ids_entregues
 
 
+def identificar_coletas_sem_entrega_route_steps(route_steps):
+    """Localiza cartões que aparecem como coleta, mas não possuem entrega na rota."""
+    ids_coletas = set()
+    ids_entregas = set()
+    for step in (route_steps or []):
+        for acao, tarefa in (step.get('actions', []) or []):
+            demanda_id = str(tarefa.get('id', '') or '').strip()
+            if not demanda_id:
+                continue
+            if acao == 'COLETAR':
+                ids_coletas.add(demanda_id)
+            elif acao == 'ENTREGAR':
+                ids_entregas.add(demanda_id)
+    return ids_coletas - ids_entregas
+
+
 def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, tarefas_pre_coletadas=None):
     """Busca em feixe para o problema de coleta e entrega com precedência.
 
@@ -9019,10 +9042,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         st.session_state.get('route_steps') or [], ponto_saida
     )
     st.session_state['_rota_locais_repetidos_carregada'] = _locais_repetidos_rota
+    _coletas_sem_entrega_rota = identificar_coletas_sem_entrega_route_steps(
+        st.session_state.get('route_steps') or []
+    )
 
     # No primeiro acesso, a rota salva chega antes do quadro do Trello. Se ela foi
     # criada pelo motor antigo e repete locais, hidratamos as demandas pelo cache do
-    # Supabase agora mesmo para que o recálculo V5 não dependa de um clique manual.
+    # Supabase agora mesmo para que o recálculo V6 não dependa de um clique manual.
     _chave_hidratacao_repetidos = f"_hidratou_repetidos_{DATA_REF_ROTA_STR}"
     if (
         _locais_repetidos_rota
@@ -9202,16 +9228,20 @@ if modulo_principal == "🗺️ Roteiro do Davi":
     )
     if (
         rota_ativa_hoje
-        and (versao_rota_salva < ROTA_ENGINE_VERSION or bool(_locais_repetidos_rota))
+        and (
+            versao_rota_salva < ROTA_ENGINE_VERSION
+            or bool(_locais_repetidos_rota)
+            or bool(_coletas_sem_entrega_rota)
+        )
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v5_solicitado_em') != DATA_REF_ROTA_STR
+        and st.session_state.get('_motor_rota_v6_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v5_solicitado_em'] = DATA_REF_ROTA_STR
+        st.session_state['_motor_rota_v6_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
         _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V5 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
+            '✅ Motor V6 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
             f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
@@ -9278,11 +9308,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         and DATA_REF_ROTA_DATE == AGORA_REAL.date()
         and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
         and ids_criticos_fora_rota
-        and st.session_state.get('_ultimo_lote_urgente_incorporado_v5') != assinatura_criticos_fora_rota
+        and st.session_state.get('_ultimo_lote_urgente_incorporado_v6') != assinatura_criticos_fora_rota
     ):
         # A chave versionada também libera uma nova tentativa depois de mudanças
         # no critério de viabilidade, mesmo que o conjunto de cartões seja igual.
-        st.session_state['_ultimo_lote_urgente_incorporado_v5'] = assinatura_criticos_fora_rota
+        st.session_state['_ultimo_lote_urgente_incorporado_v6'] = assinatura_criticos_fora_rota
         st.session_state['_recalcular_rota_automatico'] = True
         nomes_criticos = ', '.join(df_criticas_fora_rota['Obra'].astype(str).tolist())
         st.session_state['_mensagem_ajuste_rota'] = (
@@ -9840,6 +9870,44 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     st.session_state['retorno_omitido_expediente'] = True
 
             route_steps = past_route_steps + route_steps_new
+
+            # Última barreira de integridade: uma coleta PENDENTE só pode ser
+            # publicada quando a entrega correspondente também existe na rota.
+            # Se uma diferença de trânsito/ETA inviabilizar o destino durante a
+            # montagem final, o cartão inteiro volta para as adiadas — nunca fica
+            # uma coleta isolada na tela do Davi ou na Torre.
+            ids_entregas_publicadas = {
+                str(tarefa.get('id', '') or '')
+                for step_publicado in route_steps
+                for acao_publicada, tarefa in (step_publicado.get('actions', []) or [])
+                if acao_publicada == 'ENTREGAR' and str(tarefa.get('id', '') or '')
+            }
+            coletas_orfas_removidas = []
+            route_steps_com_pares = []
+            for step_publicado in route_steps:
+                if step_publicado.get('type') != 'stop':
+                    route_steps_com_pares.append(step_publicado)
+                    continue
+                acoes_publicadas_validas = []
+                for acao_publicada, tarefa_publicada in (step_publicado.get('actions', []) or []):
+                    demanda_id_publicada = str(tarefa_publicada.get('id', '') or '')
+                    coleta_orfa_pendente = (
+                        acao_publicada == 'COLETAR'
+                        and demanda_id_publicada not in dict_concluidos_torre
+                        and demanda_id_publicada not in ids_entregas_publicadas
+                    )
+                    if coleta_orfa_pendente:
+                        coletas_orfas_removidas.append(tarefa_publicada)
+                    else:
+                        acoes_publicadas_validas.append((acao_publicada, tarefa_publicada))
+                if acoes_publicadas_validas:
+                    step_publicado_valido = step_publicado.copy()
+                    step_publicado_valido['actions'] = acoes_publicadas_validas
+                    route_steps_com_pares.append(step_publicado_valido)
+            if coletas_orfas_removidas:
+                _registrar_adiadas(coletas_orfas_removidas)
+            route_steps = route_steps_com_pares
+
             route_steps = consolidar_coletas_base_na_preparacao(
                 route_steps, ajustes_manuais, ponto_saida
             )
@@ -10164,57 +10232,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             nova_previsao_str = format_mins_to_time(final_dyn_min)
             renderizar_banner_eta(hora_atual_str, nova_previsao_str, final_dyn_min)
 
-            # Uma demanda concluída pode aparecer como COLETA e ENTREGA em pontos
-            # diferentes. Reunimos por ID para mostrar uma linha por demanda, sem
-            # repetir cartões nem ocupar a sequência operacional ainda pendente.
-            concluidas_por_id = {}
-            for etapa_concluida in route_steps:
-                for _acao_concluida, tarefa_concluida in (etapa_concluida.get('actions', []) or []):
-                    id_concluida = str(tarefa_concluida.get('id', '') or '')
-                    if not id_concluida or id_concluida not in dict_concluidos_torre:
-                        continue
-                    if id_concluida not in concluidas_por_id:
-                        chave_compacta = _nome_seguro_comprovante(id_concluida, 40)
-                        estado_compacta = comprovantes_torre.get(chave_compacta, {}) or {}
-                        status_comprovante = (
-                            "Finalizado" if estado_compacta.get('finalizado')
-                            else "Em aberto" if estado_compacta.get('fotos')
-                            else "—"
-                        )
-                        concluidas_por_id[id_concluida] = {
-                            "Baixa": str(dict_concluidos_torre[id_concluida]),
-                            "Demanda": str(tarefa_concluida.get('Obra', 'Obra não informada') or 'Obra não informada'),
-                            "Percurso": (
-                                f"{canonicalizar_ponto_rota(tarefa_concluida.get('Origem', ''))} → "
-                                f"{canonicalizar_ponto_rota(tarefa_concluida.get('Destino', ''))}"
-                            ),
-                            "Materiais": str(tarefa_concluida.get('Materiais', '') or 'Material não informado'),
-                            "Comprovante": status_comprovante,
-                        }
-
-            if concluidas_por_id:
-                df_concluidas_compacto = pd.DataFrame(concluidas_por_id.values()).sort_values(
-                    by=["Baixa", "Demanda"], kind="stable"
-                )
-                qtd_concluidas_compacto = len(df_concluidas_compacto)
-                with st.expander(
-                    f"✅ CONCLUÍDAS HOJE · {qtd_concluidas_compacto} "
-                    f"{plural_pt(qtd_concluidas_compacto, 'demanda', 'demandas')} — abrir resumo",
-                    expanded=False,
-                ):
-                    st.dataframe(
-                        df_concluidas_compacto,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(390, 38 + 35 * qtd_concluidas_compacto),
-                        column_config={
-                            "Baixa": st.column_config.TextColumn("Baixa", width="small"),
-                            "Demanda": st.column_config.TextColumn("Demanda", width="medium"),
-                            "Percurso": st.column_config.TextColumn("Percurso", width="medium"),
-                            "Materiais": st.column_config.TextColumn("Materiais", width="large"),
-                            "Comprovante": st.column_config.TextColumn("Comprovante", width="small"),
-                        },
-                    )
+            st.caption(
+                "🧭 Roteiro completo em ordem operacional: cada demanda aparece na coleta e novamente na entrega."
+            )
 
             _msg_ajuste = st.session_state.pop("_mensagem_ajuste_rota", "")
             if _msg_ajuste:
@@ -10300,32 +10320,42 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     continue
 
                 is_start = (i == 0 and step['destino'] == p_saida)
-                acoes_pendentes_torre = [
-                    (acao_pendente, tarefa_pendente)
-                    for acao_pendente, tarefa_pendente in (step.get('actions', []) or [])
-                    if str(tarefa_pendente.get('id', '') or '') not in dict_concluidos_torre
-                ]
-                if not acoes_pendentes_torre:
+                acoes_etapa_torre = list(step.get('actions', []) or [])
+                if not acoes_etapa_torre:
                     if not is_start:
                         num_parada += 1
                     continue
 
-                # A tabela acima já contém as concluídas; a sequência principal
-                # mostra apenas o trabalho restante desta parada.
+                # A sequência física é preservada inteira, inclusive depois da
+                # baixa: COLETA permanece na origem e ENTREGA permanece no destino.
                 step = dict(step)
-                step['actions'] = acoes_pendentes_torre
-                step['is_concluded'] = False
+                step['actions'] = acoes_etapa_torre
+                ids_acoes_etapa = {
+                    str(tarefa_etapa.get('id', '') or '')
+                    for _acao_etapa, tarefa_etapa in acoes_etapa_torre
+                    if str(tarefa_etapa.get('id', '') or '')
+                }
+                etapa_totalmente_concluida = bool(ids_acoes_etapa) and all(
+                    demanda_id_etapa in dict_concluidos_torre
+                    for demanda_id_etapa in ids_acoes_etapa
+                )
+                step['is_concluded'] = etapa_totalmente_concluida
                 endereco_db = enderecos_dict.get(step['destino'], "")
                 link_parada = endereco_db if endereco_db.startswith("http") else f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(endereco_db)}" if endereco_db else f"https://www.google.com/maps/dir/?api=1&destination={locais_dict[step['destino']][0]},{locais_dict[step['destino']][1]}"
 
-                etapa_totalmente_concluida = bool(step.get('is_concluded'))
+                tipos_acoes_etapa = []
+                if any(acao_etapa == 'COLETAR' for acao_etapa, _ in acoes_etapa_torre):
+                    tipos_acoes_etapa.append('COLETA')
+                if any(acao_etapa == 'ENTREGAR' for acao_etapa, _ in acoes_etapa_torre):
+                    tipos_acoes_etapa.append('ENTREGA')
+                resumo_acoes_etapa = ' + '.join(tipos_acoes_etapa) or 'ETAPA'
                 if etapa_totalmente_concluida:
                     titulo_etapa_recolhida = (
-                        f"✅ PREPARAÇÃO: {step['destino']} — concluída"
+                        f"✅ PREPARAÇÃO: {step['destino']} · {resumo_acoes_etapa} — concluída"
                         if is_start
-                        else f"✅ PARADA {num_parada}: {step['destino']} — concluída às {step['dyn_saida']}"
+                        else f"✅ PARADA {num_parada}: {step['destino']} · {resumo_acoes_etapa} — concluída às {step['dyn_saida']}"
                     )
-                    contexto_etapa_torre = st.expander(titulo_etapa_recolhida, expanded=False)
+                    contexto_etapa_torre = st.expander(titulo_etapa_recolhida, expanded=True)
                 else:
                     contexto_etapa_torre = st.container(border=True)
 
@@ -10733,28 +10763,34 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         tooltip=tooltip_caminhao,
                         z_index_offset=5000,
                         icon=folium.DivIcon(
-                            icon_size=(68, 48),
-                            icon_anchor=(34, 24),
+                            icon_size=(52, 52),
+                            icon_anchor=(26, 26),
                             html='''
-                                <div style="width:68px;height:48px;display:flex;flex-direction:column;
-                                            align-items:center;justify-content:center;border-radius:11px;
-                                            background:#ffffff;border:3px solid #2563eb;
-                                            box-shadow:0 3px 12px rgba(0,0,0,.55);box-sizing:border-box;">
-                                    <svg viewBox="0 0 72 30" width="58" height="25" aria-label="Fiat Strada"
+                                <div style="width:52px;height:52px;display:flex;align-items:center;justify-content:center;
+                                            border-radius:50%;background:radial-gradient(circle at 38% 28%,#ffffff 0,#eff6ff 72%);
+                                            border:3px solid #ffffff;box-shadow:0 0 0 2px #2563eb,
+                                            0 4px 13px rgba(15,23,42,.48);box-sizing:border-box;">
+                                    <svg viewBox="0 0 70 38" width="44" height="29" aria-label="Veículo do Davi"
                                          style="display:block;overflow:visible">
-                                        <path d="M4 18V9h29l7-7h14l8 14h6v7H4z"
-                                              fill="#f8fafc" stroke="#1d4ed8" stroke-width="2.2" stroke-linejoin="round"/>
-                                        <path d="M8 11h24v7H8z" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
-                                        <path d="M41 5h11l6 11H37z" fill="#93c5fd" stroke="#1d4ed8" stroke-width="1.7"/>
-                                        <path d="M48 5v11" stroke="#1d4ed8" stroke-width="1.5"/>
-                                        <path d="M62 17h6" stroke="#f59e0b" stroke-width="2.4" stroke-linecap="round"/>
-                                        <circle cx="17" cy="23" r="5" fill="#111827"/>
-                                        <circle cx="17" cy="23" r="2" fill="#cbd5e1"/>
-                                        <circle cx="55" cy="23" r="5" fill="#111827"/>
-                                        <circle cx="55" cy="23" r="2" fill="#cbd5e1"/>
+                                        <defs>
+                                            <linearGradient id="pickupBody" x1="0" y1="0" x2="1" y2="1">
+                                                <stop offset="0" stop-color="#60a5fa"/>
+                                                <stop offset="1" stop-color="#1d4ed8"/>
+                                            </linearGradient>
+                                        </defs>
+                                        <path d="M4 24V13h29l8-9h14l7 14h4c2 0 3 1 3 3v7H4z"
+                                              fill="url(#pickupBody)" stroke="#1e3a8a" stroke-width="1.8"
+                                              stroke-linejoin="round"/>
+                                        <path d="M8 15h23v7H8z" fill="#bfdbfe" opacity=".92"/>
+                                        <path d="M42 7h11l5 11H36z" fill="#dbeafe" stroke="#1e40af" stroke-width="1.4"/>
+                                        <path d="M48 7v11M35 18h24" stroke="#1e40af" stroke-width="1.3"/>
+                                        <path d="M5 25h63" stroke="#172554" stroke-width="2" stroke-linecap="round"/>
+                                        <path d="M64 20h4" stroke="#fde68a" stroke-width="2.6" stroke-linecap="round"/>
+                                        <circle cx="17" cy="28" r="6" fill="#0f172a" stroke="#ffffff" stroke-width="1.5"/>
+                                        <circle cx="17" cy="28" r="2.3" fill="#94a3b8"/>
+                                        <circle cx="55" cy="28" r="6" fill="#0f172a" stroke="#ffffff" stroke-width="1.5"/>
+                                        <circle cx="55" cy="28" r="2.3" fill="#94a3b8"/>
                                     </svg>
-                                    <div style="margin-top:1px;color:#1d4ed8;font-size:8px;font-weight:950;
-                                                letter-spacing:.14em;line-height:1;">STRADA</div>
                                 </div>
                             ''',
                         ),
