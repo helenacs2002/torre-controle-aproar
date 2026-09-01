@@ -4575,12 +4575,15 @@ st.markdown("""
         .aproar-stop-number { color:#67716e; font-size:11px; font-weight:800; }
         .aproar-material-table { margin:5px 0; overflow:hidden; border:1px solid var(--ap-line); border-radius:4px; }
         .aproar-material-row {
-            display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px;
+            display:flex; align-items:baseline; justify-content:flex-start; gap:8px; flex-wrap:wrap;
             padding:7px 9px; background:#0b1020; border-bottom:1px solid rgba(148,163,184,.10);
         }
         .aproar-material-row:last-child { border-bottom:0; }
         .aproar-material-row span { color:#d6dbd9; font-size:11px; }
-        .aproar-material-row strong { color:#f4f5f4; font-size:11px; white-space:nowrap; }
+        .aproar-material-row strong {
+            color:#f4f5f4; font-size:11px; white-space:nowrap; font-weight:900;
+            padding-left:7px; border-left:1px solid rgba(148,163,184,.18);
+        }
         .aproar-unit-line {
             display:flex; justify-content:space-between; gap:10px; margin-top:7px;
             color:#7f8986; font-size:10px;
@@ -4657,7 +4660,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 10
+ROTA_ENGINE_VERSION = 11
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello", "_Tipo_Logistica", "_Troca_Devolver", "_Troca_Retirar"]
 
@@ -5613,6 +5616,53 @@ def atualizar_rotulos_obras_route_steps(route_steps, df_demandas=None, mapa_trel
             melhor_rotulo = max(candidatos_rotulo, key=_pontuacao_rotulo_obra)
             if melhor_rotulo and _pontuacao_rotulo_obra(melhor_rotulo) >= _pontuacao_rotulo_obra(rotulo_antigo):
                 nova_tarefa["Obra"] = melhor_rotulo
+            novas_acoes.append((acao, nova_tarefa))
+        if "actions" in step:
+            novo_step["actions"] = novas_acoes
+        resultado.append(novo_step)
+    return resultado
+
+
+
+def atualizar_metadados_demandas_route_steps(route_steps, df_demandas=None):
+    """Reidrata dados atuais do Trello em uma rota já salva, usando o ID do card.
+
+    Rotas persistidas de versões antigas podiam guardar ``Materiais=Ver Trello``
+    mesmo depois de o parser aprender a interpretar a descrição. Aqui atualizamos
+    somente metadados do cartão (materiais, troca, urgência e título), sem mexer na
+    posição manual da coleta/entrega que o usuário possa ter ajustado na rota.
+    """
+    if not route_steps or df_demandas is None or df_demandas.empty or "id" not in df_demandas.columns:
+        return route_steps
+
+    por_id = {}
+    campos = [
+        "Obra", "Materiais", "Urgência", "Peso", "Supervisor", "_Titulo_Trello",
+        "_Tipo_Logistica", "_Troca_Devolver", "_Troca_Retirar",
+    ]
+    for _, linha in df_demandas.iterrows():
+        card_id = str(linha.get("id", "") or "").strip()
+        if not card_id:
+            continue
+        por_id[card_id] = {campo: linha.get(campo, "") for campo in campos if campo in linha.index}
+
+    resultado = []
+    for step in route_steps:
+        novo_step = dict(step)
+        novas_acoes = []
+        for acao, tarefa in (step.get("actions", []) or []):
+            nova_tarefa = dict(tarefa or {})
+            card_id = str(nova_tarefa.get("id", "") or "").strip()
+            atual = por_id.get(card_id)
+            if atual:
+                for campo, valor in atual.items():
+                    # String vazia não deve apagar dado útil persistido, exceto nos
+                    # campos de troca: quando o parser atual diz que não é troca,
+                    # limpamos marcadores antigos incorretos.
+                    if campo in {"_Tipo_Logistica", "_Troca_Devolver", "_Troca_Retirar"}:
+                        nova_tarefa[campo] = "" if pd.isna(valor) else str(valor or "")
+                    elif not pd.isna(valor) and str(valor or "").strip():
+                        nova_tarefa[campo] = valor
             novas_acoes.append((acao, nova_tarefa))
         if "actions" in step:
             novo_step["actions"] = novas_acoes
@@ -7708,50 +7758,110 @@ def _limpar_linha_material_trello(linha):
 
 
 def extrair_operacao_troca(texto):
-    """Reconhece TROCAR/SUBSTITUIR em fornecedor, bloco POR e destino final."""
+    """Reconhece uma troca no Trello como DEVOLVER -> RETIRAR -> ENTREGAR.
+
+    Aceita Markdown/rich text com linhas em branco e também descrições mais
+    corridas, por exemplo::
+
+        TROCAR NA SV ELÉTRICA
+        - 4 - item separado errado
+        POR
+        - 4 - item correto
+        levar para MARACANAÚ
+
+    O fornecedor é a origem logística. O bloco anterior a ``POR`` é o que deve
+    ser devolvido e o bloco posterior é o que deve ser retirado no lugar.
+    """
     bruto = str(texto or "")
     if not bruto.strip():
         return None
-    limpo = re.sub(r"[*_`]", "", bruto).replace("\r", "")
+
+    # Mantém quebras de linha porque elas carregam semântica no Trello, mas limpa
+    # marcações de Markdown/HTML simples que podem vir do editor rico.
+    limpo = bruto.replace("\r", "\n")
+    limpo = re.sub(r"<br\s*/?>", "\n", limpo, flags=re.IGNORECASE)
+    limpo = re.sub(r"</p>|</li>", "\n", limpo, flags=re.IGNORECASE)
+    limpo = re.sub(r"<[^>]+>", "", limpo)
+    limpo = re.sub(r"[*_`]", "", limpo)
+    limpo = re.sub(r"\n{3,}", "\n\n", limpo).strip()
     normal = remover_acentos(limpo).upper()
+
     if not re.search(r"\b(TROCAR|TROCA|SUBSTITUIR|SUBSTITUICAO)\b", normal):
         return None
-    if not re.search(r"(?m)^\s*POR\s*:?[ \t]*$", normal):
+
+    # Primeiro procura POR como bloco próprio (forma preferencial). Se o editor
+    # tiver achatado a descrição, aceita " ... POR - 4 ..." desde que POR venha
+    # antes de um item, evitando confundir preposições comuns.
+    por_match = re.search(r"(?im)(?:^|\n)\s*POR\s*:?[ \t]*(?:\n|$)", normal)
+    if not por_match:
+        por_match = re.search(r"(?i)\s+POR\s+(?=(?:[-•▪◦]\s*)?\d+(?:[\.,]\d+)?)", normal)
+    if not por_match:
         return None
 
-    linhas = limpo.split("\n")
-    idx_por = next((i for i, l in enumerate(linhas) if remover_acentos(l).upper().strip(" :\t") == "POR"), None)
-    if idx_por is None:
-        return None
+    antes = limpo[:por_match.start()].strip()
+    depois = limpo[por_match.end():].strip()
 
+    # Cabeçalho: TROCAR NA/NO/EM <fornecedor>. O nome para na quebra de linha;
+    # em texto achatado para antes do primeiro item numérico.
+    cab = re.search(
+        r"(?is)\b(?:trocar|troca|substituir|substitui[cç][aã]o)\b.*?\b(?:na|no|em|nas|nos)\s+([^\n;]+)",
+        antes,
+    )
     fornecedor = ""
-    idx_cab = None
-    for i, linha in enumerate(linhas[:idx_por + 1]):
-        if re.search(r"\b(TROCAR|TROCA|SUBSTITUIR|SUBSTITUICAO)\b", remover_acentos(linha).upper()):
-            idx_cab = i
-            m = re.search(r"(?i)\b(?:trocar|troca|substituir|substitui[cç][aã]o)\b.*?\b(?:na|no|em|nas|nos)\s+(.+)$", linha)
-            if m:
-                fornecedor = canonicalizar_ponto_rota(_limpar_linha_material_trello(m.group(1)))
-            break
+    cabecalho_fim = 0
+    if cab:
+        fornecedor_bruto = cab.group(1).strip()
+        fornecedor_bruto = re.split(r"\s+(?=[-•▪◦]?\s*\d+(?:[\.,]\d+)?\s*[-xX:]?)", fornecedor_bruto, maxsplit=1)[0]
+        fornecedor = canonicalizar_ponto_rota(_limpar_linha_material_trello(fornecedor_bruto))
+        cabecalho_fim = cab.end()
 
+    # Destino final fica depois do bloco novo. Aceita "levar para", "entregar em",
+    # etc. e remove essa instrução do conjunto de materiais retirados.
+    dest_match = re.search(
+        r"(?is)\b(?:levar|entregar|encaminhar|transportar|deixar)\b\s*(?:para|em|no|na|ao|a|à)?\s+([^\n;]+)",
+        depois,
+    )
     destino = ""
-    idx_dest = len(linhas)
-    for i in range(idx_por + 1, len(linhas)):
-        m = re.search(r"(?i)\b(?:levar|entregar|encaminhar|transportar|deixar)\b\s*(?:para|em|no|na|ao|a|à)?\s+(.+)$", linhas[i])
-        if m:
-            destino = canonicalizar_ponto_rota(_limpar_linha_material_trello(m.group(1)))
-            idx_dest = i
-            break
+    if dest_match:
+        destino_bruto = dest_match.group(1).strip()
+        destino = canonicalizar_ponto_rota(_limpar_linha_material_trello(destino_bruto))
+        bloco_retirar = depois[:dest_match.start()].strip()
+    else:
+        bloco_retirar = depois
 
-    ini = (idx_cab + 1) if idx_cab is not None else 0
-    devolver = [_limpar_linha_material_trello(x) for x in linhas[ini:idx_por]]
-    devolver = [x for x in devolver if len(x) > 1]
-    retirar = [_limpar_linha_material_trello(x) for x in linhas[idx_por + 1:idx_dest]]
-    retirar = [x for x in retirar if len(x) > 1]
+    bloco_devolver = antes[cabecalho_fim:].strip() if cabecalho_fim else antes
+
+    def _itens_bloco(bloco):
+        if not bloco:
+            return []
+        # Linha é a forma mais segura. Para um texto achatado, também quebra antes
+        # de bullets ou de um novo item "4 - ...".
+        linhas = re.split(r"\n+|(?=\s*[•▪◦]\s+)|(?=\s*-\s*\d+(?:[\.,]\d+)?\s*[-xX:]\s*)", bloco)
+        itens = []
+        for linha in linhas:
+            item = _limpar_linha_material_trello(linha)
+            if not item:
+                continue
+            item_norm = remover_acentos(item).upper().strip()
+            if item_norm in {"POR", "TROCAR", "TROCA", "SUBSTITUIR", "SUBSTITUICAO"}:
+                continue
+            if re.match(r"(?i)^(?:levar|entregar|encaminhar|transportar|deixar)\b", item):
+                continue
+            itens.append(item)
+        return itens
+
+    devolver = _itens_bloco(bloco_devolver)
+    retirar = _itens_bloco(bloco_retirar)
 
     if not fornecedor or not retirar:
         return None
-    return {"tipo":"TROCA", "origem":fornecedor, "destino":destino, "devolver":devolver, "retirar":retirar}
+    return {
+        "tipo": "TROCA",
+        "origem": fornecedor,
+        "destino": destino,
+        "devolver": devolver,
+        "retirar": retirar,
+    }
 
 
 def extrair_dados_completos(texto, card_name):
@@ -9512,6 +9622,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         _rota_rotulos_atualizada = atualizar_rotulos_obras_route_steps(
             st.session_state.get('route_steps') or [], df_ativos, _mapa_rotulos_trello
         )
+        _rota_rotulos_atualizada = atualizar_metadados_demandas_route_steps(
+            _rota_rotulos_atualizada, df_ativos
+        )
         _rota_rotulos_depois = json.dumps(_rota_rotulos_atualizada, ensure_ascii=False, sort_keys=True, default=str)
         st.session_state['route_steps'] = _rota_rotulos_atualizada
         if _rota_rotulos_depois != _rota_rotulos_antes and st.session_state.get('data_rota') == DATA_REF_ROTA_STR:
@@ -9595,13 +9708,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         )
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v9_solicitado_em') != DATA_REF_ROTA_STR
+        and st.session_state.get('_motor_rota_v11_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v9_solicitado_em'] = DATA_REF_ROTA_STR
+        st.session_state['_motor_rota_v11_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
         _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V9 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
+            '✅ Motor V11 aplicado. A rota foi atualizada com a leitura mais recente dos cards e sem revisitas desnecessárias. '
             f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
