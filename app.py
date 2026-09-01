@@ -389,7 +389,7 @@ def renderizar_cabecalho_torre():
                 </div>
             </div>
             <div class="aproar-header-meta">
-                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V4</div>
+                <div class="aproar-meta-chip primary">PLANEJAMENTO • {DATA_REF_ROTA_STR} • MOTOR V5</div>
                 <div class="aproar-meta-chip"><span class="aproar-dot"></span> OPERAÇÃO ATIVA</div>
             </div>
         </header>
@@ -4517,7 +4517,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 4
+ROTA_ENGINE_VERSION = 5
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -6870,6 +6870,43 @@ def pontuar_parada_rota(atual, ponto, unpicked, carrying, estrategia, get_dist_d
 
     return score, distancia, duracao
 
+
+def identificar_ids_entregues_na_ordem_rota(ordem_pontos, tarefas, tarefas_pre_coletadas=None):
+    """Devolve somente demandas cujo ciclo chega à entrega na ordem calculada."""
+    tarefas_por_id = {
+        str(t.get('id', '') or ''): t
+        for t in (tarefas or [])
+        if str(t.get('id', '') or '')
+    }
+    ids_coletados = {
+        str(t.get('id', '') or '')
+        for t in (tarefas_pre_coletadas or [])
+        if str(t.get('id', '') or '')
+    }
+    ids_entregues = set()
+
+    for ponto in (ordem_pontos or []):
+        ponto = canonicalizar_ponto_rota(ponto)
+
+        # Descarrega o que já estava no veículo ao chegar ao ponto.
+        for demanda_id in list(ids_coletados - ids_entregues):
+            tarefa = tarefas_por_id.get(demanda_id, {})
+            if canonicalizar_ponto_rota(tarefa.get('Destino', '')) == ponto:
+                ids_entregues.add(demanda_id)
+
+        # Coleta o material do ponto. Origem e destino iguais são resolvidos
+        # na mesma visita, de forma idêntica ao motor de otimização.
+        for demanda_id, tarefa in tarefas_por_id.items():
+            if demanda_id in ids_coletados:
+                continue
+            if canonicalizar_ponto_rota(tarefa.get('Origem', '')) == ponto:
+                ids_coletados.add(demanda_id)
+                if canonicalizar_ponto_rota(tarefa.get('Destino', '')) == ponto:
+                    ids_entregues.add(demanda_id)
+
+    return ids_entregues
+
+
 def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, tarefas_pre_coletadas=None):
     """Busca em feixe para o problema de coleta e entrega com precedência.
 
@@ -8985,7 +9022,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
     # No primeiro acesso, a rota salva chega antes do quadro do Trello. Se ela foi
     # criada pelo motor antigo e repete locais, hidratamos as demandas pelo cache do
-    # Supabase agora mesmo para que o recálculo V4 não dependa de um clique manual.
+    # Supabase agora mesmo para que o recálculo V5 não dependa de um clique manual.
     _chave_hidratacao_repetidos = f"_hidratou_repetidos_{DATA_REF_ROTA_STR}"
     if (
         _locais_repetidos_rota
@@ -9168,13 +9205,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         and (versao_rota_salva < ROTA_ENGINE_VERSION or bool(_locais_repetidos_rota))
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v4_solicitado_em') != DATA_REF_ROTA_STR
+        and st.session_state.get('_motor_rota_v5_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v4_solicitado_em'] = DATA_REF_ROTA_STR
+        st.session_state['_motor_rota_v5_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
         _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V4 aplicado. A rota foi reorganizada para consolidar cada local '
+            '✅ Motor V5 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
             f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
@@ -9241,11 +9278,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         and DATA_REF_ROTA_DATE == AGORA_REAL.date()
         and (AGORA_REAL.hour * 60 + AGORA_REAL.minute) < LIMITE_EXPEDIENTE_DAVI_MIN
         and ids_criticos_fora_rota
-        and st.session_state.get('_ultimo_lote_urgente_incorporado_v4') != assinatura_criticos_fora_rota
+        and st.session_state.get('_ultimo_lote_urgente_incorporado_v5') != assinatura_criticos_fora_rota
     ):
         # A chave versionada também libera uma nova tentativa depois de mudanças
         # no critério de viabilidade, mesmo que o conjunto de cartões seja igual.
-        st.session_state['_ultimo_lote_urgente_incorporado_v4'] = assinatura_criticos_fora_rota
+        st.session_state['_ultimo_lote_urgente_incorporado_v5'] = assinatura_criticos_fora_rota
         st.session_state['_recalcular_rota_automatico'] = True
         nomes_criticos = ', '.join(df_criticas_fora_rota['Obra'].astype(str).tolist())
         st.session_state['_mensagem_ajuste_rota'] = (
@@ -9589,6 +9626,57 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     if tarefa_id and tarefa_id not in existentes:
                         st.session_state['demandas_adiadas'].append(tarefa)
                         existentes.add(tarefa_id)
+
+            # O otimizador pode devolver uma sequência parcial quando o expediente
+            # não comporta todas as demandas. Identificamos quais cartões chegam de
+            # fato à ENTREGA nessa sequência e retiramos os demais antes de montar a
+            # preparação. Isso impede a exibição de COLETAS soltas para demandas que
+            # já ficaram para o próximo planejamento.
+            tarefas_planejamento_por_id = {
+                str(t.get('id', '') or ''): t
+                for t in tarefas_planejamento
+                if str(t.get('id', '') or '')
+            }
+            ids_planejados_completos = identificar_ids_entregues_na_ordem_rota(
+                ordem_otimizada, tarefas_planejamento, tarefas_base_ativas
+            )
+            tarefas_sem_ciclo_completo = [
+                tarefa for demanda_id, tarefa in tarefas_planejamento_por_id.items()
+                if demanda_id not in ids_planejados_completos
+            ]
+            _registrar_adiadas(tarefas_sem_ciclo_completo)
+            unpicked = [
+                tarefa for tarefa in unpicked
+                if str(tarefa.get('id', '') or '') in ids_planejados_completos
+            ]
+            carrying = [
+                tarefa for tarefa in carrying
+                if str(tarefa.get('id', '') or '') in ids_planejados_completos
+            ]
+
+            # A preparação já havia sido reconstruída antes da otimização. Agora ela
+            # fica limitada às demandas cujo destino também está planejado; coletas
+            # históricas concluídas continuam preservadas no resumo do dia.
+            passos_passados_filtrados = []
+            for passo_passado in past_route_steps:
+                if passo_passado.get('type') != 'stop':
+                    passos_passados_filtrados.append(passo_passado)
+                    continue
+                acoes_passadas_validas = []
+                for acao_passada, tarefa_passada in (passo_passado.get('actions', []) or []):
+                    demanda_id_passada = str(tarefa_passada.get('id', '') or '')
+                    coleta_pendente_sem_entrega = (
+                        acao_passada == 'COLETAR'
+                        and demanda_id_passada not in dict_concluidos_torre
+                        and demanda_id_passada not in ids_planejados_completos
+                    )
+                    if not coleta_pendente_sem_entrega:
+                        acoes_passadas_validas.append((acao_passada, tarefa_passada))
+                if acoes_passadas_validas:
+                    novo_passo_passado = passo_passado.copy()
+                    novo_passo_passado['actions'] = acoes_passadas_validas
+                    passos_passados_filtrados.append(novo_passo_passado)
+            past_route_steps = passos_passados_filtrados
 
             def _avaliar_candidato_expediente(ponto):
                 """Simula a próxima parada e reserva o retorno à base até 17h."""
@@ -10626,54 +10714,50 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     coordenada_gps_valida = False
 
                 if coordenada_gps_valida:
-                    destino_provavel_davi, distancia_destino_davi = inferir_destino_provavel_por_distancia(
-                        lat_caminhao, lon_caminhao, route_steps, locais_dict,
-                        p_saida, dict_concluidos_torre,
-                    )
-
-                    velocidade_davi = float(posicao_davi.get("Velocidade (km/h)", 0) or 0)
-                    situacao_davi = str(posicao_davi.get("Situação", "") or "Posição localizada")
-                    atualizacao_davi = str(posicao_davi.get("Última atualização", "") or "")
-                    rua_atual_davi = resumir_rua_rastreador(posicao_davi.get("Endereço", ""))
-                    destino_gps_texto = (
-                        f"Provavelmente indo para {destino_provavel_davi}"
-                        if destino_provavel_davi
-                        else "Roteiro concluído"
-                    )
-                    distancia_gps_texto = (
-                        f"{distancia_destino_davi:.1f} km em linha reta"
-                        if distancia_destino_davi is not None else ""
-                    )
-                    distancia_popup_davi = (
-                        f"<span style='font-size:11px'>{html_escape(distancia_gps_texto)}</span><br>"
-                        if distancia_gps_texto else ""
-                    )
+                    endereco_atual_davi = re.sub(
+                        r"\s+", " ", str(posicao_davi.get("Endereço", "") or "")
+                    ).strip(" ,-|—–") or "Endereço atual não informado"
+                    endereco_atual_davi_html = html_escape(endereco_atual_davi)
                     popup_caminhao = (
-                        f"<b>🚚 Davi — {html_escape(str(PLACA_DAVI))}</b><br>"
-                        f"<span style='font-size:11px;color:#64748b'>📍 {html_escape(rua_atual_davi)}</span><br>"
-                        f"<b>{html_escape(destino_gps_texto)}</b><br>"
-                        f"{distancia_popup_davi}"
-                        f"{html_escape(situacao_davi)} — {velocidade_davi:.0f} km/h<br>"
-                        f"Atualização: {html_escape(atualizacao_davi)}"
+                        "<div style='max-width:310px;white-space:normal;line-height:1.35'>"
+                        f"📍 {endereco_atual_davi_html}</div>"
                     )
                     tooltip_caminhao = (
-                        "<div style='min-width:245px;max-width:310px;white-space:normal;line-height:1.25'>"
-                        f"<div style='font-size:10px;font-weight:600;color:#64748b;margin-bottom:3px'>"
-                        f"📍 {html_escape(rua_atual_davi)}</div>"
-                        f"<div style='font-size:13px;font-weight:800;color:#0f172a'>"
-                        f"🚚 Davi • {html_escape(destino_gps_texto)}</div>"
-                        "</div>"
+                        "<div style='min-width:245px;max-width:310px;white-space:normal;line-height:1.3;"
+                        "font-size:12px;font-weight:700;color:#0f172a'>"
+                        f"📍 {endereco_atual_davi_html}</div>"
                     )
                     folium.Marker(
                         [lat_caminhao, lon_caminhao],
                         popup=folium.Popup(popup_caminhao, max_width=310),
                         tooltip=tooltip_caminhao,
                         z_index_offset=5000,
-                        icon=folium.DivIcon(html='''
-                            <div style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;
-                                        border-radius:50%;background:#ffffff;border:3px solid #2563eb;
-                                        box-shadow:0 3px 12px rgba(0,0,0,.55);font-size:23px;line-height:1;">🚚</div>
-                        '''),
+                        icon=folium.DivIcon(
+                            icon_size=(68, 48),
+                            icon_anchor=(34, 24),
+                            html='''
+                                <div style="width:68px;height:48px;display:flex;flex-direction:column;
+                                            align-items:center;justify-content:center;border-radius:11px;
+                                            background:#ffffff;border:3px solid #2563eb;
+                                            box-shadow:0 3px 12px rgba(0,0,0,.55);box-sizing:border-box;">
+                                    <svg viewBox="0 0 72 30" width="58" height="25" aria-label="Fiat Strada"
+                                         style="display:block;overflow:visible">
+                                        <path d="M4 18V9h29l7-7h14l8 14h6v7H4z"
+                                              fill="#f8fafc" stroke="#1d4ed8" stroke-width="2.2" stroke-linejoin="round"/>
+                                        <path d="M8 11h24v7H8z" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+                                        <path d="M41 5h11l6 11H37z" fill="#93c5fd" stroke="#1d4ed8" stroke-width="1.7"/>
+                                        <path d="M48 5v11" stroke="#1d4ed8" stroke-width="1.5"/>
+                                        <path d="M62 17h6" stroke="#f59e0b" stroke-width="2.4" stroke-linecap="round"/>
+                                        <circle cx="17" cy="23" r="5" fill="#111827"/>
+                                        <circle cx="17" cy="23" r="2" fill="#cbd5e1"/>
+                                        <circle cx="55" cy="23" r="5" fill="#111827"/>
+                                        <circle cx="55" cy="23" r="2" fill="#cbd5e1"/>
+                                    </svg>
+                                    <div style="margin-top:1px;color:#1d4ed8;font-size:8px;font-weight:950;
+                                                letter-spacing:.14em;line-height:1;">STRADA</div>
+                                </div>
+                            ''',
+                        ),
                     ).add_to(m)
                     pontos_reais_mapa.append([lat_caminhao, lon_caminhao])
 
