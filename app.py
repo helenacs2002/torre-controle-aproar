@@ -3678,7 +3678,7 @@ if modo_davi:
             <div class="aproar-section-anchor" id="comprovante">
                 <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
             <div class="aproar-section-title">Confirmar entrega</div>
-            <div class="aproar-section-help">Escolha a entrega que fez, informe quem recebeu e envie a foto. Coletas não exigem foto.</div>
+            <div class="aproar-section-help">Deslize o roteiro para a parada desejada. Se houver entrega pendente, o registro aparece aqui automaticamente. Coletas não exigem foto.</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -3734,30 +3734,29 @@ if modo_davi:
     except Exception:
         foco_comprovante = None
 
-    # O comprovante não fica preso à próxima parada nem à primeira entrega
-    # pendente. O Davi pode registrar QUALQUER entrega pendente da rota.
-    # O parâmetro ?foco= continua servindo apenas como sugestão inicial quando
-    # ele toca em "REGISTRAR ENTREGA" dentro de um cartão do roteiro.
+    # O comprovante acompanha o SWIPE do roteiro. Não há seletor manual:
+    # a etapa que estiver em foco no carrossel define qual entrega aparece aqui.
+    # Se a etapa tiver várias entregas, mostramos a primeira pendente; depois da
+    # baixa, a próxima pendente da mesma parada aparece automaticamente.
     entregas_pendentes_gerais = [
         item
         for _indice_etapa, itens_etapa in sorted(entregas_por_etapa.items())
         for item in itens_etapa
         if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
     ]
-    entregas_por_chave = {item["chave"]: item for item in entregas_pendentes_gerais}
 
-    chave_sugerida = None
-    if foco_comprovante is not None:
-        chave_sugerida = next(
-            (
-                item["chave"]
-                for item in entregas_por_etapa.get(foco_comprovante, [])
-                if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
-            ),
-            None,
-        )
-    if chave_sugerida is None and entregas_pendentes_gerais:
-        chave_sugerida = entregas_pendentes_gerais[0]["chave"]
+    # Na primeira abertura, sem swipe/foco explícito, abre a primeira entrega
+    # pendente para não deixar a área de registro vazia. Depois disso, o foco
+    # enviado pelo carrossel prevalece integralmente.
+    if foco_comprovante is None and entregas_pendentes_gerais:
+        foco_comprovante = int(entregas_pendentes_gerais[0].get("etapa", 0))
+
+    entregas_foco = entregas_por_etapa.get(foco_comprovante, []) if foco_comprovante is not None else []
+    pendentes_foco = [
+        item
+        for item in entregas_foco
+        if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
+    ]
 
     if entregas_por_etapa:
         with st.expander("📸 REGISTRAR ENTREGA", expanded=True):
@@ -3767,37 +3766,13 @@ if modo_davi:
 
             if not entregas_pendentes_gerais:
                 st.success("✅ Todos os comprovantes de entrega foram finalizados.")
+            elif foco_comprovante is not None and not entregas_foco:
+                st.info("📦 Esta parada não possui entrega. Coletas não exigem foto — deslize para uma parada de entrega quando quiser registrar um comprovante.")
+            elif foco_comprovante is not None and entregas_foco and not pendentes_foco:
+                st.success("✅ As entregas desta parada já foram registradas. Deslize para outra parada para continuar.")
             else:
-                rotulos_entrega = {}
-                for item_opcao in entregas_pendentes_gerais:
-                    obra_opcao = str(item_opcao["tarefa"].get("Obra", "") or "Demanda sem obra").strip()
-                    destino_opcao = str(item_opcao.get("destino", "") or "Destino não informado").strip()
-                    materiais_opcao = _separar_materiais_comprovante(item_opcao["tarefa"].get("Materiais", ""))
-                    resumo_material = materiais_opcao[0] if materiais_opcao else "material não informado"
-                    if len(resumo_material) > 46:
-                        resumo_material = resumo_material[:45].rstrip() + "…"
-                    rotulos_entrega[item_opcao["chave"]] = (
-                        f"Parada {item_opcao['parada']} · {obra_opcao} · {destino_opcao} · {resumo_material}"
-                    )
-
-                opcoes_entrega = [item["chave"] for item in entregas_pendentes_gerais]
-                indice_sugerido = opcoes_entrega.index(chave_sugerida) if chave_sugerida in opcoes_entrega else 0
-                chave_comprovante_escolhida = st.selectbox(
-                    "Qual entrega você está registrando?",
-                    options=opcoes_entrega,
-                    index=indice_sugerido,
-                    format_func=lambda chave: rotulos_entrega.get(chave, chave),
-                    key="davi_entrega_para_comprovante",
-                    help="Pode escolher qualquer entrega pendente da rota, mesmo que não seja a próxima parada.",
-                )
-                entrega_sel = entregas_por_chave[chave_comprovante_escolhida]
+                entrega_sel = pendentes_foco[0] if pendentes_foco else entregas_pendentes_gerais[0]
                 foco_comprovante = int(entrega_sel.get("etapa", foco_comprovante or 0))
-                entregas_foco = entregas_por_etapa.get(foco_comprovante, [])
-                pendentes_foco = [
-                    item
-                    for item in entregas_foco
-                    if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
-                ]
 
                 tarefa_sel = entrega_sel["tarefa"]
                 demanda_id_sel = entrega_sel["id"]
@@ -4093,13 +4068,8 @@ if modo_davi:
                     f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
                 )
             if not is_start:
-                if tem_entrega_no_cartao:
-                    rotulo_comprovante = "📸 REGISTRAR ENTREGA" if not step.get('is_concluded') else "📸 VER COMPROVANTE"
-                    link_comprovante = html_escape(f"/davi?foco={i}#comprovante", quote=True)
-                    botao_comprovante = (
-                        f"<a class='comprovante' href='{link_comprovante}' target='_top'>"
-                        f"{rotulo_comprovante}</a>"
-                    )
+                # O comprovante é selecionado automaticamente pelo swipe; não há
+                # mais botão que leve o motorista a outra área/guia.
                 if link_gps:
                     botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
                 numero_parada_mobile += 1
@@ -4270,7 +4240,7 @@ if modo_davi:
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
             .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
         </style></head><body>
-            <div class="barra"><span>↔️ Deslize para trocar de parada</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
+            <div class="barra"><span>↔️ Deslize: o registro acompanha a parada</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
             <div id="trilho" class="trilho">__CARTOES__</div>
             <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
         <script>
@@ -4310,35 +4280,75 @@ if modo_davi:
                 feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
             }
             function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
-            function atualizar(i) {
+            let interacaoUsuario = false;
+            let ultimoFocoEnviado = focoServidor;
+
+            function sincronizarFocoComServidor(indice) {
+                const cartao = cartoes[indice];
+                if (!cartao) return;
+                const etapa = String(cartao.dataset.etapa || '');
+                if (etapa === '' || etapa === ultimoFocoEnviado) return;
+                ultimoFocoEnviado = etapa;
+
+                // Atualiza NA MESMA PÁGINA. O Streamlit reroda com a nova etapa
+                // em foco e o formulário de comprovante acompanha o swipe.
+                const url = new URL(window.parent.location.href);
+                url.searchParams.set('foco', etapa);
+                const caminho = url.pathname.toLowerCase().endsWith('/') ? url.pathname.toLowerCase().slice(0, -1) : url.pathname.toLowerCase();
+                if (!caminho.endsWith('/davi')) {
+                    url.searchParams.set('davi', 'true');
+                }
+                url.hash = 'comprovante';
+                window.parent.location.replace(url.toString());
+            }
+
+            function atualizar(i, sincronizar=false) {
                 atual = Math.max(0, Math.min(cartoes.length - 1, i));
                 contador.textContent = `${atual + 1} de ${cartoes.length}`;
                 anterior.disabled = atual === 0;
                 proxima.disabled = atual === cartoes.length - 1;
                 Array.from(pontos.children).forEach((p, j) => p.classList.toggle('ativo', j === atual));
                 cartoes.forEach((c, j) => c.classList.toggle('selecionada', j === atual));
+                if (sincronizar) sincronizarFocoComServidor(atual);
             }
-            function ir(i) {
+            function ir(i, sincronizar=true) {
                 const indice = Math.max(0, Math.min(cartoes.length - 1, i));
                 const alvo = cartoes[indice];
+                interacaoUsuario = sincronizar;
                 trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'smooth'});
-                atualizar(indice);
+                atualizar(indice, false);
+                if (sincronizar) {
+                    clearTimeout(timer);
+                    timer = setTimeout(() => sincronizarFocoComServidor(indiceMaisProximo()), 260);
+                }
             }
-            function mover(delta) { ir(atual + delta); }
+            function mover(delta) { ir(atual + delta, true); }
 
-            trilho.addEventListener('pointerdown', () => { gestoAtivo = true; }, {passive:true});
+            trilho.addEventListener('pointerdown', () => { gestoAtivo = true; interacaoUsuario = true; }, {passive:true});
             trilho.addEventListener('pointerup', () => {
                 if (!gestoAtivo) return;
-                const melhor = indiceMaisProximo();
-                atualizar(melhor);
                 gestoAtivo = false;
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    const melhor = indiceMaisProximo();
+                    atualizar(melhor, false);
+                    sincronizarFocoComServidor(melhor);
+                    interacaoUsuario = false;
+                }, 180);
             }, {passive:true});
-            trilho.addEventListener('pointercancel', () => { gestoAtivo = false; }, {passive:true});
+            trilho.addEventListener('pointercancel', () => { gestoAtivo = false; interacaoUsuario = false; }, {passive:true});
 
             let timer;
             trilho.addEventListener('scroll', () => {
                 clearTimeout(timer);
-                timer = setTimeout(() => atualizar(indiceMaisProximo()), 90);
+                timer = setTimeout(() => {
+                    const melhor = indiceMaisProximo();
+                    atualizar(melhor, false);
+                    if (interacaoUsuario && !gestoAtivo) {
+                        sincronizarFocoComServidor(melhor);
+                        interacaoUsuario = false;
+                    }
+                }, 140);
             }, {passive:true});
 
             atualizarFeitas();
