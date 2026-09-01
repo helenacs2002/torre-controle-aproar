@@ -2985,6 +2985,55 @@ def _separar_materiais_comprovante(valor):
     return itens
 
 
+def agrupar_coletas_preparacao_exibicao(acoes):
+    """Agrupa a preparação por unidade de destino + obra, sem misturar obras."""
+    grupos = {}
+    ordem = []
+    for acao, tarefa in (acoes or []):
+        if acao != "COLETAR":
+            ordem.append(("acao", len(ordem), acao, tarefa))
+            continue
+
+        tarefa = dict(tarefa or {})
+        demanda_id = str(tarefa.get("id", "") or "").strip()
+        destino = canonicalizar_ponto_rota(tarefa.get("Destino", ""))
+        obra = re.sub(r"\s+", " ", str(tarefa.get("Obra", "") or "")).strip()
+        chave_obra = remover_acentos(obra).upper()
+        # Demandas sem obra identificável permanecem separadas para não juntar
+        # cartões diferentes apenas porque têm o mesmo destino.
+        chave = (destino, chave_obra or f"SEM-OBRA:{demanda_id}")
+        if chave not in grupos:
+            grupos[chave] = {
+                "tarefa": tarefa,
+                "ids": [],
+                "materiais": [],
+                "vistos_materiais": set(),
+            }
+            ordem.append(("grupo", chave))
+
+        grupo = grupos[chave]
+        if demanda_id and demanda_id not in grupo["ids"]:
+            grupo["ids"].append(demanda_id)
+        for material in _separar_materiais_comprovante(tarefa.get("Materiais", "")):
+            chave_material = remover_acentos(material).upper()
+            if chave_material not in grupo["vistos_materiais"]:
+                grupo["vistos_materiais"].add(chave_material)
+                grupo["materiais"].append(material)
+
+    resultado = []
+    for item in ordem:
+        if item[0] == "acao":
+            resultado.append((item[2], item[3]))
+            continue
+        grupo = grupos[item[1]]
+        tarefa_agrupada = dict(grupo["tarefa"])
+        tarefa_agrupada["Materiais"] = " | ".join(grupo["materiais"])
+        tarefa_agrupada["_ids_agrupados"] = list(grupo["ids"])
+        tarefa_agrupada["_qtd_demandas_agrupadas"] = max(1, len(grupo["ids"]))
+        resultado.append(("COLETAR", tarefa_agrupada))
+    return resultado
+
+
 def _dividir_material_quantidade(valor):
     """Separa a quantidade inicial do nome sem confundir medidas como 2,5mm/20kg."""
     item = re.sub(r"\s+", " ", str(valor or "")).strip(" •-\t")
@@ -3758,13 +3807,13 @@ if modo_davi:
 
 
     st.markdown(f"""
-        <div class="aproar-section-anchor" id="roteiro">
+            <div class="aproar-section-anchor" id="roteiro">
             <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
             <div class="aproar-section-title">Roteiro do dia</div>
-            <div class="aproar-section-help">{total_km:.1f} km • toque em uma parada para ver o que fazer</div>
+            <div class="aproar-section-help">{total_km:.1f} km • deslize para os lados para trocar de parada</div>
         </div>
     """, unsafe_allow_html=True)
-    MODO_DAVI_SIMPLES = True
+    MODO_DAVI_SIMPLES = False
     cartoes_mobile = []
     numero_parada_mobile = 1
 
@@ -3773,7 +3822,8 @@ if modo_davi:
         destino_step = str(step.get('destino', ''))
         is_start = (i == 0 and destino_step == p_saida)
         tem_entrega_no_cartao = any(acao == "ENTREGAR" for acao, _ in step.get('actions', []))
-        classe_card, selo, titulo_card, meta_card, botao_gps, botao_feito = "normal", "ETAPA", destino_step, "", "", ""
+        classe_card, selo, titulo_card, meta_card = "normal", "ETAPA", destino_step, ""
+        botao_gps, botao_feito, botao_comprovante = "", "", ""
         etapa_marcada = False
 
         if tipo_step == 'lunch':
@@ -3871,11 +3921,19 @@ if modo_davi:
                     f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
                 )
             if not is_start:
+                if tem_entrega_no_cartao:
+                    rotulo_comprovante = "📸 REGISTRAR ENTREGA" if not step.get('is_concluded') else "📸 VER COMPROVANTE"
+                    link_comprovante = html_escape(f"/davi?foco={i}#comprovante", quote=True)
+                    botao_comprovante = (
+                        f"<a class='comprovante' href='{link_comprovante}' target='_top'>"
+                        f"{rotulo_comprovante}</a>"
+                    )
                 if link_gps:
                     botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
                 numero_parada_mobile += 1
 
-        rodape_card = f"<div class='rodape-card'>{botao_feito}{botao_gps}</div>" if botao_feito or botao_gps else ""
+        botoes_rodape = botao_comprovante + botao_gps + botao_feito
+        rodape_card = f"<div class='rodape-card'>{botoes_rodape}</div>" if botoes_rodape else ""
         cartoes_mobile.append(
             f"<article class='cartao {classe_card}{' feita' if etapa_marcada else ''}' data-etapa='{i}' data-entrega='{'1' if tem_entrega_no_cartao else '0'}'><div class='topo-card'><span class='selo'>{html_escape(str(selo))}</span>"
             f"<h2>{titulo_card}</h2><div class='meta'>{meta_card}</div></div>"
@@ -3990,7 +4048,7 @@ if modo_davi:
             .contador { color:#dbeafe; font-weight:900; background:rgba(37,99,235,.11); border:1px solid rgba(96,165,250,.24); padding:6px 10px; border-radius:999px; }
             .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
             .trilho::-webkit-scrollbar { display:none; }
-            .cartao { flex:0 0 calc(100% - 6px); height:432px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:20px; box-shadow:0 18px 38px rgba(0,0,0,.34); }
+            .cartao { flex:0 0 calc(100% - 8px); height:438px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:18px; box-shadow:0 16px 34px rgba(0,0,0,.32); }
             .cartao.preparacao { border-color:rgba(59,130,246,.48); }
             .cartao.almoco { border-color:rgba(245,158,11,.48); }
             .cartao.retorno { border-color:rgba(34,197,94,.48); }
@@ -4027,11 +4085,12 @@ if modo_davi:
             .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
             .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
             .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
-            .rodape-card { display:grid; gap:8px; padding:11px 14px 14px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
+            .rodape-card { display:grid; grid-template-columns:1fr; gap:7px; padding:10px 13px 13px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
             .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid rgba(34,197,94,.48); background:rgba(22,163,74,.08); color:#bbf7d0; font-size:12.5px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
+            .comprovante { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:#ecfdf5; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#16a34a,#15803d); box-shadow:0 8px 18px rgba(22,163,74,.24); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
             .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
             .controle:disabled { opacity:.35; }
@@ -4039,7 +4098,7 @@ if modo_davi:
             .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
             .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
         </style></head><body>
-            <div class="barra"><span>↔️ Deslize • a parada seleciona a entrega</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
+            <div class="barra"><span>↔️ Deslize para trocar de parada</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
             <div id="trilho" class="trilho">__CARTOES__</div>
             <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
         <script>
@@ -4053,7 +4112,6 @@ if modo_davi:
             const focoServidor = String('__FOCO__');
             let atual = 0;
             let gestoAtivo = false;
-            let navegando = false;
 
             function indiceMaisProximo() {
                 const centro = trilho.scrollLeft + trilho.clientWidth / 2;
@@ -4065,34 +4123,11 @@ if modo_davi:
                 return melhor;
             }
 
-            function abrirFoco(i) {
-                if (navegando || !cartoes[i]) return;
-                const etapa = String(cartoes[i].dataset.etapa || '');
-                if (!etapa || etapa === focoServidor) return;
-                navegando = true;
-                try {
-                    const url = new URL(window.top.location.href);
-                    url.pathname = '/davi';
-                    url.searchParams.delete('davi');
-                    url.searchParams.set('foco', etapa);
-                    url.searchParams.delete('etapa');
-                    url.searchParams.delete('feito');
-                    url.hash = 'comprovante';
-                    window.top.location.href = url.toString();
-                } catch (e) {
-                    const link = document.createElement('a');
-                    link.href = `/davi?foco=${encodeURIComponent(etapa)}#comprovante`;
-                    link.target = '_top';
-                    document.body.appendChild(link);
-                    link.click();
-                }
-            }
-
             cartoes.forEach((_, i) => {
                 const p = document.createElement('button');
                 p.className = 'ponto';
                 p.type = 'button';
-                p.addEventListener('click', () => ir(i, true));
+                p.addEventListener('click', () => ir(i));
                 pontos.appendChild(p);
             });
 
@@ -4111,14 +4146,13 @@ if modo_davi:
                 Array.from(pontos.children).forEach((p, j) => p.classList.toggle('ativo', j === atual));
                 cartoes.forEach((c, j) => c.classList.toggle('selecionada', j === atual));
             }
-            function ir(i, selecionar = false) {
+            function ir(i) {
                 const indice = Math.max(0, Math.min(cartoes.length - 1, i));
                 const alvo = cartoes[indice];
                 trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'smooth'});
                 atualizar(indice);
-                if (selecionar) abrirFoco(indice);
             }
-            function mover(delta) { ir(atual + delta, true); }
+            function mover(delta) { ir(atual + delta); }
 
             trilho.addEventListener('pointerdown', () => { gestoAtivo = true; }, {passive:true});
             trilho.addEventListener('pointerup', () => {
@@ -4126,17 +4160,8 @@ if modo_davi:
                 const melhor = indiceMaisProximo();
                 atualizar(melhor);
                 gestoAtivo = false;
-                abrirFoco(melhor);
             }, {passive:true});
             trilho.addEventListener('pointercancel', () => { gestoAtivo = false; }, {passive:true});
-            trilho.addEventListener('touchstart', () => { gestoAtivo = true; }, {passive:true});
-            trilho.addEventListener('touchend', () => {
-                if (!gestoAtivo) return;
-                const melhor = indiceMaisProximo();
-                atualizar(melhor);
-                gestoAtivo = false;
-                abrirFoco(melhor);
-            }, {passive:true});
 
             let timer;
             trilho.addEventListener('scroll', () => {
@@ -4151,11 +4176,15 @@ if modo_davi:
                 trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
                 atualizar(indiceInicial);
             } else {
-                atualizar(0);
+                const primeiraPendente = cartoes.findIndex(c => !c.classList.contains('feita'));
+                const indicePadrao = primeiraPendente >= 0 ? primeiraPendente : 0;
+                const alvo = cartoes[indicePadrao];
+                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
+                atualizar(indicePadrao);
             }
         </script></body></html>
         """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile))).replace("__FOCO__", "" if foco_comprovante is None else str(foco_comprovante))
-        st.components.v1.html(html_carrossel, height=520, scrolling=False)
+        st.components.v1.html(html_carrossel, height=550, scrolling=False)
     else:
         st.info("A rota ainda não possui etapas para exibir.")
 
@@ -10349,11 +10378,9 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if any(acao_etapa == 'ENTREGAR' for acao_etapa, _ in acoes_etapa_torre):
                     tipos_acoes_etapa.append('ENTREGA')
                 resumo_acoes_etapa = ' + '.join(tipos_acoes_etapa) or 'ETAPA'
-                if etapa_totalmente_concluida:
+                if etapa_totalmente_concluida and not is_start:
                     titulo_etapa_recolhida = (
-                        f"✅ PREPARAÇÃO: {step['destino']} · {resumo_acoes_etapa} — concluída"
-                        if is_start
-                        else f"✅ PARADA {num_parada}: {step['destino']} · {resumo_acoes_etapa} — concluída às {step['dyn_saida']}"
+                        f"✅ PARADA {num_parada}: {step['destino']} · {resumo_acoes_etapa} — concluída às {step['dyn_saida']}"
                     )
                     contexto_etapa_torre = st.expander(titulo_etapa_recolhida, expanded=True)
                 else:
@@ -10403,29 +10430,61 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                             f"{len(step.get('actions', []))} {plural_pt(len(step.get('actions', [])), 'demanda desta parada compartilha', 'demandas desta parada compartilham')} esse período."
                         )
 
-                    for indice_demanda, (acao, t) in enumerate(step['actions'], start=1):
+                    acoes_exibicao_torre = (
+                        agrupar_coletas_preparacao_exibicao(step['actions'])
+                        if is_start else list(step['actions'])
+                    )
+                    for indice_demanda, (acao, t) in enumerate(acoes_exibicao_torre, start=1):
                         eh_coleta_torre = acao == "COLETAR"
                         icone_torre = "📦" if eh_coleta_torre else "📬"
                         rotulo_torre = "COLETA" if eh_coleta_torre else "ENTREGA"
                         card_id_torre = str(t.get('id', ''))
-                        concluida = card_id_torre in dict_concluidos_torre
+                        ids_card_torre = [
+                            str(demanda_id or '')
+                            for demanda_id in (t.get('_ids_agrupados', []) or [card_id_torre])
+                            if str(demanda_id or '')
+                        ]
+                        concluida = bool(ids_card_torre) and all(
+                            demanda_id in dict_concluidos_torre for demanda_id in ids_card_torre
+                        )
+                        horas_baixa_card = [
+                            str(dict_concluidos_torre[demanda_id])
+                            for demanda_id in ids_card_torre
+                            if demanda_id in dict_concluidos_torre
+                        ]
+                        hora_baixa_card = max(horas_baixa_card) if horas_baixa_card else ""
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
                         obra_torre_texto = str(t.get('Obra', 'Obra não informada') or 'Obra não informada')
                         obra_torre_html = html_escape(obra_torre_texto)
-                        campo_unidade_torre = 'Origem' if eh_coleta_torre else 'Destino'
+                        # Na preparação, o local físico já é o escritório; mostrar o
+                        # DESTINO deixa claro para qual unidade/obra o material irá.
+                        campo_unidade_torre = 'Destino' if (is_start or not eh_coleta_torre) else 'Origem'
+                        rotulo_unidade_torre = 'DESTINO' if campo_unidade_torre == 'Destino' else 'ORIGEM'
                         unidade_torre = canonicalizar_ponto_rota(
                             t.get(campo_unidade_torre, '') or step.get('destino', '')
                         )
                         unidade_torre_html = html_escape(str(unidade_torre or 'Unidade não informada'))
                         classe_acao_torre = "coleta" if eh_coleta_torre else "entrega"
+                        qtd_demandas_card = int(t.get('_qtd_demandas_agrupadas', 1) or 1)
+                        complemento_grupo_torre = (
+                            f" • {qtd_demandas_card} demandas agrupadas"
+                            if qtd_demandas_card > 1 else ""
+                        )
 
                         # Em uma etapa mista, cada demanda já baixada vira uma linha
                         # recolhida. Se a etapa inteira acabou, o expander externo já
                         # compacta o conjunto e evitamos expanders aninhados.
                         if concluida and not etapa_totalmente_concluida:
-                            hora_baixa_torre = str(dict_concluidos_torre.get(card_id_torre, "") or "")
                             contexto_demanda_torre = st.expander(
-                                f"✅ {rotulo_torre} · {obra_torre_texto} · baixa às {hora_baixa_torre}",
+                                f"✅ {rotulo_torre} · {obra_torre_texto} · baixa às {hora_baixa_card}",
+                                expanded=False,
+                            )
+                        elif is_start:
+                            qtd_itens_grupo = len(materiais_torre)
+                            contexto_demanda_torre = st.expander(
+                                f"📦 {obra_torre_texto} → {unidade_torre or 'Destino não informado'} · "
+                                f"{qtd_demandas_card} {plural_pt(qtd_demandas_card, 'demanda', 'demandas')} · "
+                                f"{qtd_itens_grupo} {plural_pt(qtd_itens_grupo, 'item', 'itens')}",
                                 expanded=False,
                             )
                         else:
@@ -10438,7 +10497,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                                     <span class="aproar-stop-action {classe_acao_torre}">{icone_torre} {rotulo_torre}</span>
                                     <div class="aproar-stop-copy">
                                         <strong>{obra_torre_html}</strong>
-                                        <small>UNIDADE · {unidade_torre_html}</small>
+                                        <small>{rotulo_unidade_torre} · {unidade_torre_html}{html_escape(complemento_grupo_torre)}</small>
                                     </div>
                                     <span class="aproar-stop-number">#{indice_demanda:02d}</span>
                                 </div>
@@ -10467,7 +10526,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                                 )
 
                             if concluida:
-                                st.success(f"✅ Baixa registrada às {dict_concluidos_torre[card_id_torre]}")
+                                st.success(f"✅ Baixa registrada às {hora_baixa_card}")
 
                             # Para entregas, exibe o comprovante e permite reabri-lo sem apagar as fotos.
                             if not eh_coleta_torre and card_id_torre:
