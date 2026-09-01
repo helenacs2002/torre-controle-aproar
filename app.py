@@ -4625,7 +4625,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 8
+ROTA_ENGINE_VERSION = 9
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -4662,7 +4662,11 @@ ALIASES_UNIDADES_EMPRESA = {
 
 def _chave_busca_unidade(valor):
     texto = remover_acentos(str(valor or "")).upper()
-    return re.sub(r"[^A-Z0-9]+", " ", texto).strip()
+    texto = re.sub(r"[^A-Z0-9]+", " ", texto).strip()
+    # Erros comuns de digitação no Trello não podem criar um novo ponto físico.
+    # Ex.: BARRRRA -> BARRA. Mantemos no máximo duas letras repetidas.
+    texto = re.sub(r"([A-Z0-9])\1{2,}", r"\1\1", texto)
+    return texto
 
 
 def identificar_unidade_empresa(valor, permitir_contexto=False):
@@ -4690,6 +4694,19 @@ def identificar_unidade_empresa(valor, permitir_contexto=False):
             return oficial
         if permitir_contexto and re.search(rf"(?<![A-Z0-9]){re.escape(alias_chave)}(?![A-Z0-9])", chave):
             return oficial
+
+    # Segunda camada, propositalmente conservadora, para nomes longos com um erro
+    # pequeno de digitação (ex.: EDÍFICIO COLISEU). Aliases curtos como BARRA não
+    # entram aqui para não confundir fornecedores/bairros com a unidade.
+    melhor = None
+    for _tam, alias_chave, oficial in candidatos:
+        if len(alias_chave) < 8 or abs(len(chave) - len(alias_chave)) > 2:
+            continue
+        similaridade = difflib.SequenceMatcher(None, chave, alias_chave).ratio()
+        if similaridade >= 0.90 and (melhor is None or similaridade > melhor[0]):
+            melhor = (similaridade, oficial)
+    if melhor:
+        return melhor[1]
     return ""
 
 
@@ -4867,7 +4884,7 @@ def carregar_rota_salva_para_sessao(data_rota):
         )
         if not res_rota:
             return False
-        st.session_state['route_steps'] = json.loads(res_rota[0] or '[]')
+        st.session_state['route_steps'] = consolidar_paradas_equivalentes(json.loads(res_rota[0] or '[]'))
         st.session_state['locais_dict'] = json.loads(res_rota[1] or '{}')
         st.session_state['geometria_rota'] = json.loads(res_rota[2] or '[]')
         st.session_state['enderecos_dict'] = json.loads(res_rota[3] or '{}')
@@ -5265,6 +5282,92 @@ def canonicalizar_ponto_rota(nome):
     return texto
 
 
+def normalizar_pontos_tarefa(tarefa):
+    """Normaliza origem/destino sem perder o ID individual de cada card do Trello."""
+    nova = dict(tarefa or {})
+    for campo in ("Origem", "Destino"):
+        original = nova.get(campo, "")
+        canonico = canonicalizar_ponto_rota(original)
+        if canonico:
+            nova[campo] = canonico
+    return nova
+
+
+def consolidar_paradas_equivalentes(route_steps):
+    """Une paradas consecutivas que são o mesmo ponto físico/canônico.
+
+    A unidade física é consolidada, mas cada card do Trello continua sendo uma
+    ação independente. Assim, duas demandas da mesma obra/unidade aparecem em uma
+    única parada e a falta de baixa em um dos cards continua visível.
+    """
+    resultado = []
+    for step in (route_steps or []):
+        if not isinstance(step, dict):
+            resultado.append(step)
+            continue
+
+        atual = dict(step)
+        if atual.get("destino"):
+            atual["destino"] = canonicalizar_ponto_rota(atual.get("destino", "")) or atual.get("destino", "")
+
+        if "actions" in atual:
+            novas_acoes = []
+            for acao, tarefa in (atual.get("actions") or []):
+                novas_acoes.append((acao, normalizar_pontos_tarefa(tarefa)))
+            atual["actions"] = novas_acoes
+
+        if (
+            atual.get("type") == "stop"
+            and resultado
+            and isinstance(resultado[-1], dict)
+            and resultado[-1].get("type") == "stop"
+            and canonicalizar_ponto_rota(resultado[-1].get("destino", ""))
+                == canonicalizar_ponto_rota(atual.get("destino", ""))
+        ):
+            anterior = resultado[-1]
+            existentes = set()
+            acoes_mescladas = []
+            for acao, tarefa in (anterior.get("actions") or []) + (atual.get("actions") or []):
+                tarefa_id = str((tarefa or {}).get("id", "") or "")
+                chave = (str(acao), tarefa_id or json.dumps(tarefa or {}, ensure_ascii=False, sort_keys=True, default=str))
+                if chave in existentes:
+                    continue
+                existentes.add(chave)
+                acoes_mescladas.append((acao, tarefa))
+
+            anterior["actions"] = acoes_mescladas
+            anterior["destino"] = canonicalizar_ponto_rota(anterior.get("destino", "")) or anterior.get("destino", "")
+            # O segundo trecho normalmente é 0 km; somar é seguro e evita perder
+            # qualquer deslocamento residual de uma rota antiga.
+            for campo in ("dist", "travel_mins", "travel_mins_api"):
+                try:
+                    anterior[campo] = float(anterior.get(campo, 0) or 0) + float(atual.get(campo, 0) or 0)
+                except Exception:
+                    pass
+            if atual.get("saida"):
+                anterior["saida"] = atual.get("saida")
+            if atual.get("dyn_saida"):
+                anterior["dyn_saida"] = atual.get("dyn_saida")
+            if atual.get("is_concluded") is not None:
+                anterior["is_concluded"] = bool(anterior.get("is_concluded")) and bool(atual.get("is_concluded"))
+            # Recalcula a permanência compartilhada da visita já consolidada.
+            try:
+                entregas = [t for a, t in acoes_mescladas if a == "ENTREGAR"]
+                coletas = [t for a, t in acoes_mescladas if a == "COLETAR"]
+                tempo, fonte = estimar_tempo_parada(anterior["destino"], entregas, coletas, retornar_fonte=True)
+                anterior["tempo_local"] = tempo
+                anterior["tempo_local_fonte"] = fonte
+            except Exception:
+                anterior["tempo_local"] = max(
+                    float(anterior.get("tempo_local", 0) or 0),
+                    float(atual.get("tempo_local", 0) or 0),
+                )
+            continue
+
+        resultado.append(atual)
+    return resultado
+
+
 def obter_endereco_fornecedor_fallback(nome):
     """Obtém endereço conhecido sem substituir cadastros manuais do banco."""
     chave = canonicalizar_ponto_rota(nome)
@@ -5287,7 +5390,10 @@ def detectar_locais_repetidos_rota(route_steps, ponto_saida=""):
         # Uma eventual parada intermediária na própria base também é erro lógico,
         # salvo a preparação/retorno, que usam outros tipos de etapa.
         if local in vistos and local not in repetidos:
-            repetidos.append(local)
+            # Uma segunda ida explicitamente autorizada por card MUITO ALTA novo
+            # é uma exceção operacional válida, não um erro de consolidação.
+            if not step.get("revisita_muito_alta"):
+                repetidos.append(local)
         vistos.add(local)
     return repetidos
 
@@ -9395,13 +9501,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         )
         and isinstance(df_ativos, pd.DataFrame)
         and not df_ativos.empty
-        and st.session_state.get('_motor_rota_v7_solicitado_em') != DATA_REF_ROTA_STR
+        and st.session_state.get('_motor_rota_v9_solicitado_em') != DATA_REF_ROTA_STR
     ):
-        st.session_state['_motor_rota_v7_solicitado_em'] = DATA_REF_ROTA_STR
+        st.session_state['_motor_rota_v9_solicitado_em'] = DATA_REF_ROTA_STR
         st.session_state['_recalcular_rota_automatico'] = True
         _nomes_repetidos = ', '.join(_locais_repetidos_rota)
         st.session_state['_mensagem_ajuste_rota'] = (
-            '✅ Motor V7 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
+            '✅ Motor V9 aplicado. A rota foi reorganizada com ciclos completos de coleta e entrega '
             f'em uma única visita sempre que possível{": " + _nomes_repetidos if _nomes_repetidos else "."}'
         )
 
@@ -9505,7 +9611,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             # Tudo que sai da base deve ser carregado UMA VEZ na preparação das
             # 07:30–08:00. Ao recalcular a rota durante o dia, essas coletas não
             # podem voltar como uma nova "PARADA: ESCRITÓRIO".
-            registros_ativos_rota = df_ativos.to_dict('records')
+            registros_ativos_rota = [normalizar_pontos_tarefa(t) for t in df_ativos.to_dict('records')]
             base_canonica = canonicalizar_ponto_rota(ponto_saida)
             tarefas_base_ativas = [
                 t for t in registros_ativos_rota
@@ -9517,7 +9623,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             rota_salva = fetch_one("SELECT json_route FROM rota_ativa WHERE id = 1 AND data_rota = :data", {"data": DATA_REF_ROTA_STR})
             preparacao_salva = None
             if rota_salva:
-                old_steps = json.loads(rota_salva[0])
+                old_steps = consolidar_paradas_equivalentes(json.loads(rota_salva[0]))
                 for indice_old, step in enumerate(old_steps):
                     if step.get('type') != 'stop':
                         continue
@@ -10194,6 +10300,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 route_steps, ajustes_manuais, ponto_saida
             )
             route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais)
+            route_steps = consolidar_paradas_equivalentes(route_steps)
             if route_steps:
                 route_steps[0]['_motor_rota_versao'] = ROTA_ENGINE_VERSION
             st.session_state['_rota_locais_repetidos_carregada'] = detectar_locais_repetidos_rota(
@@ -10259,6 +10366,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             route_steps, ajustes_manuais_atual, p_saida
         )
         route_steps = aplicar_ordem_manual_route_steps(route_steps, ajustes_manuais_atual)
+        route_steps = consolidar_paradas_equivalentes(route_steps)
         _route_depois_normalizacao = json.dumps(route_steps, ensure_ascii=False, sort_keys=True, default=str)
         st.session_state['route_steps'] = route_steps
 
