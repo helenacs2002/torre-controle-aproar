@@ -3378,6 +3378,41 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
 
 
 # =====================================================================
+# COMPONENTE DAVI — SWIPE + REGISTRO LOCAL SEM RECARREGAR A PÁGINA
+# O foco muda apenas no navegador. O Python só recebe evento no envio da foto.
+# =====================================================================
+def _diretorio_componente_davi_swipe():
+    pasta = os.path.join(tempfile.gettempdir(), "aproar_davi_swipe_v2")
+    os.makedirs(pasta, exist_ok=True)
+    index_path = os.path.join(pasta, "index.html")
+    html = '<!doctype html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">\n<style>\n@import url(\'https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap\');\n*{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;color:#e4e8f4;font-family:Manrope,Arial,sans-serif}h1,h2,h3,strong,.obra{font-family:Sora,Manrope,Arial,sans-serif}\n.barra{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 2px 10px;color:#94a3b8;font-size:11px;font-weight:700}.resumo-topo{display:flex;align-items:center;gap:6px}.feitas{color:#bbf7d0;font-weight:900;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.23);padding:6px 9px;border-radius:999px}.contador{color:#dbeafe;font-weight:900;background:rgba(37,99,235,.11);border:1px solid rgba(96,165,250,.24);padding:6px 10px;border-radius:999px}\n.trilho{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;scrollbar-width:none;padding:2px 4px 12px}.trilho::-webkit-scrollbar{display:none}.cartao{flex:0 0 calc(100% - 8px);height:438px;scroll-snap-align:center;scroll-snap-stop:always;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(145deg,#111a2e,#0a101e);border:1px solid rgba(148,163,184,.18);border-radius:18px;box-shadow:0 16px 34px rgba(0,0,0,.32)}.cartao.preparacao{border-color:rgba(59,130,246,.48)}.cartao.almoco{border-color:rgba(245,158,11,.48)}.cartao.retorno{border-color:rgba(34,197,94,.48)}.cartao.feita{border-color:rgba(34,197,94,.62);box-shadow:0 0 0 2px rgba(34,197,94,.12),0 18px 38px rgba(0,0,0,.34)}.cartao.feita .topo-card{background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03))}.cartao.selecionada{box-shadow:0 0 0 2px rgba(59,130,246,.26),0 20px 42px rgba(0,0,0,.38)}\n.topo-card{padding:18px 18px 14px;border-bottom:1px solid rgba(148,163,184,.13);background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 60%)}.selo{display:inline-block;color:#bfdbfe;background:#1d4ed8;font-size:11px;font-weight:900;letter-spacing:.08em;padding:5px 9px;border-radius:999px}.almoco .selo{background:#92400e;color:#fef3c7}.retorno .selo{background:#166534;color:#dcfce7}h2{margin:11px 0 6px;color:#f8fafc;font-size:21px;line-height:1.18;letter-spacing:-.035em}.meta{color:#8da0b8;font-size:12px;line-height:1.45}.conteudo-card{flex:1;overflow-y:auto;padding:14px 16px 9px;scrollbar-width:thin;scrollbar-color:#334155 transparent}.status{display:block;margin-bottom:12px;padding:9px 11px;border-radius:10px;font-size:13px;font-weight:800}.status.concluido{color:#bbf7d0;background:rgba(22,163,74,.15)}.status.pendente{color:#fde68a;background:rgba(245,158,11,.14)}.rastreio-real{margin:-4px 0 12px;padding:9px 11px;border-radius:10px;color:#bae6fd;background:rgba(14,165,233,.10);border:1px solid rgba(56,189,248,.22);font-size:12.5px;line-height:1.45}\n.acao{margin-bottom:10px;padding:0;border-radius:13px;border:1px solid #2b3654;overflow:hidden;background:rgba(255,255,255,.025)}.acao.coleta{border-color:rgba(245,158,11,.50);border-left:5px solid #f59e0b;background:rgba(245,158,11,.035)}.acao.entrega{border-color:rgba(34,197,94,.52);border-left:5px solid #22c55e;background:rgba(34,197,94,.045)}.acao-cabecalho{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 11px 9px;border-bottom:1px solid rgba(141,160,184,.13)}.acao.coleta .acao-cabecalho{background:linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.035))}.acao.entrega .acao-cabecalho{background:linear-gradient(90deg,rgba(34,197,94,.18),rgba(34,197,94,.035))}.acao-tipo{flex:0 0 auto;font-size:11.5px;font-weight:900;letter-spacing:.04em;white-space:nowrap;padding:4px 7px;border-radius:7px}.acao.coleta .acao-tipo{color:#fde68a;background:rgba(245,158,11,.16)}.acao.entrega .acao-tipo{color:#bbf7d0;background:rgba(34,197,94,.16)}.acao-obra{min-width:0;color:#cbd5e1;font-size:11.5px;line-height:1.35;text-align:right;font-weight:700;padding-top:3px}.materiais-lista{padding:8px 11px 10px;display:grid;gap:6px}.material-item{display:grid;grid-template-columns:10px minmax(0,1fr);gap:6px;color:#e4e8f4;font-size:12.7px;line-height:1.38}.material-bullet{color:#60a5fa;font-weight:900}.acao.entrega .material-bullet{color:#4ade80}.acao.coleta .material-bullet{color:#fbbf24}.material-item.vazio{display:block;color:#8da0b8;font-style:italic}.baixa{color:#86efac;font-size:11.5px;font-weight:800;padding:0 11px 10px}.mensagem-etapa{color:#cbd5e1;font-size:15px;line-height:1.55;padding:18px 6px}.rodape-card{display:grid;grid-template-columns:1fr;gap:7px;padding:10px 13px 13px;border-top:1px solid rgba(148,163,184,.13);background:rgba(5,9,17,.20)}.marcar-feita{display:block;width:100%;padding:12px 10px;border-radius:11px;border:1px solid rgba(34,197,94,.48);background:rgba(22,163,74,.08);color:#bbf7d0;font-size:12.5px;font-weight:900;cursor:pointer;text-align:center;text-decoration:none}.marcar-feita.ativa{background:linear-gradient(135deg,#16a34a,#15803d);color:white}.marcar-feita:disabled{cursor:default;opacity:1;background:linear-gradient(135deg,#16a34a,#15803d);color:white}.gps{display:block;margin:0;padding:13px 12px;text-decoration:none;text-align:center;color:white;font-size:13px;font-weight:900;border-radius:11px;background:linear-gradient(135deg,#2f74f5,#1d4ed8);box-shadow:0 9px 20px rgba(37,99,235,.28)}\n.controles{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;padding:0 4px}.controle{border:1px solid rgba(148,163,184,.18);background:#111a2d;color:#e2e8f0;border-radius:11px;padding:10px 8px;font-size:11.5px;font-weight:800;cursor:pointer}.controle:disabled{opacity:.35}.pontos{display:flex;gap:5px;justify-content:center;max-width:130px;overflow:hidden}.ponto{width:7px;height:7px;padding:0;border:0;border-radius:50%;background:#475569;cursor:pointer}.ponto.ativo{width:18px;border-radius:999px;background:#2563eb}\n.registro{margin:12px 4px 0;padding:14px;border:1px solid rgba(96,165,250,.24);border-radius:15px;background:linear-gradient(145deg,rgba(15,27,48,.96),rgba(9,14,27,.96));min-height:195px}.registro-kicker{color:#60a5fa;font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.registro-titulo{margin:4px 0 3px;color:#f8fafc;font-family:Sora,Manrope,sans-serif;font-weight:800;font-size:17px}.registro-meta{color:#94a3b8;font-size:11.5px;margin-bottom:10px}.registro-materiais{padding:9px 10px;border-radius:10px;background:rgba(37,99,235,.07);border:1px solid rgba(96,165,250,.14);font-size:12px;line-height:1.45;margin-bottom:10px}.registro-info{padding:13px;border-radius:11px;background:rgba(148,163,184,.07);color:#cbd5e1;font-size:12.5px;line-height:1.45}.registro-info.ok{background:rgba(22,163,74,.10);color:#bbf7d0}.campo{display:grid;gap:5px;margin:9px 0}.campo label{font-size:11.5px;font-weight:800;color:#cbd5e1}.campo input[type=text],.campo input[type=file]{width:100%;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:#0c1322;color:#e2e8f0;padding:10px;font:inherit}.campo input[type=file]::file-selector-button{border:0;border-radius:8px;background:#1d4ed8;color:#fff;padding:8px 10px;margin-right:9px;font-weight:800}.registrar{width:100%;border:0;border-radius:11px;background:linear-gradient(135deg,#2f74f5,#1d4ed8);color:white;padding:12px;font-size:13px;font-weight:900;cursor:pointer;margin-top:5px}.registrar:disabled{opacity:.55;cursor:wait}.erro{margin-top:8px;color:#fecaca;font-size:11.5px}.feedback{margin-bottom:10px;padding:9px 10px;border-radius:10px;font-size:12px;font-weight:800}.feedback.success{background:rgba(22,163,74,.12);color:#bbf7d0}.feedback.error{background:rgba(239,68,68,.12);color:#fecaca}\n</style></head><body>\n<div class="barra"><span>↔️ Deslize: o registro muda sem recarregar</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de 1</span></div></div>\n<div id="trilho" class="trilho"></div>\n<div class="controles"><button id="anterior" class="controle">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle">Próxima →</button></div>\n<div id="registro" class="registro"></div>\n<script>\nlet args={};let cartoes=[];let atual=0;let timer=null;let gestoAtivo=false;let rascunhos={};\nconst trilho=document.getElementById(\'trilho\'),contador=document.getElementById(\'contador\'),anterior=document.getElementById(\'anterior\'),proxima=document.getElementById(\'proxima\'),pontos=document.getElementById(\'pontos\'),feitasEl=document.getElementById(\'feitas\'),registro=document.getElementById(\'registro\');\nfunction esc(s){return String(s??\'\').replace(/[&<>"\']/g,c=>({\'&\':\'&amp;\',\'<\':\'&lt;\',\'>\':\'&gt;\',\'"\':\'&quot;\',"\'":\'&#039;\'}[c]));}\nfunction setHeight(){setTimeout(()=>window.parent.postMessage({isStreamlitMessage:true,type:\'streamlit:setFrameHeight\',height:document.documentElement.scrollHeight+8},\'*\'),20)}\nfunction setValue(value){window.parent.postMessage({isStreamlitMessage:true,type:\'streamlit:setComponentValue\',value:value,dataType:\'json\'},\'*\')}\nfunction indiceMaisProximo(){const centro=trilho.scrollLeft+trilho.clientWidth/2;let melhor=0,dist=Infinity;cartoes.forEach((c,i)=>{const d=Math.abs(c.offsetLeft+c.offsetWidth/2-centro);if(d<dist){dist=d;melhor=i}});return melhor}\nfunction entregasDaEtapa(etapa){return (args.entregas||[]).filter(e=>String(e.etapa)===String(etapa))}\nfunction pendenteDaEtapa(etapa){return entregasDaEtapa(etapa).find(e=>!e.finalizado)||null}\nfunction salvarRascunhoAtual(){const e=registro.dataset.demanda;if(!e)return;const rec=document.getElementById(\'recebedor\');if(rec)rascunhos[e]={...(rascunhos[e]||{}),recebedor:rec.value}}\nfunction renderRegistro(i){salvarRascunhoAtual();const c=cartoes[i];if(!c){registro.innerHTML=\'\';return}const etapa=String(c.dataset.etapa||\'\');const todas=entregasDaEtapa(etapa);const pend=pendenteDaEtapa(etapa);const feedback=(args.feedback&&String(args.feedback.etapa)===etapa)?args.feedback:null;let fb=feedback?`<div class="feedback ${feedback.tipo===\'error\'?\'error\':\'success\'}">${esc(feedback.mensagem)}</div>`:\'\';\nif(!todas.length){registro.dataset.demanda=\'\';registro.innerHTML=`${fb}<div class="registro-kicker">REGISTRO DA ENTREGA</div><div class="registro-titulo">Esta parada não tem entrega</div><div class="registro-info">📦 Se for somente coleta, não precisa foto. Deslize normalmente para a próxima parada.</div>`;setHeight();return}\nif(!pend){registro.dataset.demanda=\'\';registro.innerHTML=`${fb}<div class="registro-kicker">REGISTRO DA ENTREGA</div><div class="registro-titulo">Entregas desta parada concluídas</div><div class="registro-info ok">✅ Os comprovantes desta parada já foram registrados.</div>`;setHeight();return}\nregistro.dataset.demanda=String(pend.id||\'\');const r=rascunhos[pend.id]||{};const mats=(pend.materiais||[]).map(m=>`<div>• ${esc(m)}</div>`).join(\'\')||\'<div>• Material não informado</div>\';const ordem=todas.length>1?` · entrega ${todas.indexOf(pend)+1} de ${todas.length}`:\'\';\nregistro.innerHTML=`${fb}<div class="registro-kicker">REGISTRO DA ENTREGA</div><div class="registro-titulo">📍 Parada ${esc(pend.parada)} — ${esc(pend.obra||pend.destino)}</div><div class="registro-meta">Destino: ${esc(pend.destino)}${ordem}</div><div class="registro-materiais">${mats}</div><div class="campo"><label>1️⃣ Quem recebeu?</label><input id="recebedor" type="text" placeholder="Ex.: João da Silva" value="${esc(r.recebedor||pend.recebedor||\'\')}"></div><div class="campo"><label>2️⃣ Tirar ou escolher a foto</label><input id="foto" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"></div><button id="btnRegistrar" class="registrar">✅ REGISTRAR ENTREGA</button><div id="erroRegistro" class="erro"></div>`;\ndocument.getElementById(\'btnRegistrar\').onclick=()=>enviarEntrega(pend);setHeight()}\nfunction atualizarFeitas(){const botoes=Array.from(document.querySelectorAll(\'.marcar-feita\'));const total=botoes.length;const feitas=botoes.filter(b=>b.dataset.feita===\'1\').length;feitasEl.textContent=`${feitas}/${total} ${feitas===1?\'feita\':\'feitas\'}`}\nfunction atualizar(i){atual=Math.max(0,Math.min(cartoes.length-1,i));contador.textContent=`${atual+1} de ${cartoes.length}`;anterior.disabled=atual===0;proxima.disabled=atual===cartoes.length-1;Array.from(pontos.children).forEach((p,j)=>p.classList.toggle(\'ativo\',j===atual));cartoes.forEach((c,j)=>c.classList.toggle(\'selecionada\',j===atual));renderRegistro(atual)}\nfunction ir(i){const idx=Math.max(0,Math.min(cartoes.length-1,i));const alvo=cartoes[idx];if(!alvo)return;trilho.scrollTo({left:alvo.offsetLeft-trilho.offsetLeft,behavior:\'smooth\'});atualizar(idx)}\nanterior.onclick=()=>ir(atual-1);proxima.onclick=()=>ir(atual+1);\ntrilho.addEventListener(\'pointerdown\',()=>{gestoAtivo=true},{passive:true});trilho.addEventListener(\'pointerup\',()=>{gestoAtivo=false;clearTimeout(timer);timer=setTimeout(()=>atualizar(indiceMaisProximo()),100)},{passive:true});trilho.addEventListener(\'pointercancel\',()=>{gestoAtivo=false},{passive:true});trilho.addEventListener(\'scroll\',()=>{clearTimeout(timer);timer=setTimeout(()=>{if(!gestoAtivo)atualizar(indiceMaisProximo())},90)},{passive:true});\nfunction dataUrlFromFile(file){return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=reject;fr.readAsDataURL(file)})}\nasync function comprimir(file){const original=await dataUrlFromFile(file);return await new Promise(resolve=>{const img=new Image();img.onload=()=>{const max=1600,escala=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement(\'canvas\');c.width=Math.max(1,Math.round(img.width*escala));c.height=Math.max(1,Math.round(img.height*escala));c.getContext(\'2d\').drawImage(img,0,0,c.width,c.height);resolve(c.toDataURL(\'image/jpeg\',.82))};img.onerror=()=>resolve(original);img.src=original})}\nasync function enviarEntrega(pend){const rec=document.getElementById(\'recebedor\'),foto=document.getElementById(\'foto\'),err=document.getElementById(\'erroRegistro\'),btn=document.getElementById(\'btnRegistrar\');const nome=String(rec?.value||\'\').trim();const arq=foto?.files?.[0];if(!nome){err.textContent=\'Informe quem recebeu o material.\';return}if(!arq){err.textContent=\'Tire ou selecione uma foto.\';return}err.textContent=\'\';btn.disabled=true;btn.textContent=\'⏳ Enviando...\';try{const data=await comprimir(arq);setValue({action:\'registrar_entrega\',nonce:String(Date.now())+\'-\'+Math.random().toString(36).slice(2),etapa:Number(pend.etapa),demanda_id:String(pend.id||\'\'),recebedor:nome,foto_data_url:data,nome_arquivo:arq.name||\'foto.jpg\'})}catch(e){btn.disabled=false;btn.textContent=\'✅ REGISTRAR ENTREGA\';err.textContent=\'Não foi possível preparar a foto. Tente novamente.\'}}\nfunction render(a){args=a||{};trilho.innerHTML=args.cards_html||\'\';cartoes=Array.from(trilho.querySelectorAll(\'.cartao\'));pontos.innerHTML=\'\';cartoes.forEach((_,i)=>{const p=document.createElement(\'button\');p.className=\'ponto\';p.type=\'button\';p.onclick=()=>ir(i);pontos.appendChild(p)});atualizarFeitas();let idx=cartoes.findIndex(c=>String(c.dataset.etapa||\'\')===String(args.foco??\'\'));if(idx<0)idx=cartoes.findIndex(c=>!c.classList.contains(\'feita\'));if(idx<0)idx=0;if(cartoes[idx])trilho.scrollTo({left:cartoes[idx].offsetLeft-trilho.offsetLeft,behavior:\'auto\'});atualizar(idx);setHeight()}\nwindow.addEventListener(\'message\',e=>{if(e.data&&e.data.type===\'streamlit:render\')render(e.data.args)});window.parent.postMessage({isStreamlitMessage:true,type:\'streamlit:componentReady\',apiVersion:1},\'*\');\n</script></body></html>\n'
+    try:
+        atual = ""
+        if os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                atual = f.read()
+        if atual != html:
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write(html)
+    except Exception:
+        pass
+    return pasta
+
+_COMPONENTE_DAVI_SWIPE = st.components.v1.declare_component(
+    "aproar_davi_swipe_v2", path=_diretorio_componente_davi_swipe()
+)
+
+class _FotoComprovanteMemoria:
+    def __init__(self, dados, nome="foto.jpg", tipo="image/jpeg"):
+        self._dados = dados
+        self.name = nome
+        self.type = tipo
+    def getvalue(self):
+        return self._dados
+    def read(self):
+        return self._dados
+
+# =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
 # Compatibilidade: o link antigo ?davi=true continua funcionando, mas o endereço
@@ -3670,18 +3705,10 @@ if modo_davi:
 
 
     # ---------------------------------------------------------------
-    # COMPROVANTE DE ENTREGA — SELEÇÃO AUTOMÁTICA PELO SWIPE
-    # O cartão em que o motorista para vira a parada ativa do comprovante.
-    # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
+    # COMPROVANTES — DADOS PARA O COMPONENTE DO SWIPE
+    # A interface do registro fica dentro do mesmo componente do carrossel.
+    # Deslizar NÃO envia nada ao Python e NÃO recarrega a página.
     # ---------------------------------------------------------------
-    st.markdown("""
-            <div class="aproar-section-anchor" id="comprovante">
-                <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
-            <div class="aproar-section-title">Confirmar entrega</div>
-            <div class="aproar-section-help">Deslize o roteiro para a parada desejada. Se houver entrega pendente, o registro aparece aqui automaticamente. Coletas não exigem foto.</div>
-        </div>
-    """, unsafe_allow_html=True)
-
     if "davi_comprovantes_estado" not in st.session_state:
         st.session_state["davi_comprovantes_estado"] = {}
     estados_comprovantes = st.session_state["davi_comprovantes_estado"]
@@ -3693,8 +3720,6 @@ if modo_davi:
         for chave_db, estado_db in estados_banco.items():
             estado_local = estados_comprovantes.get(chave_db, {})
             estado_db["input_version"] = int(estado_local.get("input_version", 0))
-            if estado_local.get("mensagem"):
-                estado_db["mensagem"] = estado_local["mensagem"]
             estados_comprovantes[chave_db] = estado_db
     except Exception:
         persistencia_comprovantes_ok = False
@@ -3708,11 +3733,9 @@ if modo_davi:
         is_inicio_comprovante = (indice_step == 0 and destino_comprovante == p_saida)
         if not is_inicio_comprovante:
             numero_parada_comprovante += 1
-
         for acao_comprovante, tarefa_comprovante in step_comprovante.get("actions", []):
             if acao_comprovante != "ENTREGAR":
                 continue
-
             card_id_comprovante = str(tarefa_comprovante.get("id", "") or "")
             chave_estado = _nome_seguro_comprovante(card_id_comprovante or f"SEM-ID-{indice_step}", 40)
             entregas_por_etapa.setdefault(indice_step, []).append({
@@ -3724,226 +3747,13 @@ if modo_davi:
                 "etapa": indice_step,
             })
 
-    foco_comprovante = None
-    try:
-        foco_lido = str(st.query_params.get("foco", "") or "").strip()
-        if foco_lido != "":
-            foco_comprovante = int(foco_lido)
-            if not 0 <= foco_comprovante < len(route_steps):
-                foco_comprovante = None
-    except Exception:
-        foco_comprovante = None
-
-    # O comprovante acompanha o SWIPE do roteiro. Não há seletor manual:
-    # a etapa que estiver em foco no carrossel define qual entrega aparece aqui.
-    # Se a etapa tiver várias entregas, mostramos a primeira pendente; depois da
-    # baixa, a próxima pendente da mesma parada aparece automaticamente.
-    entregas_pendentes_gerais = [
-        item
-        for _indice_etapa, itens_etapa in sorted(entregas_por_etapa.items())
-        for item in itens_etapa
-        if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
-    ]
-
-    # Na primeira abertura, sem swipe/foco explícito, abre a primeira entrega
-    # pendente para não deixar a área de registro vazia. Depois disso, o foco
-    # enviado pelo carrossel prevalece integralmente.
-    if foco_comprovante is None and entregas_pendentes_gerais:
-        foco_comprovante = int(entregas_pendentes_gerais[0].get("etapa", 0))
-
-    entregas_foco = entregas_por_etapa.get(foco_comprovante, []) if foco_comprovante is not None else []
-    pendentes_foco = [
-        item
-        for item in entregas_foco
-        if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
-    ]
-
-    if entregas_por_etapa:
-        with st.expander("📸 REGISTRAR ENTREGA", expanded=True):
-
-            if not persistencia_comprovantes_ok:
-                st.warning("O comprovante continua funcionando, mas o histórico interno não pôde ser sincronizado agora. Evite recarregar a página até concluir a entrega.")
-
-            if not entregas_pendentes_gerais:
-                st.success("✅ Todos os comprovantes de entrega foram finalizados.")
-            elif foco_comprovante is not None and not entregas_foco:
-                st.info("📦 Esta parada não possui entrega. Coletas não exigem foto — deslize para uma parada de entrega quando quiser registrar um comprovante.")
-            elif foco_comprovante is not None and entregas_foco and not pendentes_foco:
-                st.success("✅ As entregas desta parada já foram registradas. Deslize para outra parada para continuar.")
-            else:
-                entrega_sel = pendentes_foco[0] if pendentes_foco else entregas_pendentes_gerais[0]
-                foco_comprovante = int(entrega_sel.get("etapa", foco_comprovante or 0))
-
-                tarefa_sel = entrega_sel["tarefa"]
-                demanda_id_sel = entrega_sel["id"]
-                chave_comprovante = entrega_sel["chave"]
-
-                estado = estados_comprovantes.setdefault(chave_comprovante, {
-                    "recebedor": "",
-                    "fotos": [],
-                    "finalizado": False,
-                    "input_version": 0,
-                })
-                estado.setdefault("recebedor", "")
-                estado.setdefault("fotos", [])
-                estado.setdefault("finalizado", False)
-                estado.setdefault("input_version", 0)
-
-                obra_sel = str(tarefa_sel.get("Obra", "") or "").strip()
-                materiais_sel = _separar_materiais_comprovante(tarefa_sel.get("Materiais", ""))
-                destino_sel = str(entrega_sel.get("destino", "") or "").strip()
-                indice_na_parada = entregas_foco.index(entrega_sel) + 1
-
-                materiais_html = "".join(
-                    f"<div style='margin:3px 0;'>• {html_escape(item)}</div>"
-                    for item in materiais_sel
-                ) or "<div style='color:#94a3b8;'>• Materiais não informados</div>"
-
-                complemento_demanda = ""
-                if len(entregas_foco) > 1:
-                    complemento_demanda = (
-                        f"<div style='margin-top:7px;color:#fbbf24;font-size:12px;font-weight:700;'>"
-                        f"Entrega {indice_na_parada} de {len(entregas_foco)} nesta parada • ao finalizar, a próxima entra automaticamente"
-                        f"</div>"
-                    )
-
-                st.markdown(
-                    f"""
-                    <div style="background:rgba(37,99,235,.08);border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:12px 14px;margin:6px 0 14px 0;">
-                        <div style="font-size:15px;font-weight:700;margin-bottom:5px;">📍 Parada {entrega_sel['parada']} — {html_escape(obra_sel or destino_sel)}</div>
-                        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Trello: {html_escape(demanda_id_sel or 'sem ID')} • Destino: {html_escape(destino_sel or '-')}</div>
-                        <div style="font-size:13px;font-weight:600;margin-bottom:3px;">Materiais desta demanda:</div>
-                        <div style="font-size:13px;line-height:1.35;">{materiais_html}</div>
-                        {complemento_demanda}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                status_real_comprovante = obter_status_rastreio_local(
-                    df_paradas_mobile, destino_sel, DATA_REF_ROTA_STR
-                )
-                if status_real_comprovante:
-                    if status_real_comprovante.get("aberta"):
-                        texto_chegada = f"📍 Chegou às **{status_real_comprovante['chegada']}**"
-                        if status_real_comprovante.get("duracao"):
-                            texto_chegada += f" • ⏱️ Está no local há **{status_real_comprovante['duracao']}**"
-                        st.info(texto_chegada)
-                    else:
-                        st.info(
-                            f"📍 Chegou às **{status_real_comprovante['chegada']}** • "
-                            f"🚚 Saiu às **{status_real_comprovante['saida']}** • "
-                            f"⏱️ Ficou **{status_real_comprovante['duracao']}** no local"
-                        )
-
-                mensagem_pendente = estado.pop("mensagem", "") if estado.get("mensagem") else ""
-                if mensagem_pendente:
-                    st.success(mensagem_pendente)
-
-                if estado["fotos"]:
-                    st.markdown(
-                        f"**1️⃣ Quem recebeu?**  \n👤 **{estado['recebedor']}**",
-                    )
-                    st.caption("O recebedor fica fixo para todas as fotos desta demanda.")
-                    recebedor_comprovante = estado["recebedor"]
-                else:
-                    recebedor_comprovante = st.text_input(
-                        "1️⃣ Quem recebeu?",
-                        placeholder="Ex.: João da Silva",
-                        value=estado.get("recebedor", ""),
-                        key=f"davi_comprovante_recebedor_{chave_comprovante}",
-                        help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
-                    )
-
-                material_foto = "GERAL"
-                versao_input = int(estado.get("input_version", 0))
-                foto_comprovante = st.file_uploader(
-                    "2️⃣ Tirar ou escolher a foto",
-                    type=["jpg", "jpeg", "png", "webp"],
-                    accept_multiple_files=False,
-                    key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
-                    help="No celular, escolha Câmera ou Fotos/Galeria.",
-                )
-
-                numero_proxima_foto = len(estado["fotos"]) + 1
-                if st.button(
-                    "✅ REGISTRAR ENTREGA",
-                    type="primary",
-                    use_container_width=True,
-                    key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
-                ):
-                    nome_recebedor = str(recebedor_comprovante or "").strip()
-                    if not nome_recebedor:
-                        st.error("Informe quem recebeu o material.")
-                    elif foto_comprovante is None:
-                        st.error("Tire ou selecione uma foto.")
-                    else:
-                        with st.spinner("Enviando foto para o OneDrive..."):
-                            sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
-                                tarefa_sel,
-                                nome_recebedor,
-                                foto_comprovante,
-                                material_foto=material_foto,
-                                numero_foto=numero_proxima_foto,
-                            )
-                        if sucesso_comprovante:
-                            tipo_registro = "Foto geral" if material_foto == "GERAL" else material_foto
-                            finalizacao_automatica_ok = True
-                            try:
-                                registrar_foto_comprovante_davi(
-                                    DATA_REF_ROTA_STR,
-                                    tarefa_sel,
-                                    nome_recebedor,
-                                    retorno_comprovante,
-                                    tipo_registro,
-                                )
-                                definir_comprovante_finalizado_davi(
-                                    DATA_REF_ROTA_STR, demanda_id_sel, True
-                                )
-                            except Exception:
-                                persistencia_comprovantes_ok = False
-                                finalizacao_automatica_ok = False
-
-                            estado["recebedor"] = nome_recebedor
-                            estado["fotos"].append({
-                                "arquivo": retorno_comprovante,
-                                "tipo": tipo_registro,
-                                "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
-                            })
-                            estado["input_version"] = versao_input + 1
-                            estado["finalizado"] = finalizacao_automatica_ok
-                            estado["mensagem"] = (
-                                "✅ Entrega registrada com foto e nome do recebedor."
-                                if finalizacao_automatica_ok
-                                else "Foto enviada. Toque em finalizar para concluir o registro."
-                            )
-                            st.rerun()
-                        else:
-                            st.error(retorno_comprovante)
-
-                if estado["fotos"]:
-                    st.markdown("**Fotos já enviadas nesta entrega:**")
-                    for pos, foto_enviada in enumerate(estado["fotos"], start=1):
-                        st.caption(f"✅ Foto {pos} • {foto_enviada['tipo']} • {foto_enviada['hora']}")
-
-                    if st.button(
-                        f"✅ FINALIZAR ESTA ENTREGA ({len(estado['fotos'])} {plural_pt(len(estado['fotos']), 'FOTO', 'FOTOS')})",
-                        type="primary",
-                        use_container_width=True,
-                        key=f"davi_finalizar_comprovante_{chave_comprovante}",
-                    ):
-                        try:
-                            definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, demanda_id_sel, True)
-                        except Exception:
-                            if persistencia_comprovantes_ok:
-                                st.error("Não consegui registrar a finalização. Tente novamente.")
-                                st.stop()
-                        estado["finalizado"] = True
-                        estado["mensagem"] = "Comprovante finalizado."
-                        st.rerun()
-                else:
-                    st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
-
+    foco_comprovante = st.session_state.get("_davi_foco_etapa")
+    if foco_comprovante is None:
+        try:
+            foco_lido = str(st.query_params.get("foco", "") or "").strip()
+            foco_comprovante = int(foco_lido) if foco_lido else None
+        except Exception:
+            foco_comprovante = None
 
     st.markdown(f"""
             <div class="aproar-section-anchor" id="roteiro">
@@ -4177,196 +3987,116 @@ if modo_davi:
                         st.rerun()
 
     elif cartoes_mobile:
-        html_carrossel = """
-        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
-            * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Manrope, Arial, sans-serif; }
-            h1, h2, h3, strong, .obra { font-family:Sora, Manrope, Arial, sans-serif; }
-            .barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 2px 10px; color:#94a3b8; font-size:11px; font-weight:700; }
-            .resumo-topo { display:flex; align-items:center; gap:6px; }
-            .feitas { color:#bbf7d0; font-weight:900; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.23); padding:6px 9px; border-radius:999px; }
-            .contador { color:#dbeafe; font-weight:900; background:rgba(37,99,235,.11); border:1px solid rgba(96,165,250,.24); padding:6px 10px; border-radius:999px; }
-            .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
-            .trilho::-webkit-scrollbar { display:none; }
-            .cartao { flex:0 0 calc(100% - 8px); height:438px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:18px; box-shadow:0 16px 34px rgba(0,0,0,.32); }
-            .cartao.preparacao { border-color:rgba(59,130,246,.48); }
-            .cartao.almoco { border-color:rgba(245,158,11,.48); }
-            .cartao.retorno { border-color:rgba(34,197,94,.48); }
-            .cartao.feita { border-color:rgba(34,197,94,.62); box-shadow:0 0 0 2px rgba(34,197,94,.12),0 18px 38px rgba(0,0,0,.34); }
-            .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
-            .cartao.selecionada { box-shadow:0 0 0 2px rgba(59,130,246,.26),0 20px 42px rgba(0,0,0,.38); }
-            .topo-card { padding:18px 18px 14px; border-bottom:1px solid rgba(148,163,184,.13); background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 60%); }
-            .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
-            .almoco .selo { background:#92400e; color:#fef3c7; }
-            .retorno .selo { background:#166534; color:#dcfce7; }
-            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; letter-spacing:-.035em; }
-            .meta { color:#8da0b8; font-size:12px; line-height:1.45; }
-            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 9px; scrollbar-width:thin; scrollbar-color:#334155 transparent; }
-            .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
-            .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
-            .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
-            .rastreio-real { margin:-4px 0 12px; padding:9px 11px; border-radius:10px; color:#bae6fd; background:rgba(14,165,233,.10); border:1px solid rgba(56,189,248,.22); font-size:12.5px; line-height:1.45; }
-            .acao { margin-bottom:10px; padding:0; border-radius:13px; border:1px solid #2b3654; overflow:hidden; background:rgba(255,255,255,.025); }
-            .acao.coleta { border-color:rgba(245,158,11,.50); border-left:5px solid #f59e0b; background:rgba(245,158,11,.035); }
-            .acao.entrega { border-color:rgba(34,197,94,.52); border-left:5px solid #22c55e; background:rgba(34,197,94,.045); }
-            .acao-cabecalho { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:10px 11px 9px; border-bottom:1px solid rgba(141,160,184,.13); }
-            .acao.coleta .acao-cabecalho { background:linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.035)); }
-            .acao.entrega .acao-cabecalho { background:linear-gradient(90deg,rgba(34,197,94,.18),rgba(34,197,94,.035)); }
-            .acao-tipo { flex:0 0 auto; font-size:11.5px; font-weight:900; letter-spacing:.04em; white-space:nowrap; padding:4px 7px; border-radius:7px; }
-            .acao.coleta .acao-tipo { color:#fde68a; background:rgba(245,158,11,.16); }
-            .acao.entrega .acao-tipo { color:#bbf7d0; background:rgba(34,197,94,.16); }
-            .acao-obra { min-width:0; color:#cbd5e1; font-size:11.5px; line-height:1.35; text-align:right; font-weight:700; padding-top:3px; }
-            .acao-tempo { padding:7px 11px 0; color:#94a3b8; font-size:11.5px; font-weight:700; }
-            .materiais-lista { padding:8px 11px 10px; display:grid; gap:6px; }
-            .material-item { display:grid; grid-template-columns:10px minmax(0,1fr); gap:6px; color:#e4e8f4; font-size:12.7px; line-height:1.38; }
-            .material-bullet { color:#60a5fa; font-weight:900; }
-            .acao.entrega .material-bullet { color:#4ade80; }
-            .acao.coleta .material-bullet { color:#fbbf24; }
-            .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
-            .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
-            .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
-            .rodape-card { display:grid; grid-template-columns:1fr; gap:7px; padding:10px 13px 13px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
-            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid rgba(34,197,94,.48); background:rgba(22,163,74,.08); color:#bbf7d0; font-size:12.5px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
-            .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
-            .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
-            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
-            .comprovante { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:#ecfdf5; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#16a34a,#15803d); box-shadow:0 8px 18px rgba(22,163,74,.24); }
-            .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
-            .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
-            .controle:disabled { opacity:.35; }
-            .pontos { display:flex; gap:5px; justify-content:center; max-width:130px; overflow:hidden; }
-            .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
-            .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
-        </style></head><body>
-            <div class="barra"><span>↔️ Deslize: o registro acompanha a parada</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
-            <div id="trilho" class="trilho">__CARTOES__</div>
-            <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
-        <script>
-            const trilho = document.getElementById('trilho');
-            const cartoes = Array.from(trilho.querySelectorAll('.cartao'));
-            const contador = document.getElementById('contador');
-            const anterior = document.getElementById('anterior');
-            const proxima = document.getElementById('proxima');
-            const pontos = document.getElementById('pontos');
-            const feitasEl = document.getElementById('feitas');
-            const focoServidor = String('__FOCO__');
-            let atual = 0;
-            let gestoAtivo = false;
+        entregas_cliente = []
+        for _etapa_cliente, _itens_cliente in sorted(entregas_por_etapa.items()):
+            for _item_cliente in _itens_cliente:
+                _tarefa_cliente = _item_cliente.get("tarefa", {}) or {}
+                _estado_cliente = estados_comprovantes.get(_item_cliente.get("chave", ""), {}) or {}
+                entregas_cliente.append({
+                    "id": str(_item_cliente.get("id", "") or ""),
+                    "etapa": int(_item_cliente.get("etapa", _etapa_cliente)),
+                    "parada": int(_item_cliente.get("parada", 1) or 1),
+                    "destino": str(_item_cliente.get("destino", "") or ""),
+                    "obra": str(_tarefa_cliente.get("Obra", "") or ""),
+                    "materiais": _separar_materiais_comprovante(_tarefa_cliente.get("Materiais", "")),
+                    "finalizado": bool(_estado_cliente.get("finalizado")),
+                    "recebedor": str(_estado_cliente.get("recebedor", "") or ""),
+                })
 
-            function indiceMaisProximo() {
-                const centro = trilho.scrollLeft + trilho.clientWidth / 2;
-                let melhor = 0, dist = Infinity;
-                cartoes.forEach((c, i) => {
-                    const d = Math.abs(c.offsetLeft + c.offsetWidth / 2 - centro);
-                    if (d < dist) { dist = d; melhor = i; }
-                });
-                return melhor;
-            }
+        _feedback_davi = st.session_state.pop("_davi_componente_feedback", None)
+        evento_davi = _COMPONENTE_DAVI_SWIPE(
+            cards_html="".join(cartoes_mobile),
+            entregas=entregas_cliente,
+            foco="" if foco_comprovante is None else str(foco_comprovante),
+            feedback=_feedback_davi or {},
+            key=f"aproar_davi_swipe_{DATA_REF_ROTA_STR}",
+            default=None,
+        )
 
-            cartoes.forEach((_, i) => {
-                const p = document.createElement('button');
-                p.className = 'ponto';
-                p.type = 'button';
-                p.addEventListener('click', () => ir(i));
-                pontos.appendChild(p);
-            });
+        # O componente só fala com o Python quando existe uma ação REAL de gravação.
+        # O swipe, setas e bolinhas são totalmente locais e não geram rerun.
+        if isinstance(evento_davi, dict) and evento_davi.get("action") == "registrar_entrega":
+            _nonce_evento = str(evento_davi.get("nonce", "") or "")
+            if _nonce_evento and _nonce_evento != st.session_state.get("_ultimo_evento_comprovante_davi"):
+                st.session_state["_ultimo_evento_comprovante_davi"] = _nonce_evento
+                _demanda_evento = str(evento_davi.get("demanda_id", "") or "")
+                _etapa_evento = int(evento_davi.get("etapa", 0) or 0)
+                _recebedor_evento = str(evento_davi.get("recebedor", "") or "").strip()
+                _tarefa_evento = None
+                for _step_evento in route_steps:
+                    for _acao_evento, _t_evento in (_step_evento.get("actions", []) or []):
+                        if _acao_evento == "ENTREGAR" and str((_t_evento or {}).get("id", "") or "") == _demanda_evento:
+                            _tarefa_evento = _t_evento
+                            break
+                    if _tarefa_evento is not None:
+                        break
 
-            function atualizarFeitas() {
-                const botoes = Array.from(document.querySelectorAll('.marcar-feita'));
-                const total = botoes.length;
-                const feitas = botoes.filter(b => b.dataset.feita === '1').length;
-                feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
-            }
-            function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
-            let interacaoUsuario = false;
-            let ultimoFocoEnviado = focoServidor;
-
-            function sincronizarFocoComServidor(indice) {
-                const cartao = cartoes[indice];
-                if (!cartao) return;
-                const etapa = String(cartao.dataset.etapa || '');
-                if (etapa === '' || etapa === ultimoFocoEnviado) return;
-                ultimoFocoEnviado = etapa;
-
-                // Atualiza NA MESMA PÁGINA. O Streamlit reroda com a nova etapa
-                // em foco e o formulário de comprovante acompanha o swipe.
-                const url = new URL(window.parent.location.href);
-                url.searchParams.set('foco', etapa);
-                const caminho = url.pathname.toLowerCase().endsWith('/') ? url.pathname.toLowerCase().slice(0, -1) : url.pathname.toLowerCase();
-                if (!caminho.endsWith('/davi')) {
-                    url.searchParams.set('davi', 'true');
-                }
-                url.hash = 'comprovante';
-                window.parent.location.replace(url.toString());
-            }
-
-            function atualizar(i, sincronizar=false) {
-                atual = Math.max(0, Math.min(cartoes.length - 1, i));
-                contador.textContent = `${atual + 1} de ${cartoes.length}`;
-                anterior.disabled = atual === 0;
-                proxima.disabled = atual === cartoes.length - 1;
-                Array.from(pontos.children).forEach((p, j) => p.classList.toggle('ativo', j === atual));
-                cartoes.forEach((c, j) => c.classList.toggle('selecionada', j === atual));
-                if (sincronizar) sincronizarFocoComServidor(atual);
-            }
-            function ir(i, sincronizar=true) {
-                const indice = Math.max(0, Math.min(cartoes.length - 1, i));
-                const alvo = cartoes[indice];
-                interacaoUsuario = sincronizar;
-                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'smooth'});
-                atualizar(indice, false);
-                if (sincronizar) {
-                    clearTimeout(timer);
-                    timer = setTimeout(() => sincronizarFocoComServidor(indiceMaisProximo()), 260);
-                }
-            }
-            function mover(delta) { ir(atual + delta, true); }
-
-            trilho.addEventListener('pointerdown', () => { gestoAtivo = true; interacaoUsuario = true; }, {passive:true});
-            trilho.addEventListener('pointerup', () => {
-                if (!gestoAtivo) return;
-                gestoAtivo = false;
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    const melhor = indiceMaisProximo();
-                    atualizar(melhor, false);
-                    sincronizarFocoComServidor(melhor);
-                    interacaoUsuario = false;
-                }, 180);
-            }, {passive:true});
-            trilho.addEventListener('pointercancel', () => { gestoAtivo = false; interacaoUsuario = false; }, {passive:true});
-
-            let timer;
-            trilho.addEventListener('scroll', () => {
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    const melhor = indiceMaisProximo();
-                    atualizar(melhor, false);
-                    if (interacaoUsuario && !gestoAtivo) {
-                        sincronizarFocoComServidor(melhor);
-                        interacaoUsuario = false;
+                if _tarefa_evento is None:
+                    st.session_state["_davi_componente_feedback"] = {
+                        "tipo": "error", "etapa": _etapa_evento,
+                        "mensagem": "Não encontrei esta entrega na rota atual. Atualize a página e tente novamente.",
                     }
-                }, 140);
-            }, {passive:true});
+                    st.session_state["_davi_foco_etapa"] = _etapa_evento
+                    st.rerun()
 
-            atualizarFeitas();
-            const indiceInicial = cartoes.findIndex(c => String(c.dataset.etapa || '') === focoServidor);
-            if (indiceInicial >= 0) {
-                const alvo = cartoes[indiceInicial];
-                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
-                atualizar(indiceInicial);
-            } else {
-                const primeiraPendente = cartoes.findIndex(c => !c.classList.contains('feita'));
-                const indicePadrao = primeiraPendente >= 0 ? primeiraPendente : 0;
-                const alvo = cartoes[indicePadrao];
-                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
-                atualizar(indicePadrao);
-            }
-        </script></body></html>
-        """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile))).replace("__FOCO__", "" if foco_comprovante is None else str(foco_comprovante))
-        st.components.v1.html(html_carrossel, height=550, scrolling=False)
+                _data_url = str(evento_davi.get("foto_data_url", "") or "")
+                try:
+                    _cabecalho_foto, _base64_foto = _data_url.split(",", 1)
+                    _dados_foto = base64.b64decode(_base64_foto)
+                    _mime_foto = "image/jpeg"
+                    _m_mime = re.search(r"data:([^;]+);base64", _cabecalho_foto, flags=re.I)
+                    if _m_mime:
+                        _mime_foto = _m_mime.group(1)
+                except Exception:
+                    _dados_foto = b""
+                    _mime_foto = "image/jpeg"
+
+                if not _recebedor_evento:
+                    _mensagem_evento = "Informe quem recebeu o material."
+                    _tipo_evento = "error"
+                elif not _dados_foto:
+                    _mensagem_evento = "Não consegui ler a foto. Tire ou escolha a imagem novamente."
+                    _tipo_evento = "error"
+                else:
+                    _arquivo_memoria = _FotoComprovanteMemoria(
+                        _dados_foto,
+                        nome=str(evento_davi.get("nome_arquivo", "foto.jpg") or "foto.jpg"),
+                        tipo=_mime_foto,
+                    )
+                    _chave_evento = _nome_seguro_comprovante(_demanda_evento or "SEM-ID", 40)
+                    _estado_evento = estados_comprovantes.get(_chave_evento, {}) or {}
+                    _numero_foto_evento = len(_estado_evento.get("fotos", []) or []) + 1
+                    with st.spinner("Enviando comprovante..."):
+                        _ok_evento, _retorno_evento = enviar_foto_comprovante_power_automate(
+                            _tarefa_evento, _recebedor_evento, _arquivo_memoria,
+                            material_foto="GERAL", numero_foto=_numero_foto_evento,
+                        )
+                    if _ok_evento:
+                        try:
+                            registrar_foto_comprovante_davi(
+                                DATA_REF_ROTA_STR, _tarefa_evento, _recebedor_evento,
+                                _retorno_evento, "Foto geral",
+                            )
+                            definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, _demanda_evento, True)
+                            _mensagem_evento = "✅ Entrega registrada com foto e recebedor."
+                            _tipo_evento = "success"
+                        except Exception:
+                            _mensagem_evento = "A foto foi enviada, mas não consegui finalizar o registro interno. Tente novamente."
+                            _tipo_evento = "error"
+                    else:
+                        _mensagem_evento = str(_retorno_evento or "Não foi possível enviar a foto.")
+                        _tipo_evento = "error"
+
+                st.session_state["_davi_componente_feedback"] = {
+                    "tipo": _tipo_evento, "etapa": _etapa_evento, "mensagem": _mensagem_evento,
+                }
+                st.session_state["_davi_foco_etapa"] = _etapa_evento
+                try:
+                    carregar_resumo_comprovantes_davi.clear()
+                    carregar_comprovantes_davi.clear()
+                except Exception:
+                    pass
+                st.rerun()
     else:
         st.info("A rota ainda não possui etapas para exibir.")
 
