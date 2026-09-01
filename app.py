@@ -3760,7 +3760,55 @@ if modo_davi:
         chave_sugerida = entregas_pendentes_gerais[0]["chave"]
 
     if entregas_por_etapa:
-        with st.expander("📸 REGISTRAR ENTREGA", expanded=True):
+        # Rótulos curtos para celular. A identidade da entrega continua sendo o ID
+        # do card; aqui mudamos apenas o texto mostrado ao Davi. Evita repetir
+        # destino/obra e deixa visível o que é a demanda mesmo com o expander fechado.
+        rotulos_entrega = {}
+        for item_opcao in entregas_pendentes_gerais:
+            obra_opcao = str(item_opcao["tarefa"].get("Obra", "") or "").strip()
+            materiais_opcao = _separar_materiais_comprovante(item_opcao["tarefa"].get("Materiais", ""))
+            resumo_material = str(materiais_opcao[0] if materiais_opcao else "material").strip()
+
+            # Normalmente a obra vem como "2506 - FIEC". No seletor mostramos
+            # código + nome da unidade UMA única vez. Antes aparecia algo como
+            # "2506 - FIEC · FIEC" porque Obra e Destino repetiam a mesma unidade.
+            partes_obra = re.split(r"\s+-\s+", obra_opcao, maxsplit=1) if obra_opcao else []
+            codigo_obra = partes_obra[0].strip() if partes_obra else "SEM OBRA"
+            unidade_obra = partes_obra[1].strip() if len(partes_obra) > 1 else ""
+            destino_opcao = str(item_opcao.get("destino", "") or "").strip()
+
+            if len(codigo_obra) > 13:
+                codigo_obra = codigo_obra[:12].rstrip() + "…"
+
+            # Prioriza o nome que já veio junto da obra; se não houver, usa o
+            # destino. Assim "2506 - FIEC" vira "2506 · FIEC", sem repetir FIEC.
+            unidade_exibicao = unidade_obra or destino_opcao
+            if unidade_exibicao:
+                unidade_exibicao = re.sub(r"\s+", " ", unidade_exibicao).strip(" -–—·")
+                if len(unidade_exibicao) > 18:
+                    unidade_exibicao = unidade_exibicao[:17].rstrip() + "…"
+
+            # Mantém só um resumo curto do primeiro material para diferenciar cards
+            # da mesma obra (ex.: 2506 · FIEC · SALVA PISO / 2506 · FIEC · CADEADO).
+            resumo_material = re.sub(r"\s+", " ", resumo_material).strip(" -–—·")
+            if len(resumo_material) > 22:
+                resumo_material = resumo_material[:21].rstrip() + "…"
+
+            partes_rotulo = [f"P{item_opcao['parada']}", codigo_obra]
+            if unidade_exibicao:
+                partes_rotulo.append(unidade_exibicao)
+            partes_rotulo.append(resumo_material)
+            rotulos_entrega[item_opcao["chave"]] = " · ".join(partes_rotulo)
+
+        chave_ui_atual = st.session_state.get("davi_entrega_para_comprovante")
+        if chave_ui_atual not in entregas_por_chave:
+            chave_ui_atual = chave_sugerida
+
+        titulo_registro = "📸 REGISTRAR ENTREGA"
+        if chave_ui_atual and chave_ui_atual in rotulos_entrega:
+            titulo_registro += f" · {rotulos_entrega[chave_ui_atual]}"
+
+        with st.expander(titulo_registro, expanded=True):
 
             if not persistencia_comprovantes_ok:
                 st.warning("O comprovante continua funcionando, mas o histórico interno não pôde ser sincronizado agora. Evite recarregar a página até concluir a entrega.")
@@ -3768,27 +3816,15 @@ if modo_davi:
             if not entregas_pendentes_gerais:
                 st.success("✅ Todos os comprovantes de entrega foram finalizados.")
             else:
-                rotulos_entrega = {}
-                for item_opcao in entregas_pendentes_gerais:
-                    obra_opcao = str(item_opcao["tarefa"].get("Obra", "") or "Demanda sem obra").strip()
-                    destino_opcao = str(item_opcao.get("destino", "") or "Destino não informado").strip()
-                    materiais_opcao = _separar_materiais_comprovante(item_opcao["tarefa"].get("Materiais", ""))
-                    resumo_material = materiais_opcao[0] if materiais_opcao else "material não informado"
-                    if len(resumo_material) > 46:
-                        resumo_material = resumo_material[:45].rstrip() + "…"
-                    rotulos_entrega[item_opcao["chave"]] = (
-                        f"Parada {item_opcao['parada']} · {obra_opcao} · {destino_opcao} · {resumo_material}"
-                    )
-
                 opcoes_entrega = [item["chave"] for item in entregas_pendentes_gerais]
                 indice_sugerido = opcoes_entrega.index(chave_sugerida) if chave_sugerida in opcoes_entrega else 0
                 chave_comprovante_escolhida = st.selectbox(
-                    "Qual entrega você está registrando?",
+                    "Entrega",
                     options=opcoes_entrega,
                     index=indice_sugerido,
                     format_func=lambda chave: rotulos_entrega.get(chave, chave),
                     key="davi_entrega_para_comprovante",
-                    help="Pode escolher qualquer entrega pendente da rota, mesmo que não seja a próxima parada.",
+                    help="Cada opção é um card de entrega pendente. Os materiais completos aparecem logo abaixo.",
                 )
                 entrega_sel = entregas_por_chave[chave_comprovante_escolhida]
                 foco_comprovante = int(entrega_sel.get("etapa", foco_comprovante or 0))
