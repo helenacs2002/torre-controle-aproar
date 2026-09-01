@@ -3378,41 +3378,6 @@ def definir_comprovante_finalizado_davi(data_rota, demanda_id, finalizado=True):
 
 
 # =====================================================================
-# COMPONENTE DAVI — NAVEGAÇÃO NATIVA + REGISTRO LOCAL SEM RECARREGAR A PÁGINA
-# O foco muda apenas no navegador. O Python só recebe evento no envio da foto.
-# =====================================================================
-def _diretorio_componente_davi_swipe():
-    pasta = os.path.join(tempfile.gettempdir(), "aproar_davi_swipe_v6_native")
-    os.makedirs(pasta, exist_ok=True)
-    index_path = os.path.join(pasta, "index.html")
-    html = base64.b64decode("PCFkb2N0eXBlIGh0bWw+CjxodG1sPjxoZWFkPjxtZXRhIGNoYXJzZXQ9InV0Zi04Ij48bWV0YSBuYW1lPSJ2aWV3cG9ydCIgY29udGVudD0id2lkdGg9ZGV2aWNlLXdpZHRoLGluaXRpYWwtc2NhbGU9MSxtYXhpbXVtLXNjYWxlPTEsdXNlci1zY2FsYWJsZT1ubyI+CjxzdHlsZT4KQGltcG9ydCB1cmwoJ2h0dHBzOi8vZm9udHMuZ29vZ2xlYXBpcy5jb20vY3NzMj9mYW1pbHk9TWFucm9wZTp3Z2h0QDQwMDs1MDA7NjAwOzcwMDs4MDAmZmFtaWx5PVNvcmE6d2dodEA2MDA7NzAwOzgwMCZkaXNwbGF5PXN3YXAnKTsKKntib3gtc2l6aW5nOmJvcmRlci1ib3h9aHRtbCxib2R5e21hcmdpbjowO3BhZGRpbmc6MDtiYWNrZ3JvdW5kOnRyYW5zcGFyZW50O2NvbG9yOiNlNGU4ZjQ7Zm9udC1mYW1pbHk6TWFucm9wZSxBcmlhbCxzYW5zLXNlcmlmfXN0cm9uZywub2JyYSxoMSxoMixoM3tmb250LWZhbWlseTpTb3JhLE1hbnJvcGUsQXJpYWwsc2Fucy1zZXJpZn0KLmJhcnJhe2Rpc3BsYXk6ZmxleDtqdXN0aWZ5LWNvbnRlbnQ6c3BhY2UtYmV0d2VlbjthbGlnbi1pdGVtczpjZW50ZXI7Z2FwOjhweDttYXJnaW46MCA0cHggOXB4O2NvbG9yOiM5NGEzYjg7Zm9udC1zaXplOjExcHg7Zm9udC13ZWlnaHQ6NzAwfS5mZWl0YXN7Y29sb3I6I2JiZjdkMDtmb250LXdlaWdodDo5MDA7YmFja2dyb3VuZDpyZ2JhKDM0LDE5Nyw5NCwuMTApO2JvcmRlcjoxcHggc29saWQgcmdiYSgzNCwxOTcsOTQsLjIzKTtwYWRkaW5nOjZweCA5cHg7Ym9yZGVyLXJhZGl1czo5OTlweH0uZGljYXt3aGl0ZS1zcGFjZTpub3dyYXB9Ci5zbGlkZXJ7d2lkdGg6MTAwJTtkaXNwbGF5OmZsZXg7b3ZlcmZsb3cteDphdXRvO292ZXJmbG93LXk6aGlkZGVuO3Njcm9sbC1zbmFwLXR5cGU6eCBtYW5kYXRvcnk7c2Nyb2xsLWJlaGF2aW9yOnNtb290aDstd2Via2l0LW92ZXJmbG93LXNjcm9sbGluZzp0b3VjaDtvdmVyc2Nyb2xsLWJlaGF2aW9yLXg6Y29udGFpbjt0b3VjaC1hY3Rpb246YXV0bztzY3JvbGxiYXItd2lkdGg6bm9uZX0uc2xpZGVyOjotd2Via2l0LXNjcm9sbGJhcntkaXNwbGF5Om5vbmV9Ci5zbGlkZXtmbGV4OjAgMCAxMDAlO3dpZHRoOjEwMCU7bWluLXdpZHRoOjEwMCU7c2Nyb2xsLXNuYXAtYWxpZ246c3RhcnQ7c2Nyb2xsLXNuYXAtc3RvcDphbHdheXM7cGFkZGluZzoycHggNHB4IDhweH0KLnNsaWRlLXRvcHtkaXNwbGF5OmZsZXg7YWxpZ24taXRlbXM6Y2VudGVyO2p1c3RpZnktY29udGVudDpzcGFjZS1iZXR3ZWVuO21hcmdpbjowIDJweCA3cHg7Y29sb3I6IzhkYTBiODtmb250LXNpemU6MTFweDtmb250LXdlaWdodDo4MDB9LmNvbnRhZG9ye2NvbG9yOiNkYmVhZmU7Zm9udC13ZWlnaHQ6OTAwO2JhY2tncm91bmQ6cmdiYSgzNyw5OSwyMzUsLjExKTtib3JkZXI6MXB4IHNvbGlkIHJnYmEoOTYsMTY1LDI1MCwuMjQpO3BhZGRpbmc6NXB4IDlweDtib3JkZXItcmFkaXVzOjk5OXB4fQouY2FydGFve3dpZHRoOjEwMCU7aGVpZ2h0OjQzOHB4O2Rpc3BsYXk6ZmxleDtmbGV4LWRpcmVjdGlvbjpjb2x1bW47b3ZlcmZsb3c6aGlkZGVuO2JhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDE0NWRlZywjMTExYTJlLCMwYTEwMWUpO2JvcmRlcjoxcHggc29saWQgcmdiYSgxNDgsMTYzLDE4NCwuMTgpO2JvcmRlci1yYWRpdXM6MThweDtib3gtc2hhZG93OjAgMTZweCAzNHB4IHJnYmEoMCwwLDAsLjMyKX0uY2FydGFvLnByZXBhcmFjYW97Ym9yZGVyLWNvbG9yOnJnYmEoNTksMTMwLDI0NiwuNDgpfS5jYXJ0YW8uYWxtb2Nve2JvcmRlci1jb2xvcjpyZ2JhKDI0NSwxNTgsMTEsLjQ4KX0uY2FydGFvLnJldG9ybm97Ym9yZGVyLWNvbG9yOnJnYmEoMzQsMTk3LDk0LC40OCl9LmNhcnRhby5mZWl0YXtib3JkZXItY29sb3I6cmdiYSgzNCwxOTcsOTQsLjYyKTtib3gtc2hhZG93OjAgMCAwIDJweCByZ2JhKDM0LDE5Nyw5NCwuMTIpLDAgMThweCAzOHB4IHJnYmEoMCwwLDAsLjM0KX0uY2FydGFvLmZlaXRhIC50b3BvLWNhcmR7YmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHJnYmEoMjIsMTYzLDc0LC4xOCkscmdiYSgyMiwxNjMsNzQsLjAzKSl9Ci50b3BvLWNhcmR7cGFkZGluZzoxOHB4IDE4cHggMTRweDtib3JkZXItYm90dG9tOjFweCBzb2xpZCByZ2JhKDE0OCwxNjMsMTg0LC4xMyk7YmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHJnYmEoMzcsOTksMjM1LC4wOCksdHJhbnNwYXJlbnQgNjAlKX0uc2Vsb3tkaXNwbGF5OmlubGluZS1ibG9jaztjb2xvcjojYmZkYmZlO2JhY2tncm91bmQ6IzFkNGVkODtmb250LXNpemU6MTFweDtmb250LXdlaWdodDo5MDA7bGV0dGVyLXNwYWNpbmc6LjA4ZW07cGFkZGluZzo1cHggOXB4O2JvcmRlci1yYWRpdXM6OTk5cHh9LmFsbW9jbyAuc2Vsb3tiYWNrZ3JvdW5kOiM5MjQwMGU7Y29sb3I6I2ZlZjNjN30ucmV0b3JubyAuc2Vsb3tiYWNrZ3JvdW5kOiMxNjY1MzQ7Y29sb3I6I2RjZmNlN31oMnttYXJnaW46MTFweCAwIDZweDtjb2xvcjojZjhmYWZjO2ZvbnQtc2l6ZToyMXB4O2xpbmUtaGVpZ2h0OjEuMTg7bGV0dGVyLXNwYWNpbmc6LS4wMzVlbX0ubWV0YXtjb2xvcjojOGRhMGI4O2ZvbnQtc2l6ZToxMnB4O2xpbmUtaGVpZ2h0OjEuNDV9LmNvbnRldWRvLWNhcmR7ZmxleDoxO292ZXJmbG93LXk6YXV0bztwYWRkaW5nOjE0cHggMTZweCA5cHg7c2Nyb2xsYmFyLXdpZHRoOnRoaW47c2Nyb2xsYmFyLWNvbG9yOiMzMzQxNTUgdHJhbnNwYXJlbnQ7dG91Y2gtYWN0aW9uOmF1dG99LnN0YXR1c3tkaXNwbGF5OmJsb2NrO21hcmdpbi1ib3R0b206MTJweDtwYWRkaW5nOjlweCAxMXB4O2JvcmRlci1yYWRpdXM6MTBweDtmb250LXNpemU6MTNweDtmb250LXdlaWdodDo4MDB9LnN0YXR1cy5jb25jbHVpZG97Y29sb3I6I2JiZjdkMDtiYWNrZ3JvdW5kOnJnYmEoMjIsMTYzLDc0LC4xNSl9LnN0YXR1cy5wZW5kZW50ZXtjb2xvcjojZmRlNjhhO2JhY2tncm91bmQ6cmdiYSgyNDUsMTU4LDExLC4xNCl9LnJhc3RyZWlvLXJlYWx7bWFyZ2luOi00cHggMCAxMnB4O3BhZGRpbmc6OXB4IDExcHg7Ym9yZGVyLXJhZGl1czoxMHB4O2NvbG9yOiNiYWU2ZmQ7YmFja2dyb3VuZDpyZ2JhKDE0LDE2NSwyMzMsLjEwKTtib3JkZXI6MXB4IHNvbGlkIHJnYmEoNTYsMTg5LDI0OCwuMjIpO2ZvbnQtc2l6ZToxMi41cHg7bGluZS1oZWlnaHQ6MS40NX0KLmFjYW97bWFyZ2luLWJvdHRvbToxMHB4O3BhZGRpbmc6MDtib3JkZXItcmFkaXVzOjEzcHg7Ym9yZGVyOjFweCBzb2xpZCAjMmIzNjU0O292ZXJmbG93OmhpZGRlbjtiYWNrZ3JvdW5kOnJnYmEoMjU1LDI1NSwyNTUsLjAyNSl9LmFjYW8uY29sZXRhe2JvcmRlci1jb2xvcjpyZ2JhKDI0NSwxNTgsMTEsLjUwKTtib3JkZXItbGVmdDo1cHggc29saWQgI2Y1OWUwYjtiYWNrZ3JvdW5kOnJnYmEoMjQ1LDE1OCwxMSwuMDM1KX0uYWNhby5lbnRyZWdhe2JvcmRlci1jb2xvcjpyZ2JhKDM0LDE5Nyw5NCwuNTIpO2JvcmRlci1sZWZ0OjVweCBzb2xpZCAjMjJjNTVlO2JhY2tncm91bmQ6cmdiYSgzNCwxOTcsOTQsLjA0NSl9LmFjYW8tY2FiZWNhbGhve2Rpc3BsYXk6ZmxleDthbGlnbi1pdGVtczpmbGV4LXN0YXJ0O2p1c3RpZnktY29udGVudDpzcGFjZS1iZXR3ZWVuO2dhcDoxMHB4O3BhZGRpbmc6MTBweCAxMXB4IDlweDtib3JkZXItYm90dG9tOjFweCBzb2xpZCByZ2JhKDE0MSwxNjAsMTg0LC4xMyl9LmFjYW8uY29sZXRhIC5hY2FvLWNhYmVjYWxob3tiYWNrZ3JvdW5kOmxpbmVhci1ncmFkaWVudCg5MGRlZyxyZ2JhKDI0NSwxNTgsMTEsLjE2KSxyZ2JhKDI0NSwxNTgsMTEsLjAzNSkpfS5hY2FvLmVudHJlZ2EgLmFjYW8tY2FiZWNhbGhve2JhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDkwZGVnLHJnYmEoMzQsMTk3LDk0LC4xOCkscmdiYSgzNCwxOTcsOTQsLjAzNSkpfS5hY2FvLXRpcG97ZmxleDowIDAgYXV0bztmb250LXNpemU6MTEuNXB4O2ZvbnQtd2VpZ2h0OjkwMDtsZXR0ZXItc3BhY2luZzouMDRlbTt3aGl0ZS1zcGFjZTpub3dyYXA7cGFkZGluZzo0cHggN3B4O2JvcmRlci1yYWRpdXM6N3B4fS5hY2FvLmNvbGV0YSAuYWNhby10aXBve2NvbG9yOiNmZGU2OGE7YmFja2dyb3VuZDpyZ2JhKDI0NSwxNTgsMTEsLjE2KX0uYWNhby5lbnRyZWdhIC5hY2FvLXRpcG97Y29sb3I6I2JiZjdkMDtiYWNrZ3JvdW5kOnJnYmEoMzQsMTk3LDk0LC4xNil9LmFjYW8tb2JyYXttaW4td2lkdGg6MDtjb2xvcjojY2JkNWUxO2ZvbnQtc2l6ZToxMS41cHg7bGluZS1oZWlnaHQ6MS4zNTt0ZXh0LWFsaWduOnJpZ2h0O2ZvbnQtd2VpZ2h0OjcwMDtwYWRkaW5nLXRvcDozcHh9Lm1hdGVyaWFpcy1saXN0YXtwYWRkaW5nOjhweCAxMXB4IDEwcHg7ZGlzcGxheTpncmlkO2dhcDo2cHh9Lm1hdGVyaWFsLWl0ZW17ZGlzcGxheTpncmlkO2dyaWQtdGVtcGxhdGUtY29sdW1uczoxMHB4IG1pbm1heCgwLDFmcik7Z2FwOjZweDtjb2xvcjojZTRlOGY0O2ZvbnQtc2l6ZToxMi43cHg7bGluZS1oZWlnaHQ6MS4zOH0ubWF0ZXJpYWwtYnVsbGV0e2NvbG9yOiM2MGE1ZmE7Zm9udC13ZWlnaHQ6OTAwfS5hY2FvLmVudHJlZ2EgLm1hdGVyaWFsLWJ1bGxldHtjb2xvcjojNGFkZTgwfS5hY2FvLmNvbGV0YSAubWF0ZXJpYWwtYnVsbGV0e2NvbG9yOiNmYmJmMjR9Lm1hdGVyaWFsLWl0ZW0udmF6aW97ZGlzcGxheTpibG9jaztjb2xvcjojOGRhMGI4O2ZvbnQtc3R5bGU6aXRhbGljfS5iYWl4YXtjb2xvcjojODZlZmFjO2ZvbnQtc2l6ZToxMS41cHg7Zm9udC13ZWlnaHQ6ODAwO3BhZGRpbmc6MCAxMXB4IDEwcHh9Lm1lbnNhZ2VtLWV0YXBhe2NvbG9yOiNjYmQ1ZTE7Zm9udC1zaXplOjE1cHg7bGluZS1oZWlnaHQ6MS41NTtwYWRkaW5nOjE4cHggNnB4fS5yb2RhcGUtY2FyZHtkaXNwbGF5OmdyaWQ7Z3JpZC10ZW1wbGF0ZS1jb2x1bW5zOjFmcjtnYXA6N3B4O3BhZGRpbmc6MTBweCAxM3B4IDEzcHg7Ym9yZGVyLXRvcDoxcHggc29saWQgcmdiYSgxNDgsMTYzLDE4NCwuMTMpO2JhY2tncm91bmQ6cmdiYSg1LDksMTcsLjIwKX0ubWFyY2FyLWZlaXRhe2Rpc3BsYXk6YmxvY2s7d2lkdGg6MTAwJTtwYWRkaW5nOjEycHggMTBweDtib3JkZXItcmFkaXVzOjExcHg7Ym9yZGVyOjFweCBzb2xpZCByZ2JhKDM0LDE5Nyw5NCwuNDgpO2JhY2tncm91bmQ6cmdiYSgyMiwxNjMsNzQsLjA4KTtjb2xvcjojYmJmN2QwO2ZvbnQtc2l6ZToxMi41cHg7Zm9udC13ZWlnaHQ6OTAwO2N1cnNvcjpwb2ludGVyO3RleHQtYWxpZ246Y2VudGVyO3RleHQtZGVjb3JhdGlvbjpub25lfS5tYXJjYXItZmVpdGEuYXRpdmF7YmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLCMxNmEzNGEsIzE1ODAzZCk7Y29sb3I6d2hpdGV9Lm1hcmNhci1mZWl0YTpkaXNhYmxlZHtjdXJzb3I6ZGVmYXVsdDtvcGFjaXR5OjE7YmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLCMxNmEzNGEsIzE1ODAzZCk7Y29sb3I6d2hpdGV9Lmdwc3tkaXNwbGF5OmJsb2NrO21hcmdpbjowO3BhZGRpbmc6MTNweCAxMnB4O3RleHQtZGVjb3JhdGlvbjpub25lO3RleHQtYWxpZ246Y2VudGVyO2NvbG9yOndoaXRlO2ZvbnQtc2l6ZToxM3B4O2ZvbnQtd2VpZ2h0OjkwMDtib3JkZXItcmFkaXVzOjExcHg7YmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLCMyZjc0ZjUsIzFkNGVkOCk7Ym94LXNoYWRvdzowIDlweCAyMHB4IHJnYmEoMzcsOTksMjM1LC4yOCl9Ci5yZWdpc3Ryb3ttYXJnaW46MTJweCAwIDA7cGFkZGluZzoxNHB4O2JvcmRlcjoxcHggc29saWQgcmdiYSg5NiwxNjUsMjUwLC4yNCk7Ym9yZGVyLXJhZGl1czoxNXB4O2JhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDE0NWRlZyxyZ2JhKDE1LDI3LDQ4LC45NikscmdiYSg5LDE0LDI3LC45NikpO21pbi1oZWlnaHQ6MTk1cHh9LnJlZ2lzdHJvLWtpY2tlcntjb2xvcjojNjBhNWZhO2ZvbnQtc2l6ZToxMHB4O2ZvbnQtd2VpZ2h0OjkwMDtsZXR0ZXItc3BhY2luZzouMTJlbTt0ZXh0LXRyYW5zZm9ybTp1cHBlcmNhc2V9LnJlZ2lzdHJvLXRpdHVsb3ttYXJnaW46NHB4IDAgM3B4O2NvbG9yOiNmOGZhZmM7Zm9udC1mYW1pbHk6U29yYSxNYW5yb3BlLHNhbnMtc2VyaWY7Zm9udC13ZWlnaHQ6ODAwO2ZvbnQtc2l6ZToxN3B4fS5yZWdpc3Ryby1tZXRhe2NvbG9yOiM5NGEzYjg7Zm9udC1zaXplOjExLjVweDttYXJnaW4tYm90dG9tOjEwcHh9LnJlZ2lzdHJvLW1hdGVyaWFpc3twYWRkaW5nOjlweCAxMHB4O2JvcmRlci1yYWRpdXM6MTBweDtiYWNrZ3JvdW5kOnJnYmEoMzcsOTksMjM1LC4wNyk7Ym9yZGVyOjFweCBzb2xpZCByZ2JhKDk2LDE2NSwyNTAsLjE0KTtmb250LXNpemU6MTJweDtsaW5lLWhlaWdodDoxLjQ1O21hcmdpbi1ib3R0b206MTBweH0ucmVnaXN0cm8taW5mb3twYWRkaW5nOjEzcHg7Ym9yZGVyLXJhZGl1czoxMXB4O2JhY2tncm91bmQ6cmdiYSgxNDgsMTYzLDE4NCwuMDcpO2NvbG9yOiNjYmQ1ZTE7Zm9udC1zaXplOjEyLjVweDtsaW5lLWhlaWdodDoxLjQ1fS5yZWdpc3Ryby1pbmZvLm9re2JhY2tncm91bmQ6cmdiYSgyMiwxNjMsNzQsLjEwKTtjb2xvcjojYmJmN2QwfS5jYW1wb3tkaXNwbGF5OmdyaWQ7Z2FwOjVweDttYXJnaW46OXB4IDB9LmNhbXBvIGxhYmVse2ZvbnQtc2l6ZToxMS41cHg7Zm9udC13ZWlnaHQ6ODAwO2NvbG9yOiNjYmQ1ZTF9LmNhbXBvIGlucHV0W3R5cGU9dGV4dF0sLmNhbXBvIGlucHV0W3R5cGU9ZmlsZV17d2lkdGg6MTAwJTtib3JkZXI6MXB4IHNvbGlkIHJnYmEoMTQ4LDE2MywxODQsLjI0KTtib3JkZXItcmFkaXVzOjEwcHg7YmFja2dyb3VuZDojMGMxMzIyO2NvbG9yOiNlMmU4ZjA7cGFkZGluZzoxMHB4O2ZvbnQ6aW5oZXJpdH0uY2FtcG8gaW5wdXRbdHlwZT1maWxlXTo6ZmlsZS1zZWxlY3Rvci1idXR0b257Ym9yZGVyOjA7Ym9yZGVyLXJhZGl1czo4cHg7YmFja2dyb3VuZDojMWQ0ZWQ4O2NvbG9yOiNmZmY7cGFkZGluZzo4cHggMTBweDttYXJnaW4tcmlnaHQ6OXB4O2ZvbnQtd2VpZ2h0OjgwMH0ucmVnaXN0cmFye3dpZHRoOjEwMCU7Ym9yZGVyOjA7Ym9yZGVyLXJhZGl1czoxMXB4O2JhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDEzNWRlZywjMmY3NGY1LCMxZDRlZDgpO2NvbG9yOndoaXRlO3BhZGRpbmc6MTJweDtmb250LXNpemU6MTNweDtmb250LXdlaWdodDo5MDA7Y3Vyc29yOnBvaW50ZXI7bWFyZ2luLXRvcDo1cHh9LnJlZ2lzdHJhcjpkaXNhYmxlZHtvcGFjaXR5Oi41NTtjdXJzb3I6d2FpdH0uZXJyb3ttYXJnaW4tdG9wOjhweDtjb2xvcjojZmVjYWNhO2ZvbnQtc2l6ZToxMS41cHh9LmZlZWRiYWNre21hcmdpbi1ib3R0b206MTBweDtwYWRkaW5nOjlweCAxMHB4O2JvcmRlci1yYWRpdXM6MTBweDtmb250LXNpemU6MTJweDtmb250LXdlaWdodDo4MDB9LmZlZWRiYWNrLnN1Y2Nlc3N7YmFja2dyb3VuZDpyZ2JhKDIyLDE2Myw3NCwuMTIpO2NvbG9yOiNiYmY3ZDB9LmZlZWRiYWNrLmVycm9ye2JhY2tncm91bmQ6cmdiYSgyMzksNjgsNjgsLjEyKTtjb2xvcjojZmVjYWNhfQoubmF2LWxvY2Fse2Rpc3BsYXk6Z3JpZDtncmlkLXRlbXBsYXRlLWNvbHVtbnM6MWZyIGF1dG8gMWZyO2FsaWduLWl0ZW1zOmNlbnRlcjtnYXA6OHB4O21hcmdpbjoxMHB4IDAgMH0ubmF2LWJ0bntkaXNwbGF5OmJsb2NrO3RleHQtYWxpZ246Y2VudGVyO3RleHQtZGVjb3JhdGlvbjpub25lO2JvcmRlcjoxcHggc29saWQgcmdiYSgxNDgsMTYzLDE4NCwuMjIpO2JhY2tncm91bmQ6IzExMWEyZDtjb2xvcjojZTJlOGYwO2JvcmRlci1yYWRpdXM6MTFweDtwYWRkaW5nOjExcHggOHB4O2ZvbnQtc2l6ZToxMS41cHg7Zm9udC13ZWlnaHQ6OTAwO21pbi1oZWlnaHQ6NDBweH0ubmF2LWJ0bi5vZmZ7dmlzaWJpbGl0eTpoaWRkZW59LnBvbnRvc3tkaXNwbGF5OmZsZXg7Z2FwOjVweDtqdXN0aWZ5LWNvbnRlbnQ6Y2VudGVyO21heC13aWR0aDoxNDBweDtvdmVyZmxvdzpoaWRkZW59LnBvbnRve2Rpc3BsYXk6YmxvY2s7d2lkdGg6N3B4O2hlaWdodDo3cHg7Ym9yZGVyLXJhZGl1czo1MCU7YmFja2dyb3VuZDojNDc1NTY5fS5wb250by5hdGl2b3t3aWR0aDoxOHB4O2JvcmRlci1yYWRpdXM6OTk5cHg7YmFja2dyb3VuZDojMjU2M2VifQo8L3N0eWxlPjwvaGVhZD48Ym9keT4KPGRpdiBjbGFzcz0iYmFycmEiPjxzcGFuIGlkPSJmZWl0YXMiIGNsYXNzPSJmZWl0YXMiPjAvMCBmZWl0YXM8L3NwYW4+PHNwYW4gY2xhc3M9ImRpY2EiPuKGlO+4jyBkZXNsaXplIGVudHJlIGFzIGRlbWFuZGFzPC9zcGFuPjwvZGl2Pgo8ZGl2IGlkPSJzbGlkZXIiIGNsYXNzPSJzbGlkZXIiPjwvZGl2Pgo8c2NyaXB0PgpsZXQgYXJncz17fTsKY29uc3Qgc2xpZGVyPWRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdzbGlkZXInKTsKY29uc3QgZmVpdGFzRWw9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2ZlaXRhcycpOwpmdW5jdGlvbiBlc2Mocyl7cmV0dXJuIFN0cmluZyhzPz8nJykucmVwbGFjZSgvWyY8PiInXS9nLGM9Pih7JyYnOicmYW1wOycsJzwnOicmbHQ7JywnPic6JyZndDsnLCciJzonJnF1b3Q7JywiJyI6JyYjMDM5Oyd9W2NdKSk7fQpmdW5jdGlvbiBwb3N0KHR5cGUsZXh0cmE9e30pe3dpbmRvdy5wYXJlbnQucG9zdE1lc3NhZ2UoT2JqZWN0LmFzc2lnbih7aXNTdHJlYW1saXRNZXNzYWdlOnRydWUsdHlwZTp0eXBlfSxleHRyYSksJyonKTt9CmZ1bmN0aW9uIHNldFZhbHVlKHZhbHVlKXtwb3N0KCdzdHJlYW1saXQ6c2V0Q29tcG9uZW50VmFsdWUnLHt2YWx1ZTp2YWx1ZSxkYXRhVHlwZTonanNvbid9KTt9CmZ1bmN0aW9uIHNldEhlaWdodCgpe3JlcXVlc3RBbmltYXRpb25GcmFtZSgoKT0+cG9zdCgnc3RyZWFtbGl0OnNldEZyYW1lSGVpZ2h0Jyx7aGVpZ2h0Ok1hdGgubWF4KDY4MCxkb2N1bWVudC5kb2N1bWVudEVsZW1lbnQuc2Nyb2xsSGVpZ2h0KzEyKX0pKTt9CmZ1bmN0aW9uIGVudHJlZ2FzRGFFdGFwYShldGFwYSl7cmV0dXJuIChhcmdzLmVudHJlZ2FzfHxbXSkuZmlsdGVyKGU9PlN0cmluZyhlLmV0YXBhKT09PVN0cmluZyhldGFwYSkpO30KZnVuY3Rpb24gcmVnaXN0cm9IdG1sKGV0YXBhKXsKIGNvbnN0IHRvZGFzPWVudHJlZ2FzRGFFdGFwYShldGFwYSksIHBlbmQ9dG9kYXMuZmluZChlPT4hZS5maW5hbGl6YWRvKXx8bnVsbDsKIGNvbnN0IGZlZWRiYWNrPShhcmdzLmZlZWRiYWNrJiZTdHJpbmcoYXJncy5mZWVkYmFjay5ldGFwYSk9PT1TdHJpbmcoZXRhcGEpKT9hcmdzLmZlZWRiYWNrOm51bGw7CiBjb25zdCBmYj1mZWVkYmFjaz9gPGRpdiBjbGFzcz0iZmVlZGJhY2sgJHtmZWVkYmFjay50aXBvPT09J2Vycm9yJz8nZXJyb3InOidzdWNjZXNzJ30iPiR7ZXNjKGZlZWRiYWNrLm1lbnNhZ2VtKX08L2Rpdj5gOicnOwogaWYoIXRvZGFzLmxlbmd0aClyZXR1cm4gYDxkaXYgY2xhc3M9InJlZ2lzdHJvIj4ke2ZifTxkaXYgY2xhc3M9InJlZ2lzdHJvLWtpY2tlciI+UkVHSVNUUk8gREEgRU5UUkVHQTwvZGl2PjxkaXYgY2xhc3M9InJlZ2lzdHJvLXRpdHVsbyI+RXN0YSBwYXJhZGEgbsOjbyB0ZW0gZW50cmVnYTwvZGl2PjxkaXYgY2xhc3M9InJlZ2lzdHJvLWluZm8iPvCfk6YgU2UgZm9yIHNvbWVudGUgY29sZXRhLCBuw6NvIHByZWNpc2EgZm90by4gRGVzbGl6ZSBwYXJhIHNlZ3Vpci48L2Rpdj48L2Rpdj5gOwogaWYoIXBlbmQpcmV0dXJuIGA8ZGl2IGNsYXNzPSJyZWdpc3RybyI+JHtmYn08ZGl2IGNsYXNzPSJyZWdpc3Ryby1raWNrZXIiPlJFR0lTVFJPIERBIEVOVFJFR0E8L2Rpdj48ZGl2IGNsYXNzPSJyZWdpc3Ryby10aXR1bG8iPkVudHJlZ2FzIGRlc3RhIHBhcmFkYSBjb25jbHXDrWRhczwvZGl2PjxkaXYgY2xhc3M9InJlZ2lzdHJvLWluZm8gb2siPuKchSBPcyBjb21wcm92YW50ZXMgZGVzdGEgcGFyYWRhIGrDoSBmb3JhbSByZWdpc3RyYWRvcy48L2Rpdj48L2Rpdj5gOwogY29uc3QgbWF0cz0ocGVuZC5tYXRlcmlhaXN8fFtdKS5tYXAobT0+YDxkaXY+4oCiICR7ZXNjKG0pfTwvZGl2PmApLmpvaW4oJycpfHwnPGRpdj7igKIgTWF0ZXJpYWwgbsOjbyBpbmZvcm1hZG88L2Rpdj4nOwogY29uc3Qgb3JkZW09dG9kYXMubGVuZ3RoPjE/YCDCtyBlbnRyZWdhICR7dG9kYXMuaW5kZXhPZihwZW5kKSsxfSBkZSAke3RvZGFzLmxlbmd0aH1gOicnOwogcmV0dXJuIGA8Zm9ybSBjbGFzcz0icmVnaXN0cm8gZm9ybS1lbnRyZWdhIiBkYXRhLWRlbWFuZGEtaWQ9IiR7ZXNjKHBlbmQuaWR8fCcnKX0iIGRhdGEtZXRhcGE9IiR7ZXNjKHBlbmQuZXRhcGEpfSIgZGF0YS1wYXJhZGE9IiR7ZXNjKHBlbmQucGFyYWRhKX0iPjxkaXYgY2xhc3M9InJlZ2lzdHJvLWtpY2tlciI+UkVHSVNUUk8gREEgRU5UUkVHQTwvZGl2PjxkaXYgY2xhc3M9InJlZ2lzdHJvLXRpdHVsbyI+8J+TjSBQYXJhZGEgJHtlc2MocGVuZC5wYXJhZGEpfSDigJQgJHtlc2MocGVuZC5vYnJhfHxwZW5kLmRlc3Rpbm8pfTwvZGl2PjxkaXYgY2xhc3M9InJlZ2lzdHJvLW1ldGEiPkRlc3Rpbm86ICR7ZXNjKHBlbmQuZGVzdGlubyl9JHtvcmRlbX08L2Rpdj48ZGl2IGNsYXNzPSJyZWdpc3Ryby1tYXRlcmlhaXMiPiR7bWF0c308L2Rpdj48ZGl2IGNsYXNzPSJjYW1wbyI+PGxhYmVsPjHvuI/ig6MgUXVlbSByZWNlYmV1PzwvbGFiZWw+PGlucHV0IG5hbWU9InJlY2ViZWRvciIgdHlwZT0idGV4dCIgcGxhY2Vob2xkZXI9IkV4LjogSm/Do28gZGEgU2lsdmEiIHZhbHVlPSIke2VzYyhwZW5kLnJlY2ViZWRvcnx8JycpfSI+PC9kaXY+PGRpdiBjbGFzcz0iY2FtcG8iPjxsYWJlbD4y77iP4oOjIFRpcmFyIG91IGVzY29saGVyIGEgZm90bzwvbGFiZWw+PGlucHV0IG5hbWU9ImZvdG8iIHR5cGU9ImZpbGUiIGFjY2VwdD0iaW1hZ2UvanBlZyxpbWFnZS9wbmcsaW1hZ2Uvd2VicCIgY2FwdHVyZT0iZW52aXJvbm1lbnQiPjwvZGl2PjxidXR0b24gdHlwZT0ic3VibWl0IiBjbGFzcz0icmVnaXN0cmFyIj7inIUgUkVHSVNUUkFSIEVOVFJFR0E8L2J1dHRvbj48ZGl2IGNsYXNzPSJlcnJvIj48L2Rpdj48L2Zvcm0+YDsKfQpmdW5jdGlvbiBkb3RzKGksdG90YWwpe2xldCBzPSc8ZGl2IGNsYXNzPSJwb250b3MiPic7Zm9yKGxldCBqPTA7ajx0b3RhbDtqKyspcys9YDxhIGNsYXNzPSJwb250byAke2o9PT1pPydhdGl2byc6Jyd9IiBocmVmPSIjZGF2aS1zbGlkZS0ke2p9IiBhcmlhLWxhYmVsPSJJciBwYXJhIHBhcmFkYSAke2orMX0iPjwvYT5gO3JldHVybiBzKyc8L2Rpdj4nO30KZnVuY3Rpb24gcmVuZGVyKGEpewogYXJncz1hfHx7fTsKIGNvbnN0IHRtcD1kb2N1bWVudC5jcmVhdGVFbGVtZW50KCdkaXYnKTt0bXAuaW5uZXJIVE1MPWFyZ3MuY2FyZHNfaHRtbHx8Jyc7CiBjb25zdCBjYXJkcz1BcnJheS5mcm9tKHRtcC5xdWVyeVNlbGVjdG9yQWxsKCcuY2FydGFvJykpOwogY29uc3QgZmVpdGFzPWNhcmRzLmZpbHRlcihjPT5jLmNsYXNzTGlzdC5jb250YWlucygnZmVpdGEnKSkubGVuZ3RoOyBmZWl0YXNFbC50ZXh0Q29udGVudD1gJHtmZWl0YXN9LyR7Y2FyZHMubGVuZ3RofSAke2ZlaXRhcz09PTE/J2ZlaXRhJzonZmVpdGFzJ31gOwogc2xpZGVyLmlubmVySFRNTD0nJzsKIGNhcmRzLmZvckVhY2goKGNhcmQsaSk9PnsKICAgY29uc3QgZXRhcGE9U3RyaW5nKGNhcmQuZGF0YXNldC5ldGFwYXx8JycpOwogICBjb25zdCBzbGlkZT1kb2N1bWVudC5jcmVhdGVFbGVtZW50KCdzZWN0aW9uJyk7c2xpZGUuY2xhc3NOYW1lPSdzbGlkZSc7c2xpZGUuaWQ9YGRhdmktc2xpZGUtJHtpfWA7c2xpZGUuZGF0YXNldC5ldGFwYT1ldGFwYTsKICAgY29uc3QgdG9wPWRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoJ2RpdicpO3RvcC5jbGFzc05hbWU9J3NsaWRlLXRvcCc7dG9wLmlubmVySFRNTD1gPHNwYW4+UGFyYWRhPC9zcGFuPjxzcGFuIGNsYXNzPSJjb250YWRvciI+JHtpKzF9IGRlICR7Y2FyZHMubGVuZ3RofTwvc3Bhbj5gO3NsaWRlLmFwcGVuZENoaWxkKHRvcCk7CiAgIGNhcmQuY2xhc3NMaXN0LnJlbW92ZSgnc2VsZWNpb25hZGEnKTtjYXJkLnN0eWxlLmRpc3BsYXk9J2ZsZXgnO3NsaWRlLmFwcGVuZENoaWxkKGNhcmQpOwogICBjb25zdCByZWc9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnZGl2Jyk7cmVnLmlubmVySFRNTD1yZWdpc3Ryb0h0bWwoZXRhcGEpO3doaWxlKHJlZy5maXJzdENoaWxkKXNsaWRlLmFwcGVuZENoaWxkKHJlZy5maXJzdENoaWxkKTsKICAgY29uc3QgbmF2PWRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoJ25hdicpO25hdi5jbGFzc05hbWU9J25hdi1sb2NhbCc7CiAgIGNvbnN0IHByZXY9aT4wP2A8YSBjbGFzcz0ibmF2LWJ0biIgaHJlZj0iI2Rhdmktc2xpZGUtJHtpLTF9Ij7ihpAgQW50ZXJpb3I8L2E+YDonPHNwYW4gY2xhc3M9Im5hdi1idG4gb2ZmIj5BbnRlcmlvcjwvc3Bhbj4nOwogICBjb25zdCBuZXh0PWk8Y2FyZHMubGVuZ3RoLTE/YDxhIGNsYXNzPSJuYXYtYnRuIiBocmVmPSIjZGF2aS1zbGlkZS0ke2krMX0iPlByw7N4aW1hIOKGkjwvYT5gOic8c3BhbiBjbGFzcz0ibmF2LWJ0biBvZmYiPlByw7N4aW1hPC9zcGFuPic7CiAgIG5hdi5pbm5lckhUTUw9cHJlditkb3RzKGksY2FyZHMubGVuZ3RoKStuZXh0O3NsaWRlLmFwcGVuZENoaWxkKG5hdik7c2xpZGVyLmFwcGVuZENoaWxkKHNsaWRlKTsKIH0pOwogc2V0SGVpZ2h0KCk7CiByZXF1ZXN0QW5pbWF0aW9uRnJhbWUoKCk9PntsZXQgaWR4PWNhcmRzLmZpbmRJbmRleChjPT5TdHJpbmcoYy5kYXRhc2V0LmV0YXBhfHwnJyk9PT1TdHJpbmcoYXJncy5mb2NvPz8nJykpO2lmKGlkeDwwKWlkeD1jYXJkcy5maW5kSW5kZXgoYz0+IWMuY2xhc3NMaXN0LmNvbnRhaW5zKCdmZWl0YScpKTtpZihpZHg8MClpZHg9MDtjb25zdCBhbHZvPWRvY3VtZW50LmdldEVsZW1lbnRCeUlkKGBkYXZpLXNsaWRlLSR7aWR4fWApO2lmKGFsdm8pYWx2by5zY3JvbGxJbnRvVmlldyh7YmVoYXZpb3I6J2F1dG8nLGJsb2NrOiduZWFyZXN0JyxpbmxpbmU6J3N0YXJ0J30pO30pOwp9CmZ1bmN0aW9uIGRhdGFVcmxGcm9tRmlsZShmaWxlKXtyZXR1cm4gbmV3IFByb21pc2UoKHJlc29sdmUscmVqZWN0KT0+e2NvbnN0IGZyPW5ldyBGaWxlUmVhZGVyKCk7ZnIub25sb2FkPSgpPT5yZXNvbHZlKGZyLnJlc3VsdCk7ZnIub25lcnJvcj1yZWplY3Q7ZnIucmVhZEFzRGF0YVVSTChmaWxlKTt9KTt9CmFzeW5jIGZ1bmN0aW9uIGNvbXByaW1pcihmaWxlKXtjb25zdCBvcmlnaW5hbD1hd2FpdCBkYXRhVXJsRnJvbUZpbGUoZmlsZSk7cmV0dXJuIGF3YWl0IG5ldyBQcm9taXNlKHJlc29sdmU9Pntjb25zdCBpbWc9bmV3IEltYWdlKCk7aW1nLm9ubG9hZD0oKT0+e2NvbnN0IG1heD0xNjAwLHNjYWxlPU1hdGgubWluKDEsbWF4L01hdGgubWF4KGltZy53aWR0aCxpbWcuaGVpZ2h0KSk7Y29uc3QgYz1kb2N1bWVudC5jcmVhdGVFbGVtZW50KCdjYW52YXMnKTtjLndpZHRoPU1hdGgubWF4KDEsTWF0aC5yb3VuZChpbWcud2lkdGgqc2NhbGUpKTtjLmhlaWdodD1NYXRoLm1heCgxLE1hdGgucm91bmQoaW1nLmhlaWdodCpzY2FsZSkpO2MuZ2V0Q29udGV4dCgnMmQnKS5kcmF3SW1hZ2UoaW1nLDAsMCxjLndpZHRoLGMuaGVpZ2h0KTtyZXNvbHZlKGMudG9EYXRhVVJMKCdpbWFnZS9qcGVnJywuODIpKTt9O2ltZy5vbmVycm9yPSgpPT5yZXNvbHZlKG9yaWdpbmFsKTtpbWcuc3JjPW9yaWdpbmFsO30pO30Kc2xpZGVyLmFkZEV2ZW50TGlzdGVuZXIoJ3N1Ym1pdCcsYXN5bmMgZT0+ewogY29uc3QgZm9ybT1lLnRhcmdldC5jbG9zZXN0KCcuZm9ybS1lbnRyZWdhJyk7aWYoIWZvcm0pcmV0dXJuO2UucHJldmVudERlZmF1bHQoKTsKIGNvbnN0IHJlYz1mb3JtLnF1ZXJ5U2VsZWN0b3IoJ1tuYW1lPXJlY2ViZWRvcl0nKSxmb3RvPWZvcm0ucXVlcnlTZWxlY3RvcignW25hbWU9Zm90b10nKSxlcnI9Zm9ybS5xdWVyeVNlbGVjdG9yKCcuZXJybycpLGJ0bj1mb3JtLnF1ZXJ5U2VsZWN0b3IoJy5yZWdpc3RyYXInKTsKIGNvbnN0IG5vbWU9U3RyaW5nKHJlYz8udmFsdWV8fCcnKS50cmltKCksIGFycT1mb3RvPy5maWxlcz8uWzBdOwogaWYoIW5vbWUpe2Vyci50ZXh0Q29udGVudD0nSW5mb3JtZSBxdWVtIHJlY2ViZXUgbyBtYXRlcmlhbC4nO3JldHVybjt9aWYoIWFycSl7ZXJyLnRleHRDb250ZW50PSdUaXJlIG91IHNlbGVjaW9uZSB1bWEgZm90by4nO3JldHVybjt9CiBlcnIudGV4dENvbnRlbnQ9Jyc7YnRuLmRpc2FibGVkPXRydWU7YnRuLnRleHRDb250ZW50PSfij7MgRW52aWFuZG8uLi4nOwogdHJ5e2NvbnN0IGRhdGE9YXdhaXQgY29tcHJpbWlyKGFycSk7c2V0VmFsdWUoe2FjdGlvbjoncmVnaXN0cmFyX2VudHJlZ2EnLG5vbmNlOlN0cmluZyhEYXRlLm5vdygpKSsnLScrTWF0aC5yYW5kb20oKS50b1N0cmluZygzNikuc2xpY2UoMiksZXRhcGE6TnVtYmVyKGZvcm0uZGF0YXNldC5ldGFwYXx8MCksZGVtYW5kYV9pZDpTdHJpbmcoZm9ybS5kYXRhc2V0LmRlbWFuZGFJZHx8JycpLHJlY2ViZWRvcjpub21lLGZvdG9fZGF0YV91cmw6ZGF0YSxub21lX2FycXVpdm86YXJxLm5hbWV8fCdmb3RvLmpwZyd9KTt9Y2F0Y2goZXgpe2J0bi5kaXNhYmxlZD1mYWxzZTtidG4udGV4dENvbnRlbnQ9J+KchSBSRUdJU1RSQVIgRU5UUkVHQSc7ZXJyLnRleHRDb250ZW50PSdOw6NvIGZvaSBwb3Nzw612ZWwgcHJlcGFyYXIgYSBmb3RvLiBUZW50ZSBub3ZhbWVudGUuJzt9Cn0pOwp3aW5kb3cucHJlcGFyYXJFbnZpbz0oKT0+dHJ1ZTsKd2luZG93LmFkZEV2ZW50TGlzdGVuZXIoJ21lc3NhZ2UnLGU9PntpZihlLmRhdGEmJmUuZGF0YS50eXBlPT09J3N0cmVhbWxpdDpyZW5kZXInKXJlbmRlcihlLmRhdGEuYXJnc3x8e30pO30pOwpwb3N0KCdzdHJlYW1saXQ6Y29tcG9uZW50UmVhZHknLHthcGlWZXJzaW9uOjF9KTsKPC9zY3JpcHQ+PC9ib2R5PjwvaHRtbD4K").decode("utf-8")
-    try:
-        atual = ""
-        if os.path.exists(index_path):
-            with open(index_path, "r", encoding="utf-8") as f:
-                atual = f.read()
-        if atual != html:
-            with open(index_path, "w", encoding="utf-8") as f:
-                f.write(html)
-    except Exception:
-        pass
-    return pasta
-
-_COMPONENTE_DAVI_SWIPE = st.components.v1.declare_component(
-    "aproar_davi_swipe_v6_native", path=_diretorio_componente_davi_swipe()
-)
-
-class _FotoComprovanteMemoria:
-    def __init__(self, dados, nome="foto.jpg", tipo="image/jpeg"):
-        self._dados = dados
-        self.name = nome
-        self.type = tipo
-    def getvalue(self):
-        return self._dados
-    def read(self):
-        return self._dados
-
-# =====================================================================
 # RENDERIZAÇÃO DO MODO MOBILE (APP DO DAVI)
 # =====================================================================
 # Compatibilidade: o link antigo ?davi=true continua funcionando, mas o endereço
@@ -3705,10 +3670,18 @@ if modo_davi:
 
 
     # ---------------------------------------------------------------
-    # COMPROVANTES — DADOS PARA O COMPONENTE DO SWIPE
-    # A interface do registro fica dentro do mesmo componente do carrossel.
-    # Deslizar NÃO envia nada ao Python e NÃO recarrega a página.
+    # COMPROVANTE DE ENTREGA — SELEÇÃO AUTOMÁTICA PELO SWIPE
+    # O cartão em que o motorista para vira a parada ativa do comprovante.
+    # Se houver várias entregas na mesma parada, pega a primeira ainda pendente.
     # ---------------------------------------------------------------
+    st.markdown("""
+            <div class="aproar-section-anchor" id="comprovante">
+                <div class="aproar-section-kicker">REGISTRO DA ENTREGA</div>
+            <div class="aproar-section-title">Confirmar entrega</div>
+            <div class="aproar-section-help">Escolha a entrega que fez, informe quem recebeu e envie a foto. Coletas não exigem foto.</div>
+        </div>
+    """, unsafe_allow_html=True)
+
     if "davi_comprovantes_estado" not in st.session_state:
         st.session_state["davi_comprovantes_estado"] = {}
     estados_comprovantes = st.session_state["davi_comprovantes_estado"]
@@ -3720,6 +3693,8 @@ if modo_davi:
         for chave_db, estado_db in estados_banco.items():
             estado_local = estados_comprovantes.get(chave_db, {})
             estado_db["input_version"] = int(estado_local.get("input_version", 0))
+            if estado_local.get("mensagem"):
+                estado_db["mensagem"] = estado_local["mensagem"]
             estados_comprovantes[chave_db] = estado_db
     except Exception:
         persistencia_comprovantes_ok = False
@@ -3733,9 +3708,11 @@ if modo_davi:
         is_inicio_comprovante = (indice_step == 0 and destino_comprovante == p_saida)
         if not is_inicio_comprovante:
             numero_parada_comprovante += 1
+
         for acao_comprovante, tarefa_comprovante in step_comprovante.get("actions", []):
             if acao_comprovante != "ENTREGAR":
                 continue
+
             card_id_comprovante = str(tarefa_comprovante.get("id", "") or "")
             chave_estado = _nome_seguro_comprovante(card_id_comprovante or f"SEM-ID-{indice_step}", 40)
             entregas_por_etapa.setdefault(indice_step, []).append({
@@ -3747,15 +3724,259 @@ if modo_davi:
                 "etapa": indice_step,
             })
 
-    foco_comprovante = st.session_state.get("_davi_foco_etapa")
-    if foco_comprovante is None:
-        try:
-            foco_lido = str(st.query_params.get("foco", "") or "").strip()
-            foco_comprovante = int(foco_lido) if foco_lido else None
-        except Exception:
-            foco_comprovante = None
+    foco_comprovante = None
+    try:
+        foco_lido = str(st.query_params.get("foco", "") or "").strip()
+        if foco_lido != "":
+            foco_comprovante = int(foco_lido)
+            if not 0 <= foco_comprovante < len(route_steps):
+                foco_comprovante = None
+    except Exception:
+        foco_comprovante = None
 
-    st.caption(f"↔️ Deslize para trocar de parada • {total_km:.1f} km no roteiro")
+    # O comprovante não fica preso à próxima parada nem à primeira entrega
+    # pendente. O Davi pode registrar QUALQUER entrega pendente da rota.
+    # O parâmetro ?foco= continua servindo apenas como sugestão inicial quando
+    # ele toca em "REGISTRAR ENTREGA" dentro de um cartão do roteiro.
+    entregas_pendentes_gerais = [
+        item
+        for _indice_etapa, itens_etapa in sorted(entregas_por_etapa.items())
+        for item in itens_etapa
+        if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
+    ]
+    entregas_por_chave = {item["chave"]: item for item in entregas_pendentes_gerais}
+
+    chave_sugerida = None
+    if foco_comprovante is not None:
+        chave_sugerida = next(
+            (
+                item["chave"]
+                for item in entregas_por_etapa.get(foco_comprovante, [])
+                if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
+            ),
+            None,
+        )
+    if chave_sugerida is None and entregas_pendentes_gerais:
+        chave_sugerida = entregas_pendentes_gerais[0]["chave"]
+
+    if entregas_por_etapa:
+        with st.expander("📸 REGISTRAR ENTREGA", expanded=True):
+
+            if not persistencia_comprovantes_ok:
+                st.warning("O comprovante continua funcionando, mas o histórico interno não pôde ser sincronizado agora. Evite recarregar a página até concluir a entrega.")
+
+            if not entregas_pendentes_gerais:
+                st.success("✅ Todos os comprovantes de entrega foram finalizados.")
+            else:
+                rotulos_entrega = {}
+                for item_opcao in entregas_pendentes_gerais:
+                    obra_opcao = str(item_opcao["tarefa"].get("Obra", "") or "Demanda sem obra").strip()
+                    destino_opcao = str(item_opcao.get("destino", "") or "Destino não informado").strip()
+                    materiais_opcao = _separar_materiais_comprovante(item_opcao["tarefa"].get("Materiais", ""))
+                    resumo_material = materiais_opcao[0] if materiais_opcao else "material não informado"
+                    if len(resumo_material) > 46:
+                        resumo_material = resumo_material[:45].rstrip() + "…"
+                    rotulos_entrega[item_opcao["chave"]] = (
+                        f"Parada {item_opcao['parada']} · {obra_opcao} · {destino_opcao} · {resumo_material}"
+                    )
+
+                opcoes_entrega = [item["chave"] for item in entregas_pendentes_gerais]
+                indice_sugerido = opcoes_entrega.index(chave_sugerida) if chave_sugerida in opcoes_entrega else 0
+                chave_comprovante_escolhida = st.selectbox(
+                    "Qual entrega você está registrando?",
+                    options=opcoes_entrega,
+                    index=indice_sugerido,
+                    format_func=lambda chave: rotulos_entrega.get(chave, chave),
+                    key="davi_entrega_para_comprovante",
+                    help="Pode escolher qualquer entrega pendente da rota, mesmo que não seja a próxima parada.",
+                )
+                entrega_sel = entregas_por_chave[chave_comprovante_escolhida]
+                foco_comprovante = int(entrega_sel.get("etapa", foco_comprovante or 0))
+                entregas_foco = entregas_por_etapa.get(foco_comprovante, [])
+                pendentes_foco = [
+                    item
+                    for item in entregas_foco
+                    if not bool(estados_comprovantes.get(item["chave"], {}).get("finalizado"))
+                ]
+
+                tarefa_sel = entrega_sel["tarefa"]
+                demanda_id_sel = entrega_sel["id"]
+                chave_comprovante = entrega_sel["chave"]
+
+                estado = estados_comprovantes.setdefault(chave_comprovante, {
+                    "recebedor": "",
+                    "fotos": [],
+                    "finalizado": False,
+                    "input_version": 0,
+                })
+                estado.setdefault("recebedor", "")
+                estado.setdefault("fotos", [])
+                estado.setdefault("finalizado", False)
+                estado.setdefault("input_version", 0)
+
+                obra_sel = str(tarefa_sel.get("Obra", "") or "").strip()
+                materiais_sel = _separar_materiais_comprovante(tarefa_sel.get("Materiais", ""))
+                destino_sel = str(entrega_sel.get("destino", "") or "").strip()
+                indice_na_parada = entregas_foco.index(entrega_sel) + 1
+
+                materiais_html = "".join(
+                    f"<div style='margin:3px 0;'>• {html_escape(item)}</div>"
+                    for item in materiais_sel
+                ) or "<div style='color:#94a3b8;'>• Materiais não informados</div>"
+
+                complemento_demanda = ""
+                if len(entregas_foco) > 1:
+                    complemento_demanda = (
+                        f"<div style='margin-top:7px;color:#fbbf24;font-size:12px;font-weight:700;'>"
+                        f"Entrega {indice_na_parada} de {len(entregas_foco)} nesta parada • ao finalizar, a próxima entra automaticamente"
+                        f"</div>"
+                    )
+
+                st.markdown(
+                    f"""
+                    <div style="background:rgba(37,99,235,.08);border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:12px 14px;margin:6px 0 14px 0;">
+                        <div style="font-size:15px;font-weight:700;margin-bottom:5px;">📍 Parada {entrega_sel['parada']} — {html_escape(obra_sel or destino_sel)}</div>
+                        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Trello: {html_escape(demanda_id_sel or 'sem ID')} • Destino: {html_escape(destino_sel or '-')}</div>
+                        <div style="font-size:13px;font-weight:600;margin-bottom:3px;">Materiais desta demanda:</div>
+                        <div style="font-size:13px;line-height:1.35;">{materiais_html}</div>
+                        {complemento_demanda}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                status_real_comprovante = obter_status_rastreio_local(
+                    df_paradas_mobile, destino_sel, DATA_REF_ROTA_STR
+                )
+                if status_real_comprovante:
+                    if status_real_comprovante.get("aberta"):
+                        texto_chegada = f"📍 Chegou às **{status_real_comprovante['chegada']}**"
+                        if status_real_comprovante.get("duracao"):
+                            texto_chegada += f" • ⏱️ Está no local há **{status_real_comprovante['duracao']}**"
+                        st.info(texto_chegada)
+                    else:
+                        st.info(
+                            f"📍 Chegou às **{status_real_comprovante['chegada']}** • "
+                            f"🚚 Saiu às **{status_real_comprovante['saida']}** • "
+                            f"⏱️ Ficou **{status_real_comprovante['duracao']}** no local"
+                        )
+
+                mensagem_pendente = estado.pop("mensagem", "") if estado.get("mensagem") else ""
+                if mensagem_pendente:
+                    st.success(mensagem_pendente)
+
+                if estado["fotos"]:
+                    st.markdown(
+                        f"**1️⃣ Quem recebeu?**  \n👤 **{estado['recebedor']}**",
+                    )
+                    st.caption("O recebedor fica fixo para todas as fotos desta demanda.")
+                    recebedor_comprovante = estado["recebedor"]
+                else:
+                    recebedor_comprovante = st.text_input(
+                        "1️⃣ Quem recebeu?",
+                        placeholder="Ex.: João da Silva",
+                        value=estado.get("recebedor", ""),
+                        key=f"davi_comprovante_recebedor_{chave_comprovante}",
+                        help="Digite uma vez. O mesmo nome será usado em todas as fotos desta demanda.",
+                    )
+
+                material_foto = "GERAL"
+                versao_input = int(estado.get("input_version", 0))
+                foto_comprovante = st.file_uploader(
+                    "2️⃣ Tirar ou escolher a foto",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    accept_multiple_files=False,
+                    key=f"davi_comprovante_arquivo_{chave_comprovante}_{versao_input}",
+                    help="No celular, escolha Câmera ou Fotos/Galeria.",
+                )
+
+                numero_proxima_foto = len(estado["fotos"]) + 1
+                if st.button(
+                    "✅ REGISTRAR ENTREGA",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"davi_enviar_comprovante_{chave_comprovante}_{versao_input}",
+                ):
+                    nome_recebedor = str(recebedor_comprovante or "").strip()
+                    if not nome_recebedor:
+                        st.error("Informe quem recebeu o material.")
+                    elif foto_comprovante is None:
+                        st.error("Tire ou selecione uma foto.")
+                    else:
+                        with st.spinner("Enviando foto para o OneDrive..."):
+                            sucesso_comprovante, retorno_comprovante = enviar_foto_comprovante_power_automate(
+                                tarefa_sel,
+                                nome_recebedor,
+                                foto_comprovante,
+                                material_foto=material_foto,
+                                numero_foto=numero_proxima_foto,
+                            )
+                        if sucesso_comprovante:
+                            tipo_registro = "Foto geral" if material_foto == "GERAL" else material_foto
+                            finalizacao_automatica_ok = True
+                            try:
+                                registrar_foto_comprovante_davi(
+                                    DATA_REF_ROTA_STR,
+                                    tarefa_sel,
+                                    nome_recebedor,
+                                    retorno_comprovante,
+                                    tipo_registro,
+                                )
+                                definir_comprovante_finalizado_davi(
+                                    DATA_REF_ROTA_STR, demanda_id_sel, True
+                                )
+                            except Exception:
+                                persistencia_comprovantes_ok = False
+                                finalizacao_automatica_ok = False
+
+                            estado["recebedor"] = nome_recebedor
+                            estado["fotos"].append({
+                                "arquivo": retorno_comprovante,
+                                "tipo": tipo_registro,
+                                "hora": datetime.now(FUSO_LOCAL).strftime("%H:%M"),
+                            })
+                            estado["input_version"] = versao_input + 1
+                            estado["finalizado"] = finalizacao_automatica_ok
+                            estado["mensagem"] = (
+                                "✅ Entrega registrada com foto e nome do recebedor."
+                                if finalizacao_automatica_ok
+                                else "Foto enviada. Toque em finalizar para concluir o registro."
+                            )
+                            st.rerun()
+                        else:
+                            st.error(retorno_comprovante)
+
+                if estado["fotos"]:
+                    st.markdown("**Fotos já enviadas nesta entrega:**")
+                    for pos, foto_enviada in enumerate(estado["fotos"], start=1):
+                        st.caption(f"✅ Foto {pos} • {foto_enviada['tipo']} • {foto_enviada['hora']}")
+
+                    if st.button(
+                        f"✅ FINALIZAR ESTA ENTREGA ({len(estado['fotos'])} {plural_pt(len(estado['fotos']), 'FOTO', 'FOTOS')})",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"davi_finalizar_comprovante_{chave_comprovante}",
+                    ):
+                        try:
+                            definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, demanda_id_sel, True)
+                        except Exception:
+                            if persistencia_comprovantes_ok:
+                                st.error("Não consegui registrar a finalização. Tente novamente.")
+                                st.stop()
+                        estado["finalizado"] = True
+                        estado["mensagem"] = "Comprovante finalizado."
+                        st.rerun()
+                else:
+                    st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
+
+
+    st.markdown(f"""
+            <div class="aproar-section-anchor" id="roteiro">
+            <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
+            <div class="aproar-section-title">Roteiro do dia</div>
+            <div class="aproar-section-help">{total_km:.1f} km • deslize para os lados para trocar de parada</div>
+        </div>
+    """, unsafe_allow_html=True)
     MODO_DAVI_SIMPLES = False
     cartoes_mobile = []
     numero_parada_mobile = 1
@@ -3872,8 +4093,13 @@ if modo_davi:
                     f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
                 )
             if not is_start:
-                # O comprovante é selecionado automaticamente pelo swipe; não há
-                # mais botão que leve o motorista a outra área/guia.
+                if tem_entrega_no_cartao:
+                    rotulo_comprovante = "📸 REGISTRAR ENTREGA" if not step.get('is_concluded') else "📸 VER COMPROVANTE"
+                    link_comprovante = html_escape(f"/davi?foco={i}#comprovante", quote=True)
+                    botao_comprovante = (
+                        f"<a class='comprovante' href='{link_comprovante}' target='_top'>"
+                        f"{rotulo_comprovante}</a>"
+                    )
                 if link_gps:
                     botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
                 numero_parada_mobile += 1
@@ -3981,121 +4207,168 @@ if modo_davi:
                         st.rerun()
 
     elif cartoes_mobile:
-        entregas_cliente = []
-        for _etapa_cliente, _itens_cliente in sorted(entregas_por_etapa.items()):
-            for _item_cliente in _itens_cliente:
-                _tarefa_cliente = _item_cliente.get("tarefa", {}) or {}
-                _estado_cliente = estados_comprovantes.get(_item_cliente.get("chave", ""), {}) or {}
-                entregas_cliente.append({
-                    "id": str(_item_cliente.get("id", "") or ""),
-                    "etapa": int(_item_cliente.get("etapa", _etapa_cliente)),
-                    "parada": int(_item_cliente.get("parada", 1) or 1),
-                    "destino": str(_item_cliente.get("destino", "") or ""),
-                    "obra": str(_tarefa_cliente.get("Obra", "") or ""),
-                    "materiais": _separar_materiais_comprovante(_tarefa_cliente.get("Materiais", "")),
-                    "finalizado": bool(_estado_cliente.get("finalizado")),
-                    "recebedor": str(_estado_cliente.get("recebedor", "") or ""),
-                })
+        html_carrossel = """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
+            * { box-sizing: border-box; }
+            html, body { margin: 0; padding: 0; background: transparent; color: #e4e8f4; font-family: Manrope, Arial, sans-serif; }
+            h1, h2, h3, strong, .obra { font-family:Sora, Manrope, Arial, sans-serif; }
+            .barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 2px 10px; color:#94a3b8; font-size:11px; font-weight:700; }
+            .resumo-topo { display:flex; align-items:center; gap:6px; }
+            .feitas { color:#bbf7d0; font-weight:900; background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.23); padding:6px 9px; border-radius:999px; }
+            .contador { color:#dbeafe; font-weight:900; background:rgba(37,99,235,.11); border:1px solid rgba(96,165,250,.24); padding:6px 10px; border-radius:999px; }
+            .trilho { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; scrollbar-width:none; padding:2px 4px 12px; }
+            .trilho::-webkit-scrollbar { display:none; }
+            .cartao { flex:0 0 calc(100% - 8px); height:438px; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column; overflow:hidden; background:linear-gradient(145deg,#111a2e,#0a101e); border:1px solid rgba(148,163,184,.18); border-radius:18px; box-shadow:0 16px 34px rgba(0,0,0,.32); }
+            .cartao.preparacao { border-color:rgba(59,130,246,.48); }
+            .cartao.almoco { border-color:rgba(245,158,11,.48); }
+            .cartao.retorno { border-color:rgba(34,197,94,.48); }
+            .cartao.feita { border-color:rgba(34,197,94,.62); box-shadow:0 0 0 2px rgba(34,197,94,.12),0 18px 38px rgba(0,0,0,.34); }
+            .cartao.feita .topo-card { background:linear-gradient(135deg,rgba(22,163,74,.18),rgba(22,163,74,.03)); }
+            .cartao.selecionada { box-shadow:0 0 0 2px rgba(59,130,246,.26),0 20px 42px rgba(0,0,0,.38); }
+            .topo-card { padding:18px 18px 14px; border-bottom:1px solid rgba(148,163,184,.13); background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 60%); }
+            .selo { display:inline-block; color:#bfdbfe; background:#1d4ed8; font-size:11px; font-weight:900; letter-spacing:.08em; padding:5px 9px; border-radius:999px; }
+            .almoco .selo { background:#92400e; color:#fef3c7; }
+            .retorno .selo { background:#166534; color:#dcfce7; }
+            h2 { margin:11px 0 6px; color:#f8fafc; font-size:21px; line-height:1.18; letter-spacing:-.035em; }
+            .meta { color:#8da0b8; font-size:12px; line-height:1.45; }
+            .conteudo-card { flex:1; overflow-y:auto; padding:14px 16px 9px; scrollbar-width:thin; scrollbar-color:#334155 transparent; }
+            .status { display:block; margin-bottom:12px; padding:9px 11px; border-radius:10px; font-size:13px; font-weight:800; }
+            .status.concluido { color:#bbf7d0; background:rgba(22,163,74,.15); }
+            .status.pendente { color:#fde68a; background:rgba(245,158,11,.14); }
+            .rastreio-real { margin:-4px 0 12px; padding:9px 11px; border-radius:10px; color:#bae6fd; background:rgba(14,165,233,.10); border:1px solid rgba(56,189,248,.22); font-size:12.5px; line-height:1.45; }
+            .acao { margin-bottom:10px; padding:0; border-radius:13px; border:1px solid #2b3654; overflow:hidden; background:rgba(255,255,255,.025); }
+            .acao.coleta { border-color:rgba(245,158,11,.50); border-left:5px solid #f59e0b; background:rgba(245,158,11,.035); }
+            .acao.entrega { border-color:rgba(34,197,94,.52); border-left:5px solid #22c55e; background:rgba(34,197,94,.045); }
+            .acao-cabecalho { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:10px 11px 9px; border-bottom:1px solid rgba(141,160,184,.13); }
+            .acao.coleta .acao-cabecalho { background:linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.035)); }
+            .acao.entrega .acao-cabecalho { background:linear-gradient(90deg,rgba(34,197,94,.18),rgba(34,197,94,.035)); }
+            .acao-tipo { flex:0 0 auto; font-size:11.5px; font-weight:900; letter-spacing:.04em; white-space:nowrap; padding:4px 7px; border-radius:7px; }
+            .acao.coleta .acao-tipo { color:#fde68a; background:rgba(245,158,11,.16); }
+            .acao.entrega .acao-tipo { color:#bbf7d0; background:rgba(34,197,94,.16); }
+            .acao-obra { min-width:0; color:#cbd5e1; font-size:11.5px; line-height:1.35; text-align:right; font-weight:700; padding-top:3px; }
+            .acao-tempo { padding:7px 11px 0; color:#94a3b8; font-size:11.5px; font-weight:700; }
+            .materiais-lista { padding:8px 11px 10px; display:grid; gap:6px; }
+            .material-item { display:grid; grid-template-columns:10px minmax(0,1fr); gap:6px; color:#e4e8f4; font-size:12.7px; line-height:1.38; }
+            .material-bullet { color:#60a5fa; font-weight:900; }
+            .acao.entrega .material-bullet { color:#4ade80; }
+            .acao.coleta .material-bullet { color:#fbbf24; }
+            .material-item.vazio { display:block; color:#8da0b8; font-style:italic; }
+            .baixa { color:#86efac; font-size:11.5px; font-weight:800; padding:0 11px 10px; }
+            .mensagem-etapa { color:#cbd5e1; font-size:15px; line-height:1.55; padding:18px 6px; }
+            .rodape-card { display:grid; grid-template-columns:1fr; gap:7px; padding:10px 13px 13px; border-top:1px solid rgba(148,163,184,.13); background:rgba(5,9,17,.20); }
+            .marcar-feita { display:block; width:100%; padding:12px 10px; border-radius:11px; border:1px solid rgba(34,197,94,.48); background:rgba(22,163,74,.08); color:#bbf7d0; font-size:12.5px; font-weight:900; cursor:pointer; text-align:center; text-decoration:none; }
+            .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
+            .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
+            .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
+            .comprovante { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:#ecfdf5; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#16a34a,#15803d); box-shadow:0 8px 18px rgba(22,163,74,.24); }
+            .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
+            .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
+            .controle:disabled { opacity:.35; }
+            .pontos { display:flex; gap:5px; justify-content:center; max-width:130px; overflow:hidden; }
+            .ponto { width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#475569; cursor:pointer; }
+            .ponto.ativo { width:18px; border-radius:999px; background:#2563eb; }
+        </style></head><body>
+            <div class="barra"><span>↔️ Deslize para trocar de parada</span><div class="resumo-topo"><span id="feitas" class="feitas">0 feitas</span><span id="contador" class="contador">1 de __TOTAL__</span></div></div>
+            <div id="trilho" class="trilho">__CARTOES__</div>
+            <div class="controles"><button id="anterior" class="controle" onclick="mover(-1)">← Anterior</button><div id="pontos" class="pontos"></div><button id="proxima" class="controle" onclick="mover(1)">Próxima →</button></div>
+        <script>
+            const trilho = document.getElementById('trilho');
+            const cartoes = Array.from(trilho.querySelectorAll('.cartao'));
+            const contador = document.getElementById('contador');
+            const anterior = document.getElementById('anterior');
+            const proxima = document.getElementById('proxima');
+            const pontos = document.getElementById('pontos');
+            const feitasEl = document.getElementById('feitas');
+            const focoServidor = String('__FOCO__');
+            let atual = 0;
+            let gestoAtivo = false;
 
-        _feedback_davi = st.session_state.pop("_davi_componente_feedback", None)
-        evento_davi = _COMPONENTE_DAVI_SWIPE(
-            cards_html="".join(cartoes_mobile),
-            entregas=entregas_cliente,
-            foco="" if foco_comprovante is None else str(foco_comprovante),
-            feedback=_feedback_davi or {},
-            key=f"aproar_davi_swipe_v6_native_{DATA_REF_ROTA_STR}",
-            default=None,
-        )
+            function indiceMaisProximo() {
+                const centro = trilho.scrollLeft + trilho.clientWidth / 2;
+                let melhor = 0, dist = Infinity;
+                cartoes.forEach((c, i) => {
+                    const d = Math.abs(c.offsetLeft + c.offsetWidth / 2 - centro);
+                    if (d < dist) { dist = d; melhor = i; }
+                });
+                return melhor;
+            }
 
-        # O componente só fala com o Python quando existe uma ação REAL de gravação.
-        # O swipe nativo e os links Anterior/Próxima são totalmente locais e não geram rerun.
-        if isinstance(evento_davi, dict) and evento_davi.get("action") == "registrar_entrega":
-            _nonce_evento = str(evento_davi.get("nonce", "") or "")
-            if _nonce_evento and _nonce_evento != st.session_state.get("_ultimo_evento_comprovante_davi"):
-                st.session_state["_ultimo_evento_comprovante_davi"] = _nonce_evento
-                _demanda_evento = str(evento_davi.get("demanda_id", "") or "")
-                _etapa_evento = int(evento_davi.get("etapa", 0) or 0)
-                _recebedor_evento = str(evento_davi.get("recebedor", "") or "").strip()
-                _tarefa_evento = None
-                for _step_evento in route_steps:
-                    for _acao_evento, _t_evento in (_step_evento.get("actions", []) or []):
-                        if _acao_evento == "ENTREGAR" and str((_t_evento or {}).get("id", "") or "") == _demanda_evento:
-                            _tarefa_evento = _t_evento
-                            break
-                    if _tarefa_evento is not None:
-                        break
+            cartoes.forEach((_, i) => {
+                const p = document.createElement('button');
+                p.className = 'ponto';
+                p.type = 'button';
+                p.addEventListener('click', () => ir(i));
+                pontos.appendChild(p);
+            });
 
-                if _tarefa_evento is None:
-                    st.session_state["_davi_componente_feedback"] = {
-                        "tipo": "error", "etapa": _etapa_evento,
-                        "mensagem": "Não encontrei esta entrega na rota atual. Atualize a página e tente novamente.",
-                    }
-                    st.session_state["_davi_foco_etapa"] = _etapa_evento
-                    st.rerun()
+            function atualizarFeitas() {
+                const botoes = Array.from(document.querySelectorAll('.marcar-feita'));
+                const total = botoes.length;
+                const feitas = botoes.filter(b => b.dataset.feita === '1').length;
+                feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
+            }
+            function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
+            function atualizar(i) {
+                atual = Math.max(0, Math.min(cartoes.length - 1, i));
+                contador.textContent = `${atual + 1} de ${cartoes.length}`;
+                anterior.disabled = atual === 0;
+                proxima.disabled = atual === cartoes.length - 1;
+                Array.from(pontos.children).forEach((p, j) => p.classList.toggle('ativo', j === atual));
+                cartoes.forEach((c, j) => c.classList.toggle('selecionada', j === atual));
+            }
+            function ir(i) {
+                const indice = Math.max(0, Math.min(cartoes.length - 1, i));
+                const alvo = cartoes[indice];
+                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'smooth'});
+                atualizar(indice);
+            }
+            function mover(delta) { ir(atual + delta); }
 
-                _data_url = str(evento_davi.get("foto_data_url", "") or "")
-                try:
-                    _cabecalho_foto, _base64_foto = _data_url.split(",", 1)
-                    _dados_foto = base64.b64decode(_base64_foto)
-                    _mime_foto = "image/jpeg"
-                    _m_mime = re.search(r"data:([^;]+);base64", _cabecalho_foto, flags=re.I)
-                    if _m_mime:
-                        _mime_foto = _m_mime.group(1)
-                except Exception:
-                    _dados_foto = b""
-                    _mime_foto = "image/jpeg"
+            trilho.addEventListener('pointerdown', () => { gestoAtivo = true; }, {passive:true});
+            trilho.addEventListener('pointerup', () => {
+                if (!gestoAtivo) return;
+                const melhor = indiceMaisProximo();
+                atualizar(melhor);
+                gestoAtivo = false;
+            }, {passive:true});
+            trilho.addEventListener('pointercancel', () => { gestoAtivo = false; }, {passive:true});
 
-                if not _recebedor_evento:
-                    _mensagem_evento = "Informe quem recebeu o material."
-                    _tipo_evento = "error"
-                elif not _dados_foto:
-                    _mensagem_evento = "Não consegui ler a foto. Tire ou escolha a imagem novamente."
-                    _tipo_evento = "error"
-                else:
-                    _arquivo_memoria = _FotoComprovanteMemoria(
-                        _dados_foto,
-                        nome=str(evento_davi.get("nome_arquivo", "foto.jpg") or "foto.jpg"),
-                        tipo=_mime_foto,
-                    )
-                    _chave_evento = _nome_seguro_comprovante(_demanda_evento or "SEM-ID", 40)
-                    _estado_evento = estados_comprovantes.get(_chave_evento, {}) or {}
-                    _numero_foto_evento = len(_estado_evento.get("fotos", []) or []) + 1
-                    with st.spinner("Enviando comprovante..."):
-                        _ok_evento, _retorno_evento = enviar_foto_comprovante_power_automate(
-                            _tarefa_evento, _recebedor_evento, _arquivo_memoria,
-                            material_foto="GERAL", numero_foto=_numero_foto_evento,
-                        )
-                    if _ok_evento:
-                        try:
-                            registrar_foto_comprovante_davi(
-                                DATA_REF_ROTA_STR, _tarefa_evento, _recebedor_evento,
-                                _retorno_evento, "Foto geral",
-                            )
-                            definir_comprovante_finalizado_davi(DATA_REF_ROTA_STR, _demanda_evento, True)
-                            _mensagem_evento = "✅ Entrega registrada com foto e recebedor."
-                            _tipo_evento = "success"
-                        except Exception:
-                            _mensagem_evento = "A foto foi enviada, mas não consegui finalizar o registro interno. Tente novamente."
-                            _tipo_evento = "error"
-                    else:
-                        _mensagem_evento = str(_retorno_evento or "Não foi possível enviar a foto.")
-                        _tipo_evento = "error"
+            let timer;
+            trilho.addEventListener('scroll', () => {
+                clearTimeout(timer);
+                timer = setTimeout(() => atualizar(indiceMaisProximo()), 90);
+            }, {passive:true});
 
-                st.session_state["_davi_componente_feedback"] = {
-                    "tipo": _tipo_evento, "etapa": _etapa_evento, "mensagem": _mensagem_evento,
-                }
-                st.session_state["_davi_foco_etapa"] = _etapa_evento
-                try:
-                    carregar_resumo_comprovantes_davi.clear()
-                    carregar_comprovantes_davi.clear()
-                except Exception:
-                    pass
-                st.rerun()
+            atualizarFeitas();
+            const indiceInicial = cartoes.findIndex(c => String(c.dataset.etapa || '') === focoServidor);
+            if (indiceInicial >= 0) {
+                const alvo = cartoes[indiceInicial];
+                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
+                atualizar(indiceInicial);
+            } else {
+                const primeiraPendente = cartoes.findIndex(c => !c.classList.contains('feita'));
+                const indicePadrao = primeiraPendente >= 0 ? primeiraPendente : 0;
+                const alvo = cartoes[indicePadrao];
+                trilho.scrollTo({left: alvo.offsetLeft - trilho.offsetLeft, behavior: 'auto'});
+                atualizar(indicePadrao);
+            }
+        </script></body></html>
+        """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile))).replace("__FOCO__", "" if foco_comprovante is None else str(foco_comprovante))
+        st.components.v1.html(html_carrossel, height=550, scrolling=False)
     else:
         st.info("A rota ainda não possui etapas para exibir.")
 
-    # O mapa continua na mesma página e já fica aberto, sem criar subseção/aba.
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.divider()
+    # O mapa faz parte da tela principal do motorista e fica sempre aberto.
+    st.markdown("""
+        <div class="aproar-section-anchor" id="mapa-rota">
+            <div class="aproar-section-kicker">VISÃO GERAL</div>
+            <div class="aproar-section-title">Mapa da rota</div>
+            <div class="aproar-section-help">Trajeto, sequência e localização das paradas — sempre visível</div>
+        </div>
+    """, unsafe_allow_html=True)
     m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
     pontos_reais_mobile = []
     if p_saida in locais_dict:
