@@ -3116,8 +3116,13 @@ def _dividir_material_quantidade(valor):
         flags=re.IGNORECASE,
     )
     if com_unidade:
-        quantidade = f"{com_unidade.group(1)} {com_unidade.group(2)}"
-        return com_unidade.group(3).strip(), quantidade
+        quantidade = com_unidade.group(1)
+        unidade_medida = str(com_unidade.group(2) or "").strip().upper()
+        nome_material = com_unidade.group(3).strip()
+        # Unidade de medida acompanha o nome do item à esquerda; à direita fica
+        # somente a quantidade. Ex.: "SALVA PISO · ROLO | 2".
+        nome_com_unidade = f"{nome_material} · {unidade_medida}" if unidade_medida else nome_material
+        return nome_com_unidade, quantidade
 
     com_separador = re.match(rf"^{numero}\s*[-xX:]\s*(.+)$", item)
     if com_separador:
@@ -4620,7 +4625,7 @@ TRELLO_JSON_URL = "https://trello.com/b/tyR8YgDF.json"
 RASTREADOR_LOGIN_URLS = ["https://portal.protegeexpress.com.br/sistema/login.aspx", "http://portal.protegeexpress.com.br/sistema/login.aspx"]
 RASTREADOR_VEICULOS_PADRAO = "007046861,807289138"
 VELOCIDADE_MEDIA_KMH = 25.0
-ROTA_ENGINE_VERSION = 7
+ROTA_ENGINE_VERSION = 8
 
 COLUNAS_DEMANDAS = ["id", "Obra", "Origem", "Destino", "Materiais", "Urgência", "Peso", "Tempo_Coleta", "Tempo_Entrega", "Supervisor", "_Titulo_Trello"]
 
@@ -7711,6 +7716,46 @@ def alvo_endereco_trello(descricao, origem, destino):
         return "destino"
     return None
 
+def card_trello_muito_alta(card):
+    """Reconhece a urgência explícita MUITO ALTA no próprio card do Trello.
+
+    Aceita o texto no título, descrição ou nome de uma label. Não confunde
+    prazo HOJE/VENCIDA com a exceção de revisita: somente MUITO ALTA libera
+    retorno a uma unidade já atendida.
+    """
+    card = card or {}
+    partes = [str(card.get("name", "") or ""), str(card.get("desc", "") or "")]
+    for label in (card.get("labels", []) or []):
+        if isinstance(label, dict):
+            partes.append(str(label.get("name", "") or ""))
+        else:
+            partes.append(str(label or ""))
+    texto = remover_acentos(" ".join(partes)).upper()
+    texto = re.sub(r"\s+", " ", texto)
+    return bool(re.search(r"(?<![A-Z0-9])MUITO\s+ALTA(?![A-Z0-9])", texto))
+
+
+def tarefa_muito_alta(tarefa):
+    texto = remover_acentos(
+        " ".join([
+            str((tarefa or {}).get("Urgência", "") or ""),
+            str((tarefa or {}).get("_Titulo_Trello", "") or ""),
+        ])
+    ).upper()
+    return bool(re.search(r"(?<![A-Z0-9])MUITO\s+ALTA(?![A-Z0-9])", texto))
+
+
+def data_criacao_card_trello(card_id):
+    """Extrai a criação do ObjectId do Trello (primeiros 8 hex = Unix time)."""
+    card_id = str(card_id or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{24}", card_id):
+        return None
+    try:
+        return datetime.fromtimestamp(int(card_id[:8], 16), timezone.utc).astimezone(FUSO_LOCAL)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
 def classificar_prioridade(due_str):
     """Transforma o prazo do Trello em prioridade operacional da rota.
 
@@ -7797,6 +7842,13 @@ def sincronizar_demandas(manual=False, forcar=False, geocodificar=True, somente_
         if c.get('closed') or lista_esta_concluida(trello_lists.get(c.get('idList', ''), '').upper()): continue
         short_name, origem, destino, materiais = extrair_dados_completos(c.get('desc', ''), c.get('name', ''))
         peso, status_prazo = classificar_prioridade(c.get('due'))
+        # A exceção de revisita usa apenas a urgência explícita MUITO ALTA do
+        # card/label do Trello. Prazo HOJE ou VENCIDA continua prioritário, mas
+        # sozinho não autoriza voltar a uma unidade já atendida.
+        if card_trello_muito_alta(c):
+            peso = max(float(peso or 1), 10.0)
+            if 'MUITO ALTA' not in remover_acentos(status_prazo).upper():
+                status_prazo = f"MUITO ALTA • {status_prazo}" if status_prazo else "MUITO ALTA"
         endereco_card = encontrar_endereco_na_descricao(c.get('desc', ''))
         alvo_endereco = alvo_endereco_trello(c.get('desc', ''), origem, destino) if endereco_card else None
         if geocodificar and endereco_card and alvo_endereco:
@@ -9734,6 +9786,73 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 return dist, ajustar_tempo_deslocamento_operacional(dist, dur, current_time_tsp)
 
             tarefas_planejamento = list(unpicked) + list(tarefas_base_ativas)
+
+            # Regra de revisita V8: uma unidade atendida fica fechada para o resto
+            # do dia. A única exceção é um card MUITO ALTA criado depois daquela
+            # visita. Assim BARRA -> outros locais -> BARRA não acontece por uma
+            # demanda comum que já poderia ter sido consolidada na primeira ida.
+            base_canonica_rota = canonicalizar_ponto_rota(ponto_saida)
+            visitas_por_local = {}
+            ids_ja_presentes_em_visitas = set()
+            for _passo_visitado in past_route_steps:
+                if _passo_visitado.get('type') != 'stop':
+                    continue
+                _local_visitado = canonicalizar_ponto_rota(_passo_visitado.get('destino', ''))
+                if not _local_visitado or _local_visitado == base_canonica_rota:
+                    continue
+                _horas_reais = []
+                for _acao_v, _tarefa_v in (_passo_visitado.get('actions', []) or []):
+                    _id_v = str((_tarefa_v or {}).get('id', '') or '')
+                    if _id_v:
+                        ids_ja_presentes_em_visitas.add(_id_v)
+                    _hora_real_v = dict_concluidos_torre.get(_id_v)
+                    if _hora_real_v:
+                        try:
+                            _h_v, _m_v = map(int, str(_hora_real_v).split(':')[:2])
+                            _horas_reais.append(_h_v * 60 + _m_v)
+                        except Exception:
+                            pass
+                if _horas_reais:
+                    _min_visita = max(_horas_reais)
+                else:
+                    _hora_step = str(_passo_visitado.get('dyn_saida', _passo_visitado.get('saida', '')) or '')
+                    try:
+                        _hh, _mm = map(int, _hora_step.split(':')[:2])
+                        _min_visita = _hh * 60 + _mm
+                    except Exception:
+                        _min_visita = current_time_tsp
+                visitas_por_local[_local_visitado] = max(visitas_por_local.get(_local_visitado, -1), _min_visita)
+
+            locais_visitados_operacionais = set(visitas_por_local)
+
+            def _revisita_muito_alta_permitida(tarefa, local):
+                local = canonicalizar_ponto_rota(local)
+                if not local or local not in locais_visitados_operacionais:
+                    return False
+                if not tarefa_muito_alta(tarefa):
+                    return False
+                demanda_id = str((tarefa or {}).get('id', '') or '')
+                # Se o card já fazia parte de alguma visita anterior, não é uma
+                # demanda nova e não ganha exceção só porque depois virou urgente.
+                if demanda_id and demanda_id in ids_ja_presentes_em_visitas:
+                    return False
+                criada = data_criacao_card_trello(demanda_id)
+                if criada is None or criada.date() != DATA_REF_ROTA_DATE:
+                    return False
+                visita_min = visitas_por_local.get(local)
+                if visita_min is None:
+                    return False
+                criada_min = criada.hour * 60 + criada.minute
+                return criada_min > visita_min
+
+            locais_com_excecao_urgente = set()
+            for _tarefa_exc in tarefas_planejamento:
+                for _ponto_exc in (_tarefa_exc.get('Origem', ''), _tarefa_exc.get('Destino', '')):
+                    _ponto_exc = canonicalizar_ponto_rota(_ponto_exc)
+                    if _revisita_muito_alta_permitida(_tarefa_exc, _ponto_exc):
+                        locais_com_excecao_urgente.add(_ponto_exc)
+
+            locais_bloqueados_otimizador = locais_visitados_operacionais - locais_com_excecao_urgente
             ordem_otimizada = otimizar_sequencia_rota(
                 tarefas_planejamento,
                 current_point,
@@ -9743,6 +9862,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 retornar_base=retornar_base,
                 ponto_base=ponto_saida,
                 tarefas_pre_coletadas=tarefas_base_ativas,
+                locais_bloqueados=locais_bloqueados_otimizador,
             )
             st.session_state['fonte_matriz_rota'] = fonte_matriz
             st.session_state['horario_matriz_rota'] = horario_partida_matriz.strftime("%d/%m/%Y %H:%M")
@@ -9792,17 +9912,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if str(tarefa.get('id', '') or '') in ids_planejados_completos
             ]
 
-            # Regra física: depois que Davi atende uma unidade, ela não volta a
-            # aparecer mais tarde no mesmo roteiro. Paradas já realizadas também
-            # entram neste bloqueio quando o restante do dia é recalculado.
-            base_canonica_rota = canonicalizar_ponto_rota(ponto_saida)
-            locais_visitados_operacionais = {
-                canonicalizar_ponto_rota(passo.get('destino', ''))
-                for passo in past_route_steps
-                if passo.get('type') == 'stop'
-                and canonicalizar_ponto_rota(passo.get('destino', ''))
-                and canonicalizar_ponto_rota(passo.get('destino', '')) != base_canonica_rota
-            }
+            # `locais_visitados_operacionais` já foi calculado antes do
+            # otimizador para que a própria busca conheça as unidades fechadas.
 
             # A preparação já havia sido reconstruída antes da otimização. Agora ela
             # fica limitada às demandas cujo destino também está planejado; coletas
@@ -9883,18 +9994,18 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 if not candidates:
                     break
 
-                # Nunca retorna a uma unidade já atendida. Se uma dependência tardia
-                # exigiria BARRA → outros locais → BARRA, o card dependente fica para
-                # o próximo planejamento em vez de criar uma segunda visita.
-                ids_bloqueados_revisita = {
-                    str(t.get('id', '') or '')
-                    for t in unpicked
-                    if canonicalizar_ponto_rota(t.get('Origem', '')) in locais_visitados_operacionais
-                } | {
-                    str(t.get('id', '') or '')
-                    for t in carrying
-                    if canonicalizar_ponto_rota(t.get('Destino', '')) in locais_visitados_operacionais
-                }
+                # Unidade visitada só reabre para um card MUITO ALTA criado DEPOIS
+                # da visita. Todos os demais cartões que exigiriam retorno ficam fora
+                # da rota de hoje. A exceção é avaliada por card, não pela unidade toda.
+                ids_bloqueados_revisita = set()
+                for t in list(unpicked):
+                    local_t = canonicalizar_ponto_rota(t.get('Origem', ''))
+                    if local_t in locais_visitados_operacionais and not _revisita_muito_alta_permitida(t, local_t):
+                        ids_bloqueados_revisita.add(str(t.get('id', '') or ''))
+                for t in list(carrying):
+                    local_t = canonicalizar_ponto_rota(t.get('Destino', ''))
+                    if local_t in locais_visitados_operacionais and not _revisita_muito_alta_permitida(t, local_t):
+                        ids_bloqueados_revisita.add(str(t.get('id', '') or ''))
                 ids_bloqueados_revisita.discard('')
                 if ids_bloqueados_revisita:
                     bloqueadas_revisita = [
@@ -9908,14 +10019,18 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     if not candidates:
                         break
 
+                def _candidato_revisita_autorizado(ponto):
+                    ponto_c = canonicalizar_ponto_rota(ponto)
+                    if ponto_c == base_canonica_rota or ponto_c not in locais_visitados_operacionais:
+                        return True
+                    relevantes = [t for t in unpicked if canonicalizar_ponto_rota(t.get('Origem', '')) == ponto_c]
+                    relevantes += [t for t in carrying if canonicalizar_ponto_rota(t.get('Destino', '')) == ponto_c]
+                    return any(_revisita_muito_alta_permitida(t, ponto_c) for t in relevantes)
+
                 avaliacoes = {p: _avaliar_candidato_expediente(p) for p in candidates}
                 candidates_viaveis = {
                     p for p, avaliacao in avaliacoes.items()
-                    if avaliacao is not None
-                    and (
-                        canonicalizar_ponto_rota(p) == base_canonica_rota
-                        or canonicalizar_ponto_rota(p) not in locais_visitados_operacionais
-                    )
+                    if avaliacao is not None and _candidato_revisita_autorizado(p)
                 }
 
                 if not candidates_viaveis:
@@ -9992,12 +10107,24 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         pausa_almoco_depois = True
                     chegada_str, saida_str, tempo_local_exibicao = format_time(current_time), format_time(dep_time), service_mins
 
-                route_steps_new.append({"type": "stop", "destino": best_point, "dist": best_dist, "travel_mins": best_dur, "travel_mins_api": best_dur_api, "tempo_local": tempo_local_exibicao, "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local), "chegada": chegada_str, "saida": saida_str, "actions": actions_here})
+                local_visitado = canonicalizar_ponto_rota(best_point)
+                eh_revisita_urgente = (
+                    local_visitado in locais_visitados_operacionais
+                    and any(_revisita_muito_alta_permitida(t, local_visitado) for _a, t in actions_here)
+                )
+                route_steps_new.append({
+                    "type": "stop", "destino": best_point, "dist": best_dist,
+                    "travel_mins": best_dur, "travel_mins_api": best_dur_api,
+                    "tempo_local": tempo_local_exibicao,
+                    "tempo_local_fonte": ("preparação fixa da base" if is_start_load else fonte_tempo_local),
+                    "chegada": chegada_str, "saida": saida_str, "actions": actions_here,
+                    "revisita_muito_alta": bool(eh_revisita_urgente),
+                })
                 current_time = dep_time
                 current = best_point
-                local_visitado = canonicalizar_ponto_rota(best_point)
                 if local_visitado and local_visitado != base_canonica_rota:
                     locais_visitados_operacionais.add(local_visitado)
+                    visitas_por_local[local_visitado] = max(visitas_por_local.get(local_visitado, -1), int(round(dep_time)))
 
                 if pausa_almoco_depois:
                     inicio_almoco = current_time
@@ -10515,7 +10642,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                         texto_whatsapp += f"🏁 *PREPARAÇÃO: {step['destino']}* ({step['chegada']} às {step['saida']})\n"
                     else:
                         status_tempo = f"<span style='color: #16a34a; font-weight: 600;'>✅ Concluído às {step['dyn_saida']}</span>" if step.get('is_concluded') else f"<span style='color: #aeb7b4; font-weight: 600;'>⏳ Previsão atual: {step['dyn_chegada']} às {step['dyn_saida']}</span>"
-                        st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}</h3>", unsafe_allow_html=True)
+                        _selo_revisita = " <span style='font-size:11px;color:#fecaca;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);padding:3px 7px;border-radius:999px;'>🚨 RETORNO MUITO ALTA</span>" if step.get('revisita_muito_alta') else ""
+                        st.markdown(f"<h3 style='margin:0; color:#e4e8f4;'>📍 PARADA {num_parada}: {step['destino']}{_selo_revisita}</h3>", unsafe_allow_html=True)
                         st.caption(f"{status_tempo} | Trecho: {step['dist']:.1f} km", unsafe_allow_html=True)
 
                         status_real = obter_status_rastreio_local(df_paradas, step['destino'], DATA_REF_ROTA_STR)
