@@ -3008,12 +3008,19 @@ def agrupar_coletas_preparacao_exibicao(acoes):
                 "ids": [],
                 "materiais": [],
                 "vistos_materiais": set(),
+                "cards": [],
             }
             ordem.append(("grupo", chave))
 
         grupo = grupos[chave]
         if demanda_id and demanda_id not in grupo["ids"]:
             grupo["ids"].append(demanda_id)
+            grupo["cards"].append({
+                "id": demanda_id,
+                "obra": obra,
+                "destino": destino,
+                "materiais": _separar_materiais_comprovante(tarefa.get("Materiais", "")),
+            })
         for material in _separar_materiais_comprovante(tarefa.get("Materiais", "")):
             chave_material = remover_acentos(material).upper()
             if chave_material not in grupo["vistos_materiais"]:
@@ -3029,6 +3036,7 @@ def agrupar_coletas_preparacao_exibicao(acoes):
         tarefa_agrupada = dict(grupo["tarefa"])
         tarefa_agrupada["Materiais"] = " | ".join(grupo["materiais"])
         tarefa_agrupada["_ids_agrupados"] = list(grupo["ids"])
+        tarefa_agrupada["_cards_agrupados"] = list(grupo["cards"])
         tarefa_agrupada["_qtd_demandas_agrupadas"] = max(1, len(grupo["ids"]))
         resultado.append(("COLETAR", tarefa_agrupada))
     return resultado
@@ -6959,7 +6967,7 @@ def identificar_coletas_sem_entrega_route_steps(route_steps):
     return ids_coletas - ids_entregas
 
 
-def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, tarefas_pre_coletadas=None):
+def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, horario_inicio, retornar_base=False, ponto_base=None, tarefas_pre_coletadas=None, locais_bloqueados=None):
     """Busca em feixe para o problema de coleta e entrega com precedência.
 
     Avalia sequências completas, agrupa ações no mesmo endereço e pondera
@@ -6980,6 +6988,11 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         str(t.get('id', '') or '') for t in (tarefas_pre_coletadas or [])
         if str(t.get('id', '') or '')
     }
+    locais_bloqueados = {
+        canonicalizar_ponto_rota(local)
+        for local in (locais_bloqueados or [])
+        if canonicalizar_ponto_rota(local)
+    }
 
     def tarefa_ja_coletada(tarefa):
         tarefa_id = str(tarefa.get('id', '') or '')
@@ -6992,8 +7005,9 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         no_carro = [t for t in tarefas if tarefa_ja_coletada(t)]
         atual = ponto_inicial
         ordem = []
+        visitados = set(locais_bloqueados)
         for _ in range(total_tarefas * 2 + 5):
-            candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
+            candidatos = ({t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}) - visitados
             if not candidatos:
                 break
             candidatos = priorizar_pontos_sem_revisita(candidatos, pendentes)
@@ -7004,6 +7018,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
             pendentes = [t for t in pendentes if t['Origem'] != proximo]
             no_carro.extend(coletadas)
             atual = proximo
+            visitados.add(proximo)
         return ordem
 
     origens = [t['Origem'] for t in tarefas]
@@ -7109,6 +7124,13 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                 continue
 
             pontos_estado = pontos_disponiveis(estado["coletadas"], estado["entregues"])
+            # Uma unidade só pode aparecer uma vez na rota operacional. Se a rede
+            # de coleta/entrega criar um ciclo, o beam mantém a melhor parte viável
+            # e deixa o restante para outro planejamento, em vez de retornar.
+            pontos_estado = {
+                ponto for ponto in pontos_estado
+                if ponto not in locais_bloqueados and ponto not in estado["ordem"]
+            }
             tarefas_a_coletar_estado = [
                 tarefas[i] for i in range(total_tarefas)
                 if not (estado["coletadas"] & (1 << i))
@@ -7162,10 +7184,6 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
                     incremento = distancia * 3.2 + duracao * 0.35
                 else:
                     incremento = duracao + distancia * 0.18
-
-                visitas_anteriores = estado["ordem"].count(ponto)
-                if visitas_anteriores:
-                    incremento += 500.0 * visitas_anteriores
 
                 # Evita entregar em um destino se ainda falta coletar outro
                 # material que também será entregue nele.
@@ -7298,8 +7316,9 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
     no_carro = []
     atual = ponto_inicial
     ordem = []
+    visitados = set(locais_bloqueados)
     for _ in range(total_tarefas * 2 + 5):
-        candidatos = {t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}
+        candidatos = ({t['Origem'] for t in pendentes} | {t['Destino'] for t in no_carro}) - visitados
         if not candidatos:
             break
         candidatos = priorizar_pontos_sem_revisita(candidatos, pendentes)
@@ -7310,6 +7329,7 @@ def otimizar_sequencia_rota(tarefas, ponto_inicial, estrategia, get_dist_dur, ho
         pendentes = [t for t in pendentes if t['Origem'] != proximo]
         no_carro.extend(coletadas)
         atual = proximo
+        visitados.add(proximo)
     return ordem
 
 def _decodificar_polyline_google(polyline):
@@ -10453,6 +10473,12 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                             if demanda_id in dict_concluidos_torre
                         ]
                         hora_baixa_card = max(horas_baixa_card) if horas_baixa_card else ""
+                        cards_agrupados_torre = list(t.get('_cards_agrupados', []) or [])
+                        qtd_cards_baixados = sum(
+                            1 for card_grupo in cards_agrupados_torre
+                            if str(card_grupo.get('id', '') or '') in dict_concluidos_torre
+                        )
+                        qtd_cards_pendentes = max(0, len(cards_agrupados_torre) - qtd_cards_baixados)
                         materiais_torre = _separar_materiais_comprovante(t.get('Materiais', ''))
                         obra_torre_texto = str(t.get('Obra', 'Obra não informada') or 'Obra não informada')
                         obra_torre_html = html_escape(obra_torre_texto)
@@ -10481,11 +10507,21 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                             )
                         elif is_start:
                             qtd_itens_grupo = len(materiais_torre)
+                            if qtd_cards_pendentes:
+                                icone_estado_grupo = "⚠️"
+                                resumo_estado_grupo = (
+                                    f"{qtd_cards_baixados}/{len(cards_agrupados_torre)} cards com baixa · "
+                                    f"{qtd_cards_pendentes} {plural_pt(qtd_cards_pendentes, 'card faltando', 'cards faltando')}"
+                                )
+                            else:
+                                icone_estado_grupo = "✅" if cards_agrupados_torre else "📦"
+                                resumo_estado_grupo = "todos os cards com baixa" if cards_agrupados_torre else ""
                             contexto_demanda_torre = st.expander(
-                                f"📦 {obra_torre_texto} → {unidade_torre or 'Destino não informado'} · "
+                                f"{icone_estado_grupo} {obra_torre_texto} → {unidade_torre or 'Destino não informado'} · "
                                 f"{qtd_demandas_card} {plural_pt(qtd_demandas_card, 'demanda', 'demandas')} · "
-                                f"{qtd_itens_grupo} {plural_pt(qtd_itens_grupo, 'item', 'itens')}",
-                                expanded=False,
+                                f"{qtd_itens_grupo} {plural_pt(qtd_itens_grupo, 'item', 'itens')}"
+                                f"{' · ' + resumo_estado_grupo if resumo_estado_grupo else ''}",
+                                expanded=bool(qtd_cards_pendentes and qtd_cards_baixados),
                             )
                         else:
                             contexto_demanda_torre = st.container(border=True)
@@ -10505,7 +10541,36 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                                 unsafe_allow_html=True,
                             )
 
-                            if materiais_torre:
+                            if is_start and cards_agrupados_torre:
+                                blocos_cards_trello = []
+                                for indice_card_grupo, card_grupo in enumerate(cards_agrupados_torre, start=1):
+                                    card_grupo_id = str(card_grupo.get('id', '') or '')
+                                    card_grupo_concluido = card_grupo_id in dict_concluidos_torre
+                                    hora_card_grupo = str(dict_concluidos_torre.get(card_grupo_id, '') or '')
+                                    cor_card_grupo = "#22c55e" if card_grupo_concluido else "#f59e0b"
+                                    fundo_card_grupo = "rgba(34,197,94,.08)" if card_grupo_concluido else "rgba(245,158,11,.09)"
+                                    status_card_grupo = (
+                                        f"✅ BAIXA ÀS {html_escape(hora_card_grupo)}"
+                                        if card_grupo_concluido
+                                        else "⚠️ PENDENTE — FALTOU DAR BAIXA"
+                                    )
+                                    materiais_card_grupo = card_grupo.get('materiais', []) or []
+                                    materiais_card_html = ''.join(
+                                        f"<li>{html_escape(str(material_card))}</li>"
+                                        for material_card in materiais_card_grupo
+                                    ) or "<li>Material não informado</li>"
+                                    identificador_curto = html_escape(card_grupo_id[-8:] or str(indice_card_grupo))
+                                    blocos_cards_trello.append(
+                                        f'<div style="margin:7px 0;padding:9px 11px;border:1px solid {cor_card_grupo};'
+                                        f'border-left:4px solid {cor_card_grupo};border-radius:6px;background:{fundo_card_grupo};">'
+                                        f'<div style="display:flex;justify-content:space-between;gap:10px;font-size:10px;'
+                                        f'font-weight:900;color:{cor_card_grupo};"><span>CARD {indice_card_grupo} · {identificador_curto}</span>'
+                                        f'<span>{status_card_grupo}</span></div>'
+                                        f'<ul style="margin:7px 0 0;padding-left:18px;color:#d6dbd9;font-size:11px;line-height:1.45;">'
+                                        f'{materiais_card_html}</ul></div>'
+                                    )
+                                st.markdown(''.join(blocos_cards_trello), unsafe_allow_html=True)
+                            elif materiais_torre:
                                 linhas_materiais_torre = []
                                 for material_torre in materiais_torre:
                                     nome_material_torre, quantidade_material_torre = _dividir_material_quantidade(material_torre)
