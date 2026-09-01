@@ -4095,10 +4095,11 @@ if modo_davi:
             if not is_start:
                 if tem_entrega_no_cartao:
                     rotulo_comprovante = "📸 REGISTRAR ENTREGA" if not step.get('is_concluded') else "📸 VER COMPROVANTE"
-                    link_comprovante = html_escape(f"/davi?foco={i}#comprovante", quote=True)
+                    # Não navega para /davi e não abre outra guia. O botão apenas
+                    # leva o motorista ao formulário que já existe nesta mesma página.
                     botao_comprovante = (
-                        f"<a class='comprovante' href='{link_comprovante}' target='_top'>"
-                        f"{rotulo_comprovante}</a>"
+                        f"<button class='comprovante' type='button' data-etapa='{i}' "
+                        f"onclick='abrirComprovanteNaPagina(this)'>{rotulo_comprovante}</button>"
                     )
                 if link_gps:
                     botao_gps = f"<a class='gps' href='{html_escape(link_gps, quote=True)}' target='_blank' rel='noopener'>🧭 ABRIR GPS DA PARADA {numero_parada_mobile}</a>"
@@ -4262,7 +4263,8 @@ if modo_davi:
             .marcar-feita.ativa { background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .marcar-feita:disabled { cursor:default; opacity:1; background:linear-gradient(135deg,#16a34a,#15803d); color:white; }
             .gps { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:white; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#2f74f5,#1d4ed8); box-shadow:0 9px 20px rgba(37,99,235,.28); }
-            .comprovante { display:block; margin:0; padding:13px 12px; text-decoration:none; text-align:center; color:#ecfdf5; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#16a34a,#15803d); box-shadow:0 8px 18px rgba(22,163,74,.24); }
+            .comprovante { display:block; width:100%; margin:0; padding:13px 12px; border:0; text-decoration:none; text-align:center; color:#ecfdf5; font-family:Manrope,Arial,sans-serif; font-size:13px; font-weight:900; border-radius:11px; background:linear-gradient(135deg,#16a34a,#15803d); box-shadow:0 8px 18px rgba(22,163,74,.24); cursor:pointer; -webkit-tap-highlight-color:transparent; }
+            .comprovante:active { transform:scale(.99); }
             .controles { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; padding:0 4px; }
             .controle { border:1px solid rgba(148,163,184,.18); background:#111a2d; color:#e2e8f0; border-radius:11px; padding:10px 8px; font-size:11.5px; font-weight:800; cursor:pointer; }
             .controle:disabled { opacity:.35; }
@@ -4310,6 +4312,23 @@ if modo_davi:
                 feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
             }
             function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
+            function abrirComprovanteNaPagina(botao) {
+                // O formulário é renderizado pelo Streamlit fora deste iframe.
+                // Como já está na mesma página, apenas rolamos a página principal
+                // até a âncora. Não usamos href, target=_blank, window.open ou nova guia.
+                try {
+                    const docPai = window.parent.document;
+                    const alvo = docPai.getElementById('comprovante');
+                    if (alvo) {
+                        alvo.scrollIntoView({behavior:'smooth', block:'start'});
+                        return;
+                    }
+                } catch (e) {}
+                try {
+                    const alvoLocal = document.getElementById('comprovante');
+                    if (alvoLocal) alvoLocal.scrollIntoView({behavior:'smooth', block:'start'});
+                } catch (e) {}
+            }
             function atualizar(i) {
                 atual = Math.max(0, Math.min(cartoes.length - 1, i));
                 contador.textContent = `${atual + 1} de ${cartoes.length}`;
