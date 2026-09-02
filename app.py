@@ -4125,8 +4125,9 @@ if modo_davi:
                 )
                 link_marcacao = html_escape(f"/davi?foco={i}&etapa={i}&feito={novo_estado}", quote=True)
                 botao_feito = (
-                    f"<a class='marcar-feita{classe_marcacao}' data-feita='{'1' if checkin_etapa else '0'}' "
-                    f"href='{link_marcacao}' target='_top' onclick='prepararEnvio(this)'>{texto_marcacao}</a>"
+                    f"<button class='marcar-feita{classe_marcacao}' type='button' "
+                    f"data-feita='{'1' if checkin_etapa else '0'}' data-url='{link_marcacao}' "
+                    f"onclick='marcarFeitaNaPaginaAtual(this)'>{texto_marcacao}</button>"
                 )
             if not is_start:
                 if tem_entrega_no_cartao:
@@ -4347,7 +4348,32 @@ if modo_davi:
                 const feitas = botoes.filter(b => b.dataset.feita === '1').length;
                 feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
             }
-            function prepararEnvio(botao) { botao.textContent='⏳ Salvando...'; botao.style.pointerEvents='none'; }
+            function marcarFeitaNaPaginaAtual(botao) {
+                // O carrossel vive em um iframe do Streamlit. Usar target="_top"
+                // aqui pode abrir outra guia quando o app roda como atalho/PWA no
+                // celular. Um botão comum + location.replace atualiza explicitamente
+                // a página atual e também evita reenviar a marcação ao tocar em Voltar.
+                botao.textContent = '⏳ Salvando...';
+                botao.disabled = true;
+                const caminho = String(botao.dataset.url || '');
+                if (!caminho) {
+                    botao.textContent = '⚠️ Não foi possível salvar';
+                    return;
+                }
+                let destino = caminho;
+                try {
+                    // Em um iframe srcdoc, document.baseURI aponta para a URL do app
+                    // sem exigir acesso de leitura ao documento pai.
+                    destino = new URL(caminho, document.baseURI).href;
+                } catch (erroUrl) {}
+                try {
+                    window.parent.location.replace(destino);
+                } catch (erro) {
+                    // Contingência para navegadores que restringem a leitura da URL
+                    // do documento pai, mantendo ainda a navegação na mesma guia.
+                    window.top.location.href = destino;
+                }
+            }
             function abrirComprovanteNaPagina(botao) {
                 // O formulário é renderizado pelo Streamlit fora deste iframe.
                 // Como já está na mesma página, apenas rolamos a página principal
