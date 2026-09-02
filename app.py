@@ -3592,11 +3592,32 @@ if modo_davi:
     p_saida = route_steps[0]['destino'] if route_steps else ""
     df_paradas_mobile = carregar_paradas_rastreadas_rota(DATA_REF_ROTA_STR, PLACA_DAVI)
 
-    # O clique no cartão volta ao app com estes parâmetros. A gravação é feita
-    # no servidor para que a mesma informação apareça no painel do escritório.
+    # O carrossel envia estes parâmetros por um iframe invisível. Assim a gravação
+    # continua chegando ao servidor sem navegar nem recarregar a tela do motorista.
     etapa_param = st.query_params.get("etapa", "")
     feito_param = st.query_params.get("feito", "")
     foco_param_atual = st.query_params.get("foco", "")
+    sincronizacao_silenciosa = st.query_params.get("_sync_checkin", "") == "1"
+    requisicao_sync = re.sub(
+        r"[^A-Za-z0-9_-]", "", str(st.query_params.get("_req", "") or "")
+    )[:80]
+
+    def responder_checkin_silencioso(ok, mensagem=""):
+        payload = json.dumps(
+            {
+                "tipo": "aproar-checkin-davi",
+                "requisicao": requisicao_sync,
+                "ok": bool(ok),
+                "feito": feito_param,
+                "mensagem": str(mensagem or ""),
+            },
+            ensure_ascii=False,
+        )
+        st.components.v1.html(
+            f"<script>window.parent.parent.postMessage({payload}, '*');</script>",
+            height=0,
+        )
+
     if etapa_param != "" and feito_param in {"0", "1"}:
         try:
             etapa_indice = int(etapa_param)
@@ -3611,17 +3632,24 @@ if modo_davi:
                 str(etapa_escolhida.get("destino", "")),
                 feito_param == "1",
             )
+        except Exception:
+            erro_checkin_mobile = "Não foi possível salvar a marcação. Tente novamente."
+            if sincronizacao_silenciosa:
+                responder_checkin_silencioso(False, erro_checkin_mobile)
+                st.stop()
+            st.query_params.clear()
+            st.query_params["davi"] = "true"
+            if str(foco_param_atual).strip():
+                st.query_params["foco"] = str(foco_param_atual).strip()
+        else:
+            if sincronizacao_silenciosa:
+                responder_checkin_silencioso(True)
+                st.stop()
             st.query_params.clear()
             st.query_params["davi"] = "true"
             if str(foco_param_atual).strip():
                 st.query_params["foco"] = str(foco_param_atual).strip()
             st.rerun()
-        except Exception:
-            erro_checkin_mobile = "Não foi possível salvar a marcação. Tente novamente."
-            st.query_params.clear()
-            st.query_params["davi"] = "true"
-            if str(foco_param_atual).strip():
-                st.query_params["foco"] = str(foco_param_atual).strip()
 
     try:
         dict_checkins_mobile = filtrar_checkins_da_rota(route_steps, carregar_checkins_davi(DATA_REF_ROTA_STR))
@@ -4126,8 +4154,9 @@ if modo_davi:
                 link_marcacao = html_escape(f"/davi?foco={i}&etapa={i}&feito={novo_estado}", quote=True)
                 botao_feito = (
                     f"<button class='marcar-feita{classe_marcacao}' type='button' "
-                    f"data-feita='{'1' if checkin_etapa else '0'}' data-url='{link_marcacao}' "
-                    f"onclick='marcarFeitaNaPaginaAtual(this)'>{texto_marcacao}</button>"
+                    f"data-feita='{'1' if checkin_etapa else '0'}' "
+                    f"data-rotulo='{html_escape(rotulo_lembrete, quote=True)}' data-url='{link_marcacao}' "
+                    f"onclick='marcarFeitaSemRecarregar(this)'>{texto_marcacao}</button>"
                 )
             if not is_start:
                 if tem_entrega_no_cartao:
@@ -4348,31 +4377,95 @@ if modo_davi:
                 const feitas = botoes.filter(b => b.dataset.feita === '1').length;
                 feitasEl.textContent = `${feitas}/${total} ${feitas === 1 ? 'feita' : 'feitas'}`;
             }
-            function marcarFeitaNaPaginaAtual(botao) {
-                // O carrossel vive em um iframe do Streamlit. Usar target="_top"
-                // aqui pode abrir outra guia quando o app roda como atalho/PWA no
-                // celular. Um botão comum + location.replace atualiza explicitamente
-                // a página atual e também evita reenviar a marcação ao tocar em Voltar.
-                botao.textContent = '⏳ Salvando...';
-                botao.disabled = true;
+            const sincronizacoesCheckin = new Map();
+
+            function aplicarEstadoCheckin(botao, marcada) {
+                const rotulo = String(botao.dataset.rotulo || 'parada');
+                botao.dataset.feita = marcada ? '1' : '0';
+                botao.classList.toggle('ativa', marcada);
+                const cartao = botao.closest('.cartao');
+                if (cartao) cartao.classList.toggle('feita', marcada);
+                botao.textContent = marcada
+                    ? '✅ Marcada agora • toque para desfazer'
+                    : `☐ Marcar ${rotulo} como feita`;
+
+                try {
+                    const proximaUrl = new URL(String(botao.dataset.url || ''), document.baseURI);
+                    proximaUrl.searchParams.set('feito', marcada ? '0' : '1');
+                    botao.dataset.url = `${proximaUrl.pathname}${proximaUrl.search}`;
+                } catch (erroUrl) {}
+                atualizarFeitas();
+            }
+
+            function liberarSincronizacao(item) {
+                clearTimeout(item.timer);
+                item.botao.style.pointerEvents = '';
+                item.botao.style.opacity = '';
+                if (item.frame && item.frame.isConnected) item.frame.remove();
+            }
+
+            window.addEventListener('message', (evento) => {
+                const dados = evento.data || {};
+                if (dados.tipo !== 'aproar-checkin-davi') return;
+                const requisicao = String(dados.requisicao || '');
+                const item = sincronizacoesCheckin.get(requisicao);
+                if (!item) return;
+                sincronizacoesCheckin.delete(requisicao);
+                liberarSincronizacao(item);
+
+                if (dados.ok) {
+                    aplicarEstadoCheckin(item.botao, String(dados.feito) === '1');
+                    return;
+                }
+
+                aplicarEstadoCheckin(item.botao, item.estadoAnterior);
+                item.botao.textContent = '⚠️ Não foi possível salvar • toque novamente';
+                setTimeout(() => aplicarEstadoCheckin(item.botao, item.estadoAnterior), 2400);
+            });
+
+            function marcarFeitaSemRecarregar(botao) {
+                if (botao.style.pointerEvents === 'none') return;
                 const caminho = String(botao.dataset.url || '');
                 if (!caminho) {
                     botao.textContent = '⚠️ Não foi possível salvar';
                     return;
                 }
-                let destino = caminho;
+
+                let destino;
                 try {
-                    // Em um iframe srcdoc, document.baseURI aponta para a URL do app
-                    // sem exigir acesso de leitura ao documento pai.
                     destino = new URL(caminho, document.baseURI).href;
-                } catch (erroUrl) {}
-                try {
-                    window.parent.location.replace(destino);
-                } catch (erro) {
-                    // Contingência para navegadores que restringem a leitura da URL
-                    // do documento pai, mantendo ainda a navegação na mesma guia.
-                    window.top.location.href = destino;
+                } catch (erroUrl) {
+                    botao.textContent = '⚠️ Não foi possível salvar';
+                    return;
                 }
+
+                const urlSync = new URL(destino);
+                const estadoAnterior = botao.dataset.feita === '1';
+                const novoEstado = urlSync.searchParams.get('feito') === '1';
+                const requisicao = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+                aplicarEstadoCheckin(botao, novoEstado);
+                botao.textContent = novoEstado ? '✅ Marcada • salvando...' : '↩️ Desmarcando...';
+                botao.style.pointerEvents = 'none';
+                botao.style.opacity = '.78';
+
+                urlSync.searchParams.set('_sync_checkin', '1');
+                urlSync.searchParams.set('_req', requisicao);
+                urlSync.searchParams.set('_ts', String(Date.now()));
+                const frame = document.createElement('iframe');
+                frame.hidden = true;
+                frame.tabIndex = -1;
+                frame.setAttribute('aria-hidden', 'true');
+                frame.src = urlSync.href;
+
+                const item = {botao, estadoAnterior, frame, timer: null};
+                item.timer = setTimeout(() => {
+                    sincronizacoesCheckin.delete(requisicao);
+                    liberarSincronizacao(item);
+                    aplicarEstadoCheckin(botao, novoEstado);
+                }, 30000);
+                sincronizacoesCheckin.set(requisicao, item);
+                document.body.appendChild(frame);
             }
             function abrirComprovanteNaPagina(botao) {
                 // O formulário é renderizado pelo Streamlit fora deste iframe.
