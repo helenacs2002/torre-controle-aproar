@@ -537,6 +537,7 @@ def _normalizar_tabelas_relatorio(dados):
         "km": "km",
         "litros": "Litros",
         "valor_litro": "Valor por litro (R$)",
+        "valor_total": "Total do lançamento (R$)",
         "manutencao": "Manutenção (R$)",
         "veiculo": "Veículo",
         "apelido": "Local",
@@ -9630,12 +9631,41 @@ if modulo_principal == "🚗 Frota e custos":
             def editor_abastecimentos():
                 df_abastec_all = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
                 if not df_abastec_all.empty:
-                    edited_abastec = st.data_editor(df_abastec_all, num_rows="dynamic", use_container_width=True, hide_index=True, key="edit_abastec")
+                    # Valor efetivo de cada lançamento:
+                    # combustível = litros x valor do litro; manutenção é somada quando existir.
+                    litros_calc = pd.to_numeric(df_abastec_all.get("litros", 0), errors="coerce").fillna(0)
+                    valor_litro_calc = pd.to_numeric(df_abastec_all.get("valor_litro", 0), errors="coerce").fillna(0)
+                    manutencao_calc = pd.to_numeric(df_abastec_all.get("manutencao", 0), errors="coerce").fillna(0)
+                    df_abastec_all["valor_total"] = (litros_calc * valor_litro_calc + manutencao_calc).round(2)
+
+                    # Mantém o total ao lado dos valores financeiros para facilitar a conferência.
+                    ordem_colunas = [
+                        coluna for coluna in ["id", "data", "litros", "valor_litro", "manutencao", "valor_total", "obs", "veiculo"]
+                        if coluna in df_abastec_all.columns
+                    ]
+                    ordem_colunas += [coluna for coluna in df_abastec_all.columns if coluna not in ordem_colunas]
+                    df_abastec_all = df_abastec_all[ordem_colunas]
+
+                    edited_abastec = st.data_editor(
+                        df_abastec_all,
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        key="edit_abastec",
+                        disabled=["valor_total"],
+                        column_config={
+                            "valor_litro": st.column_config.NumberColumn("valor_litro", format="R$ %.2f"),
+                            "manutencao": st.column_config.NumberColumn("manutencao", format="R$ %.2f"),
+                            "valor_total": st.column_config.NumberColumn("valor_total", format="R$ %.2f"),
+                        },
+                    )
                     if st.button("💾 Salvar alterações (abastecimentos)", type="primary"):
-                        edited_abastec_clean = edited_abastec.drop(columns=['id'], errors='ignore')
+                        # valor_total é calculado na tela e não existe como coluna física no banco.
+                        edited_abastec_clean = edited_abastec.drop(columns=['id', 'valor_total'], errors='ignore')
                         save_df_to_db(edited_abastec_clean, "abastecimentos")
                         carregar_abastecimentos_df.clear()
                         st.success("Abastecimentos atualizados na nuvem com sucesso!")
+                        st.rerun()
                 else:
                     st.info("Não há abastecimentos nem manutenções registradas.")
 
@@ -9659,13 +9689,29 @@ if modulo_principal == "🚗 Frota e custos":
 
             editor_quilometragem()
 
+        # Estes DataFrames precisam ser carregados aqui também. Antes eles só eram
+        # criados no submódulo "Operação e paradas", causando NameError ao abrir
+        # diretamente o Histórico editável.
+        df_inicio_relatorio = get_df(
+            'SELECT data as Data, placa as Placa, hora_inicio as "Hora de saída" '
+            'FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC'
+        )
+        df_paradas_relatorio = get_df(
+            'SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída '
+            'FROM rastreio_paradas ORDER BY id DESC LIMIT 150'
+        )
         df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
+        if not df_abastecimentos_relatorio.empty:
+            litros_rel = pd.to_numeric(df_abastecimentos_relatorio.get("litros", 0), errors="coerce").fillna(0)
+            valor_litro_rel = pd.to_numeric(df_abastecimentos_relatorio.get("valor_litro", 0), errors="coerce").fillna(0)
+            manutencao_rel = pd.to_numeric(df_abastecimentos_relatorio.get("manutencao", 0), errors="coerce").fillna(0)
+            df_abastecimentos_relatorio["valor_total"] = (litros_rel * valor_litro_rel + manutencao_rel).round(2)
         df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
         renderizar_exportador(
             "Registros e histórico da frota",
             {
-                "Inícios de rota": df_inicio,
-                "Paradas rastreadas": df_paradas_tbl,
+                "Inícios de rota": df_inicio_relatorio,
+                "Paradas rastreadas": df_paradas_relatorio,
                 "Abastecimentos e manutenção": df_abastecimentos_relatorio,
                 "Registros de quilometragem": df_quilometragens_relatorio,
             },
