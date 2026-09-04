@@ -539,6 +539,9 @@ def _normalizar_tabelas_relatorio(dados):
         "valor_litro": "Valor por litro (R$)",
         "valor_total": "Total do lançamento (R$)",
         "manutencao": "Manutenção (R$)",
+        "valor_total": "Total do lançamento (R$)",
+        "custo_combustivel": "Combustível (R$)",
+        "custo_total": "Total (R$)",
         "veiculo": "Veículo",
         "apelido": "Local",
         "endereco": "Endereço",
@@ -9706,10 +9709,89 @@ if modulo_principal == "🚗 Frota e custos":
             valor_litro_rel = pd.to_numeric(df_abastecimentos_relatorio.get("valor_litro", 0), errors="coerce").fillna(0)
             manutencao_rel = pd.to_numeric(df_abastecimentos_relatorio.get("manutencao", 0), errors="coerce").fillna(0)
             df_abastecimentos_relatorio["valor_total"] = (litros_rel * valor_litro_rel + manutencao_rel).round(2)
+
+        # ---------------------------------------------------------------
+        # RESUMO MENSAL DE CUSTOS
+        # Uma linha por mês: o relatório deixa de obrigar a somar manualmente
+        # dezenas de abastecimentos/manutenções misturados no histórico.
+        # ---------------------------------------------------------------
+        colunas_resumo_mensal = [
+            "Mês", "Combustível (R$)", "Manutenção (R$)", "Total (R$)",
+            "Litros", "Preço médio/L (R$)", "Abastecimentos", "Manutenções", "Lançamentos",
+        ]
+        df_resumo_mensal_custos = pd.DataFrame(columns=colunas_resumo_mensal)
+
+        if not df_abastecimentos_relatorio.empty:
+            base_mensal = df_abastecimentos_relatorio.copy()
+            base_mensal["_data_dt"] = pd.to_datetime(base_mensal.get("data"), format="%d/%m/%Y", errors="coerce")
+            base_mensal["_litros"] = pd.to_numeric(base_mensal.get("litros", 0), errors="coerce").fillna(0.0)
+            base_mensal["_valor_litro"] = pd.to_numeric(base_mensal.get("valor_litro", 0), errors="coerce").fillna(0.0)
+            base_mensal["_manutencao"] = pd.to_numeric(base_mensal.get("manutencao", 0), errors="coerce").fillna(0.0)
+            base_mensal["_combustivel"] = base_mensal["_litros"] * base_mensal["_valor_litro"]
+            base_mensal["_total"] = base_mensal["_combustivel"] + base_mensal["_manutencao"]
+            base_mensal = base_mensal.dropna(subset=["_data_dt"]).copy()
+
+            if not base_mensal.empty:
+                base_mensal["_mes_periodo"] = base_mensal["_data_dt"].dt.to_period("M")
+                base_mensal["_eh_abastecimento"] = (base_mensal["_litros"] > 0).astype(int)
+                base_mensal["_eh_manutencao"] = (base_mensal["_manutencao"] > 0).astype(int)
+
+                agrupado_mensal = (
+                    base_mensal.groupby("_mes_periodo", as_index=False)
+                    .agg(
+                        litros=("_litros", "sum"),
+                        combustivel=("_combustivel", "sum"),
+                        manutencao=("_manutencao", "sum"),
+                        total=("_total", "sum"),
+                        abastecimentos=("_eh_abastecimento", "sum"),
+                        manutencoes=("_eh_manutencao", "sum"),
+                        lancamentos=("_total", "size"),
+                    )
+                    .sort_values("_mes_periodo", ascending=False)
+                )
+                agrupado_mensal["preco_medio"] = agrupado_mensal.apply(
+                    lambda linha: linha["combustivel"] / linha["litros"] if linha["litros"] > 0 else 0.0,
+                    axis=1,
+                )
+
+                df_resumo_mensal_custos = pd.DataFrame({
+                    "Mês": agrupado_mensal["_mes_periodo"].astype(str).map(
+                        lambda valor: f"{valor[5:7]}/{valor[:4]}" if len(valor) == 7 else valor
+                    ),
+                    "Combustível (R$)": agrupado_mensal["combustivel"].round(2),
+                    "Manutenção (R$)": agrupado_mensal["manutencao"].round(2),
+                    "Total (R$)": agrupado_mensal["total"].round(2),
+                    "Litros": agrupado_mensal["litros"].round(2),
+                    "Preço médio/L (R$)": agrupado_mensal["preco_medio"].round(2),
+                    "Abastecimentos": agrupado_mensal["abastecimentos"].astype(int),
+                    "Manutenções": agrupado_mensal["manutencoes"].astype(int),
+                    "Lançamentos": agrupado_mensal["lancamentos"].astype(int),
+                })[colunas_resumo_mensal]
+
+        st.markdown("#### 📅 Resumo mensal de combustível e manutenção")
+        st.caption("Totais consolidados por mês. Combustível é calculado por litros × valor do litro; manutenção é somada separadamente.")
+        if df_resumo_mensal_custos.empty:
+            st.info("Ainda não há lançamentos com data válida para montar o resumo mensal.")
+        else:
+            st.dataframe(
+                df_resumo_mensal_custos,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Combustível (R$)": st.column_config.NumberColumn("Combustível (R$)", format="R$ %.2f"),
+                    "Manutenção (R$)": st.column_config.NumberColumn("Manutenção (R$)", format="R$ %.2f"),
+                    "Total (R$)": st.column_config.NumberColumn("Total (R$)", format="R$ %.2f"),
+                    "Preço médio/L (R$)": st.column_config.NumberColumn("Preço médio/L (R$)", format="R$ %.2f"),
+                    "Litros": st.column_config.NumberColumn("Litros", format="%.2f L"),
+                },
+            )
+
         df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
         renderizar_exportador(
             "Registros e histórico da frota",
             {
+                # O resumo vem primeiro e, no Excel, ganha uma aba própria.
+                "Resumo mensal de custos": df_resumo_mensal_custos,
                 "Inícios de rota": df_inicio_relatorio,
                 "Paradas rastreadas": df_paradas_relatorio,
                 "Abastecimentos e manutenção": df_abastecimentos_relatorio,
