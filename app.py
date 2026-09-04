@@ -736,6 +736,25 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         adicionar("Litros médios por abastecimento", f"{numero_br(litros.mean(), 1)} L" if len(litros) else None)
         adicionar("Custo médio por lançamento", moeda_br(numeros(gastos, "Total (R$)").dropna().mean()) if len(numeros(gastos, "Total (R$)").dropna()) else None)
 
+    elif "custos da frota" in titulo_norm:
+        comparativo = next((df for nome, df in tabelas if "comparativo mensal" in normalizar(nome)), pd.DataFrame())
+        if not comparativo.empty:
+            combustivel = numeros(comparativo, "Combustível (R$)", "Combustivel (R$)").fillna(0)
+            manutencao = numeros(comparativo, "Manutenção (R$)", "Manutencao (R$)").fillna(0)
+            total = numeros(comparativo, "Total (R$)").fillna(0)
+            total_periodo = float(total.sum())
+            combustivel_total = float(combustivel.sum())
+            manutencao_total = float(manutencao.sum())
+            adicionar("Gasto total", moeda_br(total_periodo))
+            adicionar("Combustível", moeda_br(combustivel_total))
+            adicionar("Manutenção", moeda_br(manutencao_total))
+            adicionar("Média mensal", moeda_br(total.mean()) if len(total) else moeda_br(0))
+            mes_col = localizar_coluna(comparativo, "Mês", "Mes")
+            if mes_col and len(total):
+                indice_maior = total.idxmax()
+                adicionar("Mês de maior gasto", f"{comparativo.loc[indice_maior, mes_col]} • {moeda_br(total.loc[indice_maior])}")
+            adicionar("Meses analisados", len(comparativo))
+
     elif "registros e historico da frota" in titulo_norm:
         inicios = next((df for nome, df in tabelas if "inicios de rota" in normalizar(nome)), pd.DataFrame())
         paradas = next((df for nome, df in tabelas if "paradas rastreadas" in normalizar(nome)), pd.DataFrame())
@@ -851,6 +870,9 @@ def _organizar_secoes_relatorio(titulo, tabelas):
         preferencias = ["resumo da rota", "ordem da rota", "paradas e demandas", "paradas"]
     elif "fechamento" in titulo_norm:
         preferencias = ["resumo", "gastos"]
+    elif "custos da frota" in titulo_norm:
+        # No relatório de custos, o comparativo mensal é a página principal.
+        preferencias = ["comparativo mensal", "resumo por veiculo", "lancamentos"]
     elif "registros e historico" in titulo_norm:
         preferencias = ["paradas rastreadas", "abastecimentos e manutencao"]
     for preferencia in preferencias:
@@ -1028,7 +1050,10 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
 
     resumo_analitico, secoes_dados, _ = _organizar_secoes_relatorio(titulo, tabelas)
     tabelas_excel = list(secoes_dados)
-    if not resumo_analitico.empty:
+    relatorio_custos_frota = "custos da frota" in remover_acentos(str(titulo)).lower()
+    # No relatório de custos, os KPIs já aparecem na primeira aba; evita uma aba
+    # extra de "Resumo Analítico" repetindo a mesma informação.
+    if not resumo_analitico.empty and not relatorio_custos_frota:
         tabelas_excel.insert(1 if tabelas_excel else 0, ("Resumo Analítico", resumo_analitico))
     if not tabelas_excel:
         tabelas_excel = list(tabelas)
@@ -1212,6 +1237,56 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
                         if "observacao" in remover_acentos(str(coluna)).lower() and len(df):
                             intervalo = (inicio_tabela + 1, indice, inicio_tabela + len(df), indice)
                             worksheet.conditional_format(*intervalo, {"type": "text", "criteria": "containing", "value": "corre", "format": workbook.add_format({"bg_color": "#FEF3C7", "font_color": "#92400E"})})
+
+                # Comparativo visual entre os meses — exclusivo do relatório de custos.
+                nome_aba_norm = remover_acentos(str(nome_aba)).lower()
+                if relatorio_custos_frota and "comparativo mensal" in nome_aba_norm and len(df):
+                    colunas_por_nome = {str(coluna): indice for indice, coluna in enumerate(df.columns)}
+                    if all(coluna in colunas_por_nome for coluna in ("Mês", "Combustível (R$)", "Manutenção (R$)")):
+                        grafico_df = df[["Mês", "Combustível (R$)", "Manutenção (R$)"]].copy()
+                        grafico_df["_ordem"] = pd.to_datetime(
+                            "01/" + grafico_df["Mês"].astype(str), format="%d/%m/%Y", errors="coerce"
+                        )
+                        grafico_df = grafico_df.sort_values("_ordem").tail(12)
+
+                        # Dados auxiliares ficam ocultos para o gráfico manter ordem cronológica,
+                        # enquanto a tabela visível continua mostrando o mês mais recente primeiro.
+                        coluna_aux = max(18, len(df.columns) + 3)
+                        worksheet.write(0, coluna_aux, "Mês")
+                        worksheet.write(0, coluna_aux + 1, "Combustível")
+                        worksheet.write(0, coluna_aux + 2, "Manutenção")
+                        for posicao, (_, linha_grafico) in enumerate(grafico_df.iterrows(), start=1):
+                            worksheet.write(posicao, coluna_aux, str(linha_grafico["Mês"]))
+                            worksheet.write_number(posicao, coluna_aux + 1, float(linha_grafico["Combustível (R$)"] or 0))
+                            worksheet.write_number(posicao, coluna_aux + 2, float(linha_grafico["Manutenção (R$)"] or 0))
+                        worksheet.set_column(coluna_aux, coluna_aux + 2, None, None, {"hidden": True})
+
+                        grafico = workbook.add_chart({"type": "column", "subtype": "stacked"})
+                        primeira = 1
+                        ultima = len(grafico_df)
+                        grafico.add_series({
+                            "name": "Combustível",
+                            "categories": [nome_aba, primeira, coluna_aux, ultima, coluna_aux],
+                            "values": [nome_aba, primeira, coluna_aux + 1, ultima, coluna_aux + 1],
+                            "fill": {"color": "#2563EB"},
+                            "border": {"none": True},
+                        })
+                        grafico.add_series({
+                            "name": "Manutenção",
+                            "categories": [nome_aba, primeira, coluna_aux, ultima, coluna_aux],
+                            "values": [nome_aba, primeira, coluna_aux + 2, ultima, coluna_aux + 2],
+                            "fill": {"color": "#0F172A"},
+                            "border": {"none": True},
+                        })
+                        grafico.set_title({"name": "Comparativo mensal de custos"})
+                        grafico.set_y_axis({"name": "Gasto (R$)", "num_format": 'R$ #,##0'})
+                        grafico.set_x_axis({"name": "Mês"})
+                        grafico.set_legend({"position": "bottom"})
+                        grafico.set_chartarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
+                        grafico.set_plotarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
+                        grafico.set_size({"width": 670, "height": 320})
+                        worksheet.insert_chart(6, 6, grafico)
+                        worksheet.set_column(6, 13, 12)
         return saida.getvalue()
     except (ImportError, ModuleNotFoundError):
         pass
@@ -1219,6 +1294,7 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
     try:
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
+        from openpyxl.chart import BarChart, Reference
         saida = io.BytesIO()
         with pd.ExcelWriter(saida, engine="openpyxl") as escritor:
             usados = set()
@@ -1272,6 +1348,31 @@ def _criar_excel_relatorio(tabelas, titulo="Relatório Operacional"):
                         if coluna_identificador(coluna): ws.cell(linha, indice).number_format = "@"
                 if nome_aba == "Resumo Analítico":
                     for linha in range(linha_cabecalho + 1, linha_cabecalho + 1 + len(df)): ws.row_dimensions[linha].height = 32
+
+                # Fallback openpyxl: mantém o gráfico mesmo se xlsxwriter não estiver instalado.
+                if relatorio_custos_frota and "comparativo mensal" in remover_acentos(str(nome_aba)).lower() and len(df):
+                    colunas_excel = {str(coluna): indice + 1 for indice, coluna in enumerate(df.columns)}
+                    if all(coluna in colunas_excel for coluna in ("Mês", "Combustível (R$)", "Manutenção (R$)")):
+                        grafico = BarChart()
+                        grafico.type = "col"
+                        grafico.style = 10
+                        grafico.grouping = "stacked"
+                        grafico.overlap = 100
+                        grafico.title = "Comparativo mensal de custos"
+                        grafico.y_axis.title = "Gasto (R$)"
+                        grafico.x_axis.title = "Mês"
+                        linha_primeiro_dado = linha_cabecalho + 1
+                        linha_ultimo_dado = linha_cabecalho + len(df)
+                        dados_comb = Reference(ws, min_col=colunas_excel["Combustível (R$)"], min_row=linha_cabecalho, max_row=linha_ultimo_dado)
+                        dados_manut = Reference(ws, min_col=colunas_excel["Manutenção (R$)"], min_row=linha_cabecalho, max_row=linha_ultimo_dado)
+                        categorias = Reference(ws, min_col=colunas_excel["Mês"], min_row=linha_primeiro_dado, max_row=linha_ultimo_dado)
+                        grafico.add_data(dados_comb, titles_from_data=True)
+                        grafico.add_data(dados_manut, titles_from_data=True)
+                        grafico.set_categories(categorias)
+                        grafico.height = 8.3
+                        grafico.width = 15.5
+                        grafico.legend.position = "b"
+                        ws.add_chart(grafico, "G7")
         return saida.getvalue()
     except (ImportError, ModuleNotFoundError):
         pass
@@ -1604,6 +1705,67 @@ def _criar_pdf_relatorio(titulo, tabelas):
             ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
         elementos.extend([painel_kpi, Spacer(1, 6)])
+
+    # No relatório de custos, o comparativo entre meses aparece visualmente logo
+    # após os indicadores, antes das tabelas detalhadas.
+    if "custos da frota" in remover_acentos(titulo_limpo).lower():
+        comparativo_pdf = next(
+            (df for nome, df in secoes_dados if "comparativo mensal" in remover_acentos(str(nome)).lower()),
+            pd.DataFrame(),
+        )
+        if not comparativo_pdf.empty and all(
+            coluna in comparativo_pdf.columns for coluna in ("Mês", "Combustível (R$)", "Manutenção (R$)")
+        ):
+            try:
+                from reportlab.graphics.shapes import Drawing
+                from reportlab.graphics.charts.barcharts import VerticalBarChart
+                from reportlab.graphics.charts.legends import Legend
+
+                grafico_pdf_df = comparativo_pdf[["Mês", "Combustível (R$)", "Manutenção (R$)"]].copy()
+                grafico_pdf_df["_ordem"] = pd.to_datetime(
+                    "01/" + grafico_pdf_df["Mês"].astype(str), format="%d/%m/%Y", errors="coerce"
+                )
+                grafico_pdf_df = grafico_pdf_df.sort_values("_ordem").tail(12)
+                combustivel_pdf = pd.to_numeric(grafico_pdf_df["Combustível (R$)"], errors="coerce").fillna(0).tolist()
+                manutencao_pdf = pd.to_numeric(grafico_pdf_df["Manutenção (R$)"], errors="coerce").fillna(0).tolist()
+
+                desenho = Drawing(largura_util, 175)
+                barras = VerticalBarChart()
+                barras.x = 45
+                barras.y = 34
+                barras.height = 112
+                barras.width = largura_util - 130
+                barras.data = [combustivel_pdf, manutencao_pdf]
+                barras.categoryAxis.categoryNames = grafico_pdf_df["Mês"].astype(str).tolist()
+                barras.categoryAxis.labels.fontName = "Helvetica"
+                barras.categoryAxis.labels.fontSize = 7
+                barras.valueAxis.labels.fontName = "Helvetica"
+                barras.valueAxis.labels.fontSize = 7
+                barras.valueAxis.valueMin = 0
+                barras.valueAxis.labelTextFormat = lambda valor: f"R$ {valor/1000:.1f}k" if abs(valor) >= 1000 else f"R$ {valor:.0f}"
+                barras.bars[0].fillColor = teal
+                barras.bars[1].fillColor = cinza_escuro
+                barras.bars.strokeColor = None
+                barras.groupSpacing = 10
+                barras.barSpacing = 2
+                desenho.add(barras)
+
+                legenda = Legend()
+                legenda.x = largura_util - 68
+                legenda.y = 135
+                legenda.fontName = "Helvetica"
+                legenda.fontSize = 7
+                legenda.colorNamePairs = [(teal, "Combustível"), (cinza_escuro, "Manutenção")]
+                desenho.add(legenda)
+
+                elementos.extend([
+                    Paragraph("COMPARATIVO ENTRE OS MESES", estilo_secao),
+                    Spacer(1, 3),
+                    desenho,
+                    Spacer(1, 5),
+                ])
+            except Exception:
+                pass
 
     for indice_secao, (nome, df_original) in enumerate(secoes_dados):
         nome_secao_norm = remover_acentos(str(nome)).lower()
@@ -9692,17 +9854,6 @@ if modulo_principal == "🚗 Frota e custos":
 
             editor_quilometragem()
 
-        # Estes DataFrames precisam ser carregados aqui também. Antes eles só eram
-        # criados no submódulo "Operação e paradas", causando NameError ao abrir
-        # diretamente o Histórico editável.
-        df_inicio_relatorio = get_df(
-            'SELECT data as Data, placa as Placa, hora_inicio as "Hora de saída" '
-            'FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC'
-        )
-        df_paradas_relatorio = get_df(
-            'SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída '
-            'FROM rastreio_paradas ORDER BY id DESC LIMIT 150'
-        )
         df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
         if not df_abastecimentos_relatorio.empty:
             litros_rel = pd.to_numeric(df_abastecimentos_relatorio.get("litros", 0), errors="coerce").fillna(0)
@@ -9787,8 +9938,32 @@ if modulo_principal == "🚗 Frota e custos":
                     "Total (R$)": agrupado_mensal["total"].round(2),
                 })[colunas_resumo_mensal]
 
+        # Comparativo consolidado: uma linha por mês. É a base do gráfico do relatório.
+        df_comparativo_mensal = pd.DataFrame(
+            columns=["Mês", "Combustível (R$)", "Manutenção (R$)", "Total (R$)", "Variação vs mês anterior (%)"]
+        )
+        if not df_resumo_mensal_custos.empty:
+            df_comparativo_mensal = df_resumo_mensal_custos[
+                df_resumo_mensal_custos["Veículo"] == "TOTAL DO MÊS"
+            ][["Mês", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]].copy()
+            df_comparativo_mensal["_ordem"] = pd.to_datetime(
+                "01/" + df_comparativo_mensal["Mês"].astype(str), format="%d/%m/%Y", errors="coerce"
+            )
+            df_comparativo_mensal = df_comparativo_mensal.sort_values("_ordem")
+            df_comparativo_mensal["Variação vs mês anterior (%)"] = (
+                pd.to_numeric(df_comparativo_mensal["Total (R$)"], errors="coerce")
+                .pct_change(fill_method=None)
+                .mul(100)
+                .round(1)
+            )
+            df_comparativo_mensal = (
+                df_comparativo_mensal.sort_values("_ordem", ascending=False)
+                .drop(columns=["_ordem"])
+                .reset_index(drop=True)
+            )
+
         st.markdown("#### 📅 Custos mensais por veículo")
-        st.caption("Visão rápida: combustível, manutenção e gasto total de cada carro em cada mês.")
+        st.caption("Selecione o mês para ver somente o fechamento desejado. O relatório mantém o comparativo de todos os meses.")
 
         if df_resumo_mensal_custos.empty:
             st.info("Ainda não há lançamentos com data válida para montar o resumo mensal.")
@@ -9800,53 +9975,84 @@ if modulo_principal == "🚗 Frota e custos":
                     numero = 0.0
                 return f"R$ {numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-            for mes in df_resumo_mensal_custos["Mês"].drop_duplicates().tolist():
-                dados_mes = df_resumo_mensal_custos[df_resumo_mensal_custos["Mês"] == mes]
+            meses_disponiveis = df_resumo_mensal_custos["Mês"].drop_duplicates().tolist()
+            mes_selecionado = st.selectbox(
+                "Mês para visualizar",
+                meses_disponiveis,
+                index=0,
+                key="mes_resumo_custos_frota",
+            )
+            dados_mes = df_resumo_mensal_custos[df_resumo_mensal_custos["Mês"] == mes_selecionado]
 
-                def _linha_veiculo(nome):
-                    linhas = dados_mes[dados_mes["Veículo"] == nome]
-                    if linhas.empty:
-                        return {"Combustível (R$)": 0.0, "Manutenção (R$)": 0.0, "Total (R$)": 0.0}
-                    return linhas.iloc[0]
+            def _linha_veiculo(nome):
+                linhas = dados_mes[dados_mes["Veículo"] == nome]
+                if linhas.empty:
+                    return {"Combustível (R$)": 0.0, "Manutenção (R$)": 0.0, "Total (R$)": 0.0}
+                return linhas.iloc[0]
 
-                strada = _linha_veiculo("Strada")
-                l200 = _linha_veiculo("L200")
-                total_mes = _linha_veiculo("TOTAL DO MÊS")
+            strada = _linha_veiculo("Strada")
+            l200 = _linha_veiculo("L200")
+            total_mes = _linha_veiculo("TOTAL DO MÊS")
 
-                with st.container(border=True):
-                    st.markdown(f"##### {mes}")
-                    col_strada, col_l200, col_total = st.columns(3)
+            with st.container(border=True):
+                st.markdown(f"##### {mes_selecionado}")
+                col_strada, col_l200, col_total = st.columns(3)
 
-                    with col_strada:
-                        st.markdown("**🚙 Strada**")
-                        st.metric("Gasto no mês", _moeda_resumo(strada["Total (R$)"]))
-                        st.caption(f"⛽ Combustível: **{_moeda_resumo(strada['Combustível (R$)'])}**")
-                        st.caption(f"🛠️ Manutenção: **{_moeda_resumo(strada['Manutenção (R$)'])}**")
+                with col_strada:
+                    st.markdown("**🚙 Strada**")
+                    st.metric("Gasto no mês", _moeda_resumo(strada["Total (R$)"]))
+                    st.caption(f"⛽ Combustível: **{_moeda_resumo(strada['Combustível (R$)'])}**")
+                    st.caption(f"🛠️ Manutenção: **{_moeda_resumo(strada['Manutenção (R$)'])}**")
 
-                    with col_l200:
-                        st.markdown("**🛻 L200**")
-                        st.metric("Gasto no mês", _moeda_resumo(l200["Total (R$)"]))
-                        st.caption(f"⛽ Combustível: **{_moeda_resumo(l200['Combustível (R$)'])}**")
-                        st.caption(f"🛠️ Manutenção: **{_moeda_resumo(l200['Manutenção (R$)'])}**")
+                with col_l200:
+                    st.markdown("**🛻 L200**")
+                    st.metric("Gasto no mês", _moeda_resumo(l200["Total (R$)"]))
+                    st.caption(f"⛽ Combustível: **{_moeda_resumo(l200['Combustível (R$)'])}**")
+                    st.caption(f"🛠️ Manutenção: **{_moeda_resumo(l200['Manutenção (R$)'])}**")
 
-                    with col_total:
-                        st.markdown("**📊 Total do mês**")
-                        st.metric("Gasto total", _moeda_resumo(total_mes["Total (R$)"]))
-                        st.caption(f"⛽ Combustível: **{_moeda_resumo(total_mes['Combustível (R$)'])}**")
-                        st.caption(f"🛠️ Manutenção: **{_moeda_resumo(total_mes['Manutenção (R$)'])}**")
+                with col_total:
+                    st.markdown("**📊 Total do mês**")
+                    st.metric("Gasto total", _moeda_resumo(total_mes["Total (R$)"]))
+                    st.caption(f"⛽ Combustível: **{_moeda_resumo(total_mes['Combustível (R$)'])}**")
+                    st.caption(f"🛠️ Manutenção: **{_moeda_resumo(total_mes['Manutenção (R$)'])}**")
 
-        df_quilometragens_relatorio = carregar_registro_km_df().sort_values("id", ascending=False).reset_index(drop=True)
+        # Relatório de custos enxuto: comparativo mensal + separação por veículo +
+        # lançamentos de conferência. Dados de rastreamento/rotas não entram aqui.
+        df_resumo_por_veiculo_relatorio = df_resumo_mensal_custos[
+            df_resumo_mensal_custos["Veículo"] != "TOTAL DO MÊS"
+        ].reset_index(drop=True) if not df_resumo_mensal_custos.empty else pd.DataFrame(
+            columns=["Mês", "Veículo", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]
+        )
+
+        df_lancamentos_custos = pd.DataFrame()
+        if not df_abastecimentos_relatorio.empty:
+            df_lancamentos_custos = df_abastecimentos_relatorio.copy()
+            litros_lanc = pd.to_numeric(df_lancamentos_custos.get("litros", 0), errors="coerce").fillna(0.0)
+            valor_litro_lanc = pd.to_numeric(df_lancamentos_custos.get("valor_litro", 0), errors="coerce").fillna(0.0)
+            manut_lanc = pd.to_numeric(df_lancamentos_custos.get("manutencao", 0), errors="coerce").fillna(0.0)
+            df_lancamentos_custos["Combustível (R$)"] = (litros_lanc * valor_litro_lanc).round(2)
+            df_lancamentos_custos["Total (R$)"] = (df_lancamentos_custos["Combustível (R$)"] + manut_lanc).round(2)
+            colunas_lancamentos = [
+                coluna for coluna in ["data", "veiculo", "litros", "valor_litro", "Combustível (R$)", "manutencao", "Total (R$)", "obs"]
+                if coluna in df_lancamentos_custos.columns
+            ]
+            df_lancamentos_custos = df_lancamentos_custos[colunas_lancamentos].rename(columns={
+                "data": "Data",
+                "veiculo": "Veículo",
+                "litros": "Litros",
+                "valor_litro": "Preço/L (R$)",
+                "manutencao": "Manutenção (R$)",
+                "obs": "Observação",
+            })
+
         renderizar_exportador(
-            "Registros e histórico da frota",
+            "Custos da frota — comparativo mensal",
             {
-                # O resumo vem primeiro e, no Excel, ganha uma aba própria.
-                "Resumo mensal de custos": df_resumo_mensal_custos,
-                "Inícios de rota": df_inicio_relatorio,
-                "Paradas rastreadas": df_paradas_relatorio,
-                "Abastecimentos e manutenção": df_abastecimentos_relatorio,
-                "Registros de quilometragem": df_quilometragens_relatorio,
+                "Comparativo mensal": df_comparativo_mensal,
+                "Resumo por veículo": df_resumo_por_veiculo_relatorio,
+                "Lançamentos": df_lancamentos_custos,
             },
-            "registros_da_frota", "registros",
+            "custos_da_frota", "custos_frota",
         )
 
 if modulo_principal == "🗺️ Roteiro do Davi":
