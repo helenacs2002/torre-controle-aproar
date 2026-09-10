@@ -92,6 +92,35 @@ def carregar_abastecimentos_df():
 def carregar_registro_km_df():
     return get_df("SELECT * FROM registro_km")
 
+
+def calcular_combustivel_registrado(df):
+    """Retorna o valor financeiro de combustível de cada lançamento.
+
+    Lançamentos novos gravam diretamente ``combustivel`` em reais. Registros
+    antigos continuam compatíveis: quando esse campo ainda está zerado, o valor
+    é recuperado de ``litros * valor_litro``. Assim a interface pode abandonar
+    litros/preço por litro sem perder o histórico já existente.
+    """
+    if df is None or len(df) == 0:
+        return pd.Series(dtype="float64")
+    indice = getattr(df, "index", None)
+    direto = pd.to_numeric(
+        df["combustivel"] if "combustivel" in df.columns else pd.Series(0.0, index=indice),
+        errors="coerce",
+    ).fillna(0.0)
+    litros = pd.to_numeric(
+        df["litros"] if "litros" in df.columns else pd.Series(0.0, index=indice),
+        errors="coerce",
+    ).fillna(0.0)
+    valor_litro = pd.to_numeric(
+        df["valor_litro"] if "valor_litro" in df.columns else pd.Series(0.0, index=indice),
+        errors="coerce",
+    ).fillna(0.0)
+    legado = litros * valor_litro
+    # A coluna nova recebe 0 nos registros legados durante a migração; por isso
+    # só substituímos o cálculo antigo quando existe um valor direto positivo.
+    return direto.where(direto > 0, legado).astype("float64")
+
 # =====================================================================
 # DICIONÁRIO INTELIGENTE DE SINÔNIMOS E ERROS DE DIGITAÇÃO
 # =====================================================================
@@ -412,13 +441,18 @@ def renderizar_cabecalho_motorista():
     """, unsafe_allow_html=True)
 
 
-def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=None, locais=None):
+def renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos=None, locais=None, concluidos_extras=None):
+    concluidos_extras = set(concluidos_extras or [])
     paradas = [
         (indice, etapa) for indice, etapa in enumerate(route_steps or [])
         if etapa.get("type") == "stop" and not (indice == 0)
     ]
-    concluidas = sum(1 for _, etapa in paradas if etapa.get("is_concluded"))
-    proxima = next(((indice, etapa) for indice, etapa in paradas if not etapa.get("is_concluded")), None)
+
+    def _resumo_concluida(indice, etapa):
+        return bool(etapa.get("is_concluded")) or indice in concluidos_extras
+
+    concluidas = sum(1 for indice, etapa in paradas if _resumo_concluida(indice, etapa))
+    proxima = next(((indice, etapa) for indice, etapa in paradas if not _resumo_concluida(indice, etapa)), None)
     destino = str(proxima[1].get("destino", "Rota concluída")) if proxima else "Rota concluída"
     chegada = str(proxima[1].get("dyn_chegada", "--:--")) if proxima else format_mins_to_time(final_dyn_min)
     numero = (paradas.index(proxima) + 1) if proxima in paradas else len(paradas)
@@ -535,8 +569,7 @@ def _normalizar_tabelas_relatorio(dados):
         "obs": "Observação",
         "data": "Data",
         "km": "km",
-        "litros": "Litros",
-        "valor_litro": "Valor por litro (R$)",
+        "combustivel": "Combustível (R$)",
         "valor_total": "Total do lançamento (R$)",
         "manutencao": "Manutenção (R$)",
         "valor_total": "Total do lançamento (R$)",
@@ -732,8 +765,6 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         adicionar("Total de combustível", moeda_br(combustivel), f"{numero_br(100 * combustivel / custo_total, 1)}% do custo total." if custo_total else "")
         adicionar("Total de manutenção", moeda_br(manutencao), f"{numero_br(100 * manutencao / custo_total, 1)}% do custo total." if custo_total else "")
         gastos = pd.concat([df for nome, df in tabelas if normalizar(nome).startswith("gastos") and not df.empty], ignore_index=True) if any(normalizar(nome).startswith("gastos") and not df.empty for nome, df in tabelas) else pd.DataFrame()
-        litros = numeros(gastos, "Litros").dropna()
-        adicionar("Litros médios por abastecimento", f"{numero_br(litros.mean(), 1)} L" if len(litros) else None)
         adicionar("Custo médio por lançamento", moeda_br(numeros(gastos, "Total (R$)").dropna().mean()) if len(numeros(gastos, "Total (R$)").dropna()) else None)
 
     elif "custos da frota" in titulo_norm:
@@ -770,13 +801,10 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
         adicionar("Tempo médio por parada", f"{numero_br(media_parada, 1)} min" if media_parada is not None else None, "Considera paradas com chegada e saída registradas.")
         locais_col = localizar_coluna(paradas, "Local") if not paradas.empty else None
         adicionar("Locais distintos visitados", int(paradas[locais_col].astype(str).nunique()) if locais_col else None)
-        litros = numeros(abastecimentos, "Litros").dropna()
-        valor_litro = numeros(abastecimentos, "Valor por litro (R$)", "valor_litro").dropna()
         manutencao = numeros(abastecimentos, "Manutenção (R$)", "manutencao").fillna(0)
-        combustivel_total = float((numeros(abastecimentos, "Litros").fillna(0) * numeros(abastecimentos, "Valor por litro (R$)", "valor_litro").fillna(0)).sum()) if not abastecimentos.empty else 0
-        adicionar("Litros médios por abastecimento", f"{numero_br(litros.mean(), 1)} L" if len(litros) else None)
-        adicionar("Preço médio do litro", moeda_br(valor_litro.mean()) if len(valor_litro) else None)
-        adicionar("Custo total registrado", moeda_br(combustivel_total + manutencao.sum()), "Soma do combustível calculado e das manutenções registradas.")
+        combustivel = numeros(abastecimentos, "Combustível (R$)", "combustivel").fillna(0)
+        combustivel_total = float(combustivel.sum()) if len(combustivel) else 0
+        adicionar("Custo total registrado", moeda_br(combustivel_total + manutencao.sum()), "Soma do combustível e das manutenções registradas.")
         kms = numeros(quilometragens, "KM").dropna()
         adicionar("Quilometragem total registrada", f"{numero_br(kms.sum(), 1)} km" if len(kms) else None)
         adicionar("Quilometragem média por registro", f"{numero_br(kms.mean(), 1)} km" if len(kms) else None)
@@ -3857,10 +3885,44 @@ if modo_davi:
 
     route_steps = atualizar_tempos_deslocamento_operacionais(route_steps, hora_inicio_real)
     route_steps, final_dyn_min = aplicar_tempos_dinamicos(route_steps, dict_concluidos_mobile, hora_inicio_real)
-    
+
+    # Uma parada é considerada cumprida no app quando recebeu baixa real no
+    # sistema/Trello OU quando o motorista a marcou manualmente como feita.
+    # Essa mesma regra alimenta resumo, roteiro e mapa para evitar estados
+    # contraditórios entre as três áreas da tela.
+    def _etapa_operacional_davi(indice, etapa):
+        return (
+            etapa.get("type") == "stop"
+            and not (indice == 0 and str(etapa.get("destino", "") or "") == p_saida)
+            and bool(etapa.get("actions"))
+        )
+
+    def _etapa_concluida_davi(indice, etapa):
+        return bool(etapa.get("is_concluded")) or bool(dict_checkins_mobile.get(indice))
+
+    paradas_operacionais_davi = [
+        (indice, etapa) for indice, etapa in enumerate(route_steps)
+        if _etapa_operacional_davi(indice, etapa)
+    ]
+    paradas_pendentes_davi = [
+        (indice, etapa) for indice, etapa in paradas_operacionais_davi
+        if not _etapa_concluida_davi(indice, etapa)
+    ]
+    todas_paradas_planejadas_concluidas = bool(paradas_operacionais_davi) and not paradas_pendentes_davi
+
+    # Mantém a numeração original das paradas no mapa mesmo quando as já
+    # concluídas deixam de aparecer nele.
+    numero_original_parada_davi = {
+        indice: numero
+        for numero, (indice, _etapa) in enumerate(paradas_operacionais_davi, start=1)
+    }
+
     hora_atual_str = AGORA_REAL.strftime("%H:%M")
     nova_previsao_str = format_mins_to_time(final_dyn_min)
-    renderizar_resumo_motorista(route_steps, total_km, final_dyn_min, enderecos_dict, locais_dict)
+    renderizar_resumo_motorista(
+        route_steps, total_km, final_dyn_min, enderecos_dict, locais_dict,
+        concluidos_extras=dict_checkins_mobile.keys(),
+    )
 
 
     # ---------------------------------------------------------------
@@ -4200,18 +4262,32 @@ if modo_davi:
                     st.caption("Envie pelo menos uma foto para liberar a finalização desta entrega.")
 
 
+    if todas_paradas_planejadas_concluidas:
+        kicker_roteiro_davi = "ROTA CONCLUÍDA"
+        titulo_roteiro_davi = "Rota finalizada"
+        ajuda_roteiro_davi = "Todas as paradas planejadas de hoje foram concluídas."
+        # Enquanto o dia está em andamento, as paradas concluídas continuam no
+        # roteiro com a baixa visível. Somente quando a ÚLTIMA parada planejada
+        # for concluída o roteiro inteiro some, deixando apenas o encerramento.
+        route_steps_exibicao_davi = []
+    else:
+        kicker_roteiro_davi = "ROTA EM EXECUÇÃO"
+        titulo_roteiro_davi = "Roteiro do dia"
+        ajuda_roteiro_davi = f"{total_km:.1f} km • deslize para os lados para trocar de parada"
+        route_steps_exibicao_davi = route_steps
+
     st.markdown(f"""
             <div class="aproar-section-anchor" id="roteiro">
-            <div class="aproar-section-kicker">ROTA EM EXECUÇÃO</div>
-            <div class="aproar-section-title">Roteiro do dia</div>
-            <div class="aproar-section-help">{total_km:.1f} km • deslize para os lados para trocar de parada</div>
+            <div class="aproar-section-kicker">{kicker_roteiro_davi}</div>
+            <div class="aproar-section-title">{titulo_roteiro_davi}</div>
+            <div class="aproar-section-help">{ajuda_roteiro_davi}</div>
         </div>
     """, unsafe_allow_html=True)
     MODO_DAVI_SIMPLES = False
     cartoes_mobile = []
     numero_parada_mobile = 1
 
-    for i, step in enumerate(route_steps):
+    for i, step in enumerate(route_steps_exibicao_davi):
         tipo_step = step.get('type', '')
         destino_step = str(step.get('destino', ''))
         is_start = (i == 0 and destino_step == p_saida)
@@ -4347,7 +4423,7 @@ if modo_davi:
 
     if MODO_DAVI_SIMPLES:
         numero_lista = 0
-        for indice_lista, etapa_lista in enumerate(route_steps):
+        for indice_lista, etapa_lista in enumerate(route_steps_exibicao_davi):
             tipo_lista = str(etapa_lista.get("type", "") or "")
             destino_lista = str(etapa_lista.get("destino", "") or "")
             inicio_lista = indice_lista == 0 and destino_lista == p_saida
@@ -4698,83 +4774,107 @@ if modo_davi:
         """.replace("__CARTOES__", "".join(cartoes_mobile)).replace("__TOTAL__", str(len(cartoes_mobile))).replace("__FOCO__", "" if foco_comprovante is None else str(foco_comprovante))
         st.components.v1.html(html_carrossel, height=550, scrolling=False)
     else:
-        st.info("A rota ainda não possui etapas para exibir.")
+        if todas_paradas_planejadas_concluidas:
+            st.success("✅ Todas as paradas planejadas de hoje foram concluídas. O roteiro foi encerrado.")
+        else:
+            st.info("A rota ainda não possui etapas para exibir.")
 
     st.divider()
-    # O mapa faz parte da tela principal do motorista e fica sempre aberto.
+    # O mapa fica sempre aberto, porém representa somente o trabalho que ainda
+    # falta. Paradas concluídas permanecem no ROTEIRO como histórico do dia, mas
+    # desaparecem do mapa assim que recebem baixa/check-in.
     st.markdown("""
         <div class="aproar-section-anchor" id="mapa-rota">
             <div class="aproar-section-kicker">VISÃO GERAL</div>
             <div class="aproar-section-title">Mapa da rota</div>
-            <div class="aproar-section-help">Trajeto, sequência e localização das paradas — sempre visível</div>
+            <div class="aproar-section-help">Somente as paradas que ainda precisam ser realizadas</div>
         </div>
     """, unsafe_allow_html=True)
-    m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
-    pontos_reais_mobile = []
-    if p_saida in locais_dict:
-        pontos_reais_mobile.append([float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])])
-    for i, step in enumerate(route_steps):
-        if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
-            _lat_r, _lon_r = locais_dict[step['destino']]
-            pontos_reais_mobile.append([float(_lat_r), float(_lon_r)])
 
-    def _escala_visual_mobile(pontos):
-        if len(pontos) < 2:
-            return 0.75
-        lat_ref = sum(p[0] for p in pontos) / len(pontos)
-        span_lat_km = (max(p[0] for p in pontos) - min(p[0] for p in pontos)) * 111.0
-        span_lon_km = (max(p[1] for p in pontos) - min(p[1] for p in pontos)) * 111.0 * max(math.cos(math.radians(lat_ref)), 0.2)
-        return max(0.70, min(2.0, max(span_lat_km, span_lon_km, 1.0) * 0.070))
+    if not paradas_pendentes_davi:
+        st.success("✅ Rota concluída — não há mais paradas pendentes no mapa.")
+    else:
+        m_mobile = folium.Map(location=[-3.7319, -38.5267], zoom_start=12, tiles="OpenStreetMap")
 
-    distancia_visual_mobile = _escala_visual_mobile(pontos_reais_mobile)
-    marcadores_posicionados_mobile = []
+        # Coordenadas exclusivamente das paradas que ainda faltam.
+        pontos_pendentes_mobile = []
+        for indice_mapa, step_mapa in paradas_pendentes_davi:
+            destino_mapa = str(step_mapa.get("destino", "") or "")
+            if destino_mapa in locais_dict:
+                lat_mapa, lon_mapa = locais_dict[destino_mapa]
+                pontos_pendentes_mobile.append([float(lat_mapa), float(lon_mapa)])
 
-    def apply_offset_mobile(lat, lon):
-        lat, lon = float(lat), float(lon)
-        if not marcadores_posicionados_mobile:
-            marcadores_posicionados_mobile.append((lat, lon))
-            return lat, lon
-        if all(calcular_distancia_km(lat, lon, p_lat, p_lon) >= distancia_visual_mobile for p_lat, p_lon in marcadores_posicionados_mobile):
-            marcadores_posicionados_mobile.append((lat, lon))
-            return lat, lon
-        for tentativa in range(1, 49):
-            anel = 1 + (tentativa - 1) // 12
-            angulo = math.radians(((tentativa - 1) % 12) * 30 + anel * 11)
-            raio_km = distancia_visual_mobile * (0.82 + 0.42 * (anel - 1))
-            dlat = (raio_km / 111.0) * math.sin(angulo)
-            dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
-            candidato = (lat + dlat, lon + dlon)
-            if all(calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= distancia_visual_mobile * 0.92 for p_lat, p_lon in marcadores_posicionados_mobile):
-                marcadores_posicionados_mobile.append(candidato)
-                return candidato
-        candidato = (lat - distancia_visual_mobile / 111.0, lon + distancia_visual_mobile / 111.0)
-        marcadores_posicionados_mobile.append(candidato)
-        return candidato
+        # O traçado restante parte da última parada efetivamente concluída; se
+        # ainda não houve nenhuma, parte da base. A origem serve só de referência
+        # para a linha e NÃO recebe marcador, para o mapa mostrar apenas pendências.
+        origem_trajeto_mobile = None
+        for indice_passado, step_passado in reversed(paradas_operacionais_davi):
+            if not _etapa_concluida_davi(indice_passado, step_passado):
+                continue
+            destino_passado = str(step_passado.get("destino", "") or "")
+            if destino_passado in locais_dict:
+                origem_trajeto_mobile = [
+                    float(locais_dict[destino_passado][0]),
+                    float(locais_dict[destino_passado][1]),
+                ]
+                break
+        if origem_trajeto_mobile is None and p_saida in locais_dict:
+            origem_trajeto_mobile = [float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])]
 
-    p_num_mapa = 1
-    pos_base_mobile = apply_offset_mobile(*locais_dict[p_saida]) if p_saida in locais_dict else None
+        pontos_trajeto_mobile = ([] if origem_trajeto_mobile is None else [origem_trajeto_mobile]) + pontos_pendentes_mobile
 
-    # Sempre desenha algum traçado. Também corrige automaticamente geometrias
-    # antigas do OSRM que foram salvas no formato [lon, lat].
-    geom_mobile = normalizar_geometria_mapa(geometria_rota or [], pontos_reais_mobile)
-    geom_mobile_viaria = bool(st.session_state.get('geometria_viaria', False)) and len(geom_mobile) > 2
-    if len(geom_mobile) < 2 and len(pontos_reais_mobile) > 1:
-        geom_mobile = [list(p) for p in pontos_reais_mobile]
-        geom_mobile_viaria = False
-    if len(geom_mobile) > 1:
-        folium.PolyLine(geom_mobile, color="#FFFFFF", weight=8, opacity=0.80).add_to(m_mobile)
-        folium.PolyLine(
-            geom_mobile, color="#2563eb", weight=5, opacity=0.98,
-            dash_array=None if geom_mobile_viaria else "9,7",
-            tooltip="Traçado da rota" if geom_mobile_viaria else "Ligação aproximada entre as paradas",
-        ).add_to(m_mobile)
+        def _escala_visual_mobile(pontos):
+            if len(pontos) < 2:
+                return 0.75
+            lat_ref = sum(p[0] for p in pontos) / len(pontos)
+            span_lat_km = (max(p[0] for p in pontos) - min(p[0] for p in pontos)) * 111.0
+            span_lon_km = (max(p[1] for p in pontos) - min(p[1] for p in pontos)) * 111.0 * max(math.cos(math.radians(lat_ref)), 0.2)
+            return max(0.70, min(2.0, max(span_lat_km, span_lon_km, 1.0) * 0.070))
 
-    for i, step in enumerate(route_steps):
-        if step.get('destino') and step['destino'] in locais_dict:
-            if step.get('type') in ['lunch', 'return']: continue
-            if (i == 0 and step['destino'] == p_saida): continue
+        distancia_visual_mobile = _escala_visual_mobile(pontos_pendentes_mobile)
+        marcadores_posicionados_mobile = []
 
-            lat_orig, lon_orig = map(float, locais_dict[step['destino']])
+        def apply_offset_mobile(lat, lon):
+            lat, lon = float(lat), float(lon)
+            if not marcadores_posicionados_mobile:
+                marcadores_posicionados_mobile.append((lat, lon))
+                return lat, lon
+            if all(calcular_distancia_km(lat, lon, p_lat, p_lon) >= distancia_visual_mobile for p_lat, p_lon in marcadores_posicionados_mobile):
+                marcadores_posicionados_mobile.append((lat, lon))
+                return lat, lon
+            for tentativa in range(1, 49):
+                anel = 1 + (tentativa - 1) // 12
+                angulo = math.radians(((tentativa - 1) % 12) * 30 + anel * 11)
+                raio_km = distancia_visual_mobile * (0.82 + 0.42 * (anel - 1))
+                dlat = (raio_km / 111.0) * math.sin(angulo)
+                dlon = (raio_km / (111.0 * max(math.cos(math.radians(lat)), 0.2))) * math.cos(angulo)
+                candidato = (lat + dlat, lon + dlon)
+                if all(
+                    calcular_distancia_km(candidato[0], candidato[1], p_lat, p_lon) >= distancia_visual_mobile * 0.92
+                    for p_lat, p_lon in marcadores_posicionados_mobile
+                ):
+                    marcadores_posicionados_mobile.append(candidato)
+                    return candidato
+            candidato = (lat - distancia_visual_mobile / 111.0, lon + distancia_visual_mobile / 111.0)
+            marcadores_posicionados_mobile.append(candidato)
+            return candidato
+
+        # Não reutiliza a geometria completa salva do início do dia, pois ela
+        # continuaria desenhando trechos já concluídos. A linha abaixo contém
+        # somente a posição de referência + a sequência ainda pendente.
+        if len(pontos_trajeto_mobile) > 1:
+            folium.PolyLine(pontos_trajeto_mobile, color="#FFFFFF", weight=8, opacity=0.80).add_to(m_mobile)
+            folium.PolyLine(
+                pontos_trajeto_mobile, color="#2563eb", weight=5, opacity=0.98,
+                dash_array="9,7", tooltip="Trajeto restante da rota",
+            ).add_to(m_mobile)
+
+        for indice_mapa, step_mapa in paradas_pendentes_davi:
+            destino_mapa = str(step_mapa.get("destino", "") or "")
+            if destino_mapa not in locais_dict:
+                continue
+
+            lat_orig, lon_orig = map(float, locais_dict[destino_mapa])
             lat, lon = apply_offset_mobile(lat_orig, lon_orig)
             if calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01:
                 folium.PolyLine(
@@ -4782,30 +4882,52 @@ if modo_davi:
                     opacity=0.90, dash_array="4,5",
                     tooltip="O círculo foi afastado; a ponta da linha é o local real",
                 ).add_to(m_mobile)
-                folium.CircleMarker([lat_orig, lon_orig], radius=3, color="#475569", weight=1, fill=True, fill_opacity=0.9).add_to(m_mobile)
+                folium.CircleMarker(
+                    [lat_orig, lon_orig], radius=3, color="#475569", weight=1,
+                    fill=True, fill_opacity=0.9,
+                ).add_to(m_mobile)
 
-            acoes = [a[0] for a in step.get('actions', [])]
-            tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
-            fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#16a34a"
-            popup_html = f"<b>Parada {p_num_mapa}: {html_escape(str(step['destino']))}</b>"
+            acoes_mapa = [acao for acao, _tarefa in step_mapa.get("actions", [])]
+            tem_coleta_mapa = "COLETAR" in acoes_mapa
+            tem_entrega_mapa = "ENTREGAR" in acoes_mapa
+            fundo_marcador = (
+                "linear-gradient(90deg, #f59e0b 0 50%, #16a34a 50% 100%)"
+                if tem_coleta_mapa and tem_entrega_mapa
+                else "#f59e0b" if tem_coleta_mapa else "#16a34a"
+            )
+            numero_mapa = numero_original_parada_davi.get(indice_mapa, "•")
+            popup_html = (
+                f"<b>Parada {numero_mapa}: {html_escape(destino_mapa)}</b><br>"
+                f"Status: pendente"
+            )
+            html_icone_mapa = (
+                f'<div style="background: {fundo_marcador}; color: white; border: 3px solid white; '
+                f'border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; '
+                f'align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); '
+                f'font-size: 14px;">{numero_mapa}</div>'
+            )
             folium.Marker(
-                [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num_mapa}",
-                z_index_offset=1200 + p_num_mapa,
-                icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{p_num_mapa}</div>''')
+                [lat, lon],
+                popup=folium.Popup(popup_html, max_width=280),
+                tooltip=f"Parada {numero_mapa} — pendente",
+                z_index_offset=1200 + int(numero_mapa if isinstance(numero_mapa, int) else 0),
+                icon=folium.DivIcon(html=html_icone_mapa),
             ).add_to(m_mobile)
-            p_num_mapa += 1
 
-    if len(pontos_reais_mobile) > 1:
-        m_mobile.fit_bounds(pontos_reais_mobile, padding=(30, 30), max_zoom=14)
-    if p_saida in locais_dict and pos_base_mobile is not None:
-        folium.Marker(
-            [pos_base_mobile[0], pos_base_mobile[1]], popup=folium.Popup(f"<b>Saída: {html_escape(str(p_saida))}</b>", max_width=280),
-            z_index_offset=2500,
-            icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid white; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.7); font-size: 16px;">🏁</div>''')
-        ).add_to(m_mobile)
+        if len(pontos_pendentes_mobile) > 1:
+            m_mobile.fit_bounds(pontos_pendentes_mobile, padding=(30, 30), max_zoom=14)
+        elif len(pontos_pendentes_mobile) == 1:
+            m_mobile.location = pontos_pendentes_mobile[0]
+            m_mobile.options["zoom"] = 14
 
-    st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
-    st.markdown("<div style='text-align:center;font-size:11px;margin:8px 0 18px;color:#64748b;'><b style='color:#94a3b8;'>LEGENDA</b> &nbsp; 🟡 Coleta &nbsp; 🟢 Entrega &nbsp; 🏁 Início<br>Azul = trajeto • cinza = ajuste visual do marcador</div>", unsafe_allow_html=True)
+        st_folium(m_mobile, height=400, use_container_width=True, returned_objects=[])
+        st.markdown(
+            "<div style='text-align:center;font-size:11px;margin:8px 0 18px;color:#64748b;'>"
+            "<b style='color:#94a3b8;'>LEGENDA</b> &nbsp; 🟡 Coleta pendente &nbsp; 🟢 Entrega pendente"
+            "<br>O mapa esconde automaticamente as paradas concluídas.</div>",
+            unsafe_allow_html=True,
+        )
+
     st.markdown("""
         <nav class="aproar-driver-bottom-nav" aria-label="Navegação do motorista">
             <a href="#rota"><b>⌂</b><span>Resumo</span></a>
@@ -5216,7 +5338,7 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("FORTEX", "Rodovia 4º Anel Viário, 1515 - KM 9,5 - Distrito Industrial III, Maracanaú - CE, 61930-220"),
 ]
 
-SCHEMA_APP_VERSION = "2026-08-28-v13"
+SCHEMA_APP_VERSION = "2026-09-10-v14"
 
 @st.cache_resource(show_spinner=False)
 def inicializar_bd():
@@ -5238,7 +5360,8 @@ def inicializar_bd():
         "CREATE TABLE IF NOT EXISTS locais (apelido TEXT PRIMARY KEY, endereco TEXT, lat REAL, lon REAL)",
         "CREATE TABLE IF NOT EXISTS locais_removidos (apelido TEXT PRIMARY KEY)",
         "CREATE TABLE IF NOT EXISTS config_frota (id SERIAL PRIMARY KEY, consumo REAL, preco_gasolina REAL)",
-        "CREATE TABLE IF NOT EXISTS abastecimentos (id SERIAL PRIMARY KEY, data TEXT, litros REAL, valor_litro REAL, manutencao REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
+        "CREATE TABLE IF NOT EXISTS abastecimentos (id SERIAL PRIMARY KEY, data TEXT, litros REAL, valor_litro REAL, combustivel REAL DEFAULT 0, manutencao REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
+        "ALTER TABLE abastecimentos ADD COLUMN IF NOT EXISTS combustivel REAL DEFAULT 0",
         "CREATE TABLE IF NOT EXISTS registro_km (id SERIAL PRIMARY KEY, data TEXT, km REAL, obs TEXT, veiculo TEXT DEFAULT 'Strada')",
         "CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)",
         "CREATE TABLE IF NOT EXISTS rastreio_paradas (id SERIAL PRIMARY KEY, data TEXT, placa TEXT, local TEXT, hora_chegada TEXT, hora_saida TEXT)",
@@ -9409,22 +9532,8 @@ if modulo_principal == "🚗 Frota e custos":
     submodulo_frota = submodulo_frota or SUBMODULOS_FROTA[0]
 
     if submodulo_frota == "📊 Resumo e lançamentos":
-        cfg = get_df("SELECT consumo, preco_gasolina FROM config_frota WHERE id=1").iloc[0]
-
-        @fragmento_independente
-        def configuracao_base_frota():
-            st.markdown("#### ⚙️ Parâmetros-base do veículo")
-            cc1, cc2 = st.columns(2)
-            novo_consumo_cfg = cc1.number_input("Consumo médio (km/L)", value=float(cfg['consumo']), step=0.1, key="cfg_consumo_frota")
-            novo_preco_cfg = cc2.number_input("Preço-base da gasolina (R$/L)", value=float(cfg['preco_gasolina']), step=0.01, key="cfg_preco_gasolina")
-            if st.button("Atualizar parâmetros"):
-                execute_db("UPDATE config_frota SET consumo=:c, preco_gasolina=:p WHERE id=1", {"c": novo_consumo_cfg, "p": novo_preco_cfg})
-                st.success("✅ Base de cálculo atualizada!")
-
-        configuracao_base_frota()
-        novo_preco = float(st.session_state.get("cfg_preco_gasolina", cfg['preco_gasolina']))
-
-        st.divider()
+        # O controle financeiro da frota usa o valor TOTAL do combustível em reais.
+        # Litros e preço por litro deixaram de ser solicitados na operação.
         col_recibo, col_km = st.columns(2)
         with col_recibo:
             st.markdown("#### ⛽ Lançar recibo de gasto")
@@ -9434,13 +9543,20 @@ if modulo_principal == "🚗 Frota e custos":
                 with st.form("form_recibo", clear_on_submit=True):
                     f_data = st.date_input("Data do recibo")
                     fc_veic = st.selectbox("Veículo do gasto", ["Strada", "L200"])
-                    fc1, fc2 = st.columns(2)
-                    f_litros = fc1.number_input("Litros abastecidos", min_value=0.0, step=0.1)
-                    f_valor = fc2.number_input("Preço pago (R$/L)", value=novo_preco, step=0.01)
+                    f_combustivel = st.number_input("Valor do combustível (R$)", min_value=0.0, step=10.0)
                     f_manut = st.number_input("Gastos com manutenção (R$)", min_value=0.0, step=10.0)
                     f_obs = st.text_input("Observação (ex.: Posto Ipiranga, troca de óleo)")
                     if st.form_submit_button("Lançar no caixa"):
-                        execute_db("INSERT INTO abastecimentos (data, litros, valor_litro, manutencao, obs, veiculo) VALUES (:data, :litros, :valor, :manut, :obs, :veic)", {"data": f_data.strftime("%d/%m/%Y"), "litros": f_litros, "valor": f_valor, "manut": f_manut, "obs": f_obs, "veic": fc_veic})
+                        execute_db(
+                            "INSERT INTO abastecimentos (data, combustivel, manutencao, obs, veiculo) VALUES (:data, :combustivel, :manut, :obs, :veic)",
+                            {
+                                "data": f_data.strftime("%d/%m/%Y"),
+                                "combustivel": f_combustivel,
+                                "manut": f_manut,
+                                "obs": f_obs,
+                                "veic": fc_veic,
+                            },
+                        )
                         carregar_abastecimentos_df.clear()
                         st.success("Recibo salvo com sucesso!")
 
@@ -9518,13 +9634,12 @@ if modulo_principal == "🚗 Frota e custos":
         if 'veiculo' not in df_abastec.columns:
             df_abastec['veiculo'] = 'Strada'
         df_abastec['data_dt'] = pd.to_datetime(df_abastec['data'], format="%d/%m/%Y", errors='coerce')
-        for coluna_num in ['litros', 'valor_litro', 'manutencao']:
-            if coluna_num not in df_abastec.columns:
-                df_abastec[coluna_num] = 0.0
-            df_abastec[coluna_num] = pd.to_numeric(df_abastec[coluna_num], errors='coerce').fillna(0.0)
+        if 'manutencao' not in df_abastec.columns:
+            df_abastec['manutencao'] = 0.0
+        df_abastec['manutencao'] = pd.to_numeric(df_abastec['manutencao'], errors='coerce').fillna(0.0)
         df_abastec_mes = df_abastec.dropna(subset=['data_dt']).copy()
         df_abastec_mes = df_abastec_mes[df_abastec_mes['data_dt'].dt.strftime('%m/%Y') == mes_atual_str].copy()
-        df_abastec_mes['custo_combustivel'] = df_abastec_mes['litros'] * df_abastec_mes['valor_litro']
+        df_abastec_mes['custo_combustivel'] = calcular_combustivel_registrado(df_abastec_mes)
         df_abastec_mes['custo_total'] = df_abastec_mes['custo_combustivel'] + df_abastec_mes['manutencao']
 
         def resumo_veiculo_mes(veiculo):
@@ -9532,24 +9647,20 @@ if modulo_principal == "🚗 Frota e custos":
             gasto_df = df_abastec_mes[df_abastec_mes['veiculo'].astype(str) == veiculo].copy()
 
             km = float(km_df['km'].sum()) if not km_df.empty else 0.0
-            litros = float(gasto_df['litros'].sum()) if not gasto_df.empty else 0.0
             combustivel = float(gasto_df['custo_combustivel'].sum()) if not gasto_df.empty else 0.0
             manutencao = float(gasto_df['manutencao'].sum()) if not gasto_df.empty else 0.0
             custo_total = combustivel + manutencao
             custo_km = custo_total / km if km > 0 else None
-            preco_medio_litro = combustivel / litros if litros > 0 else None
-            abastecimentos = int((gasto_df['litros'] > 0).sum()) if not gasto_df.empty else 0
+            abastecimentos = int((gasto_df['custo_combustivel'] > 0).sum()) if not gasto_df.empty else 0
             manutencoes = int((gasto_df['manutencao'] > 0).sum()) if not gasto_df.empty else 0
 
             return {
                 'veiculo': veiculo,
                 'km': km,
-                'litros': litros,
                 'combustivel': combustivel,
                 'manutencao': manutencao,
                 'custo_total': custo_total,
                 'custo_km': custo_km,
-                'preco_medio_litro': preco_medio_litro,
                 'abastecimentos': abastecimentos,
                 'manutencoes': manutencoes,
                 'gastos_df': gasto_df,
@@ -9561,12 +9672,11 @@ if modulo_principal == "🚗 Frota e custos":
         resumo_l200 = resumos_veiculos['L200']
 
         km_total_frota = sum(item['km'] for item in resumos_veiculos.values())
-        litros_total_frota = sum(item['litros'] for item in resumos_veiculos.values())
         combustivel_total_frota = sum(item['combustivel'] for item in resumos_veiculos.values())
         manutencao_total_frota = sum(item['manutencao'] for item in resumos_veiculos.values())
         custo_total_frota = combustivel_total_frota + manutencao_total_frota
         custo_km_frota = custo_total_frota / km_total_frota if km_total_frota > 0 else None
-        preco_medio_frota = combustivel_total_frota / litros_total_frota if litros_total_frota > 0 else None
+        abastecimentos_total = sum(item['abastecimentos'] for item in resumos_veiculos.values())
         lancamentos_total = len(df_abastec_mes) + len(df_km_mes)
 
         # -------- Resumo consolidado --------
@@ -9579,11 +9689,10 @@ if modulo_principal == "🚗 Frota e custos":
                   delta_color="normal" if custo_km_frota is not None and custo_km_frota <= 1.50 else "inverse")
         k4.metric("⛽ Combustível", f"R$ {combustivel_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
 
-        k5, k6, k7, k8 = st.columns(4)
+        k5, k6, k7 = st.columns(3)
         k5.metric("🔧 Manutenção", f"R$ {manutencao_total_frota:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        k6.metric("🧪 Litros abastecidos", f"{litros_total_frota:,.1f} L".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        k7.metric("🏷️ Preço médio por litro", f"R$ {preco_medio_frota:.2f}".replace('.', ',') if preco_medio_frota is not None else "—")
-        k8.metric("🧾 Lançamentos", str(lancamentos_total))
+        k6.metric("⛽ Abastecimentos", str(abastecimentos_total))
+        k7.metric("🧾 Lançamentos", str(lancamentos_total))
 
         if custo_total_frota <= 0 and km_total_frota <= 0:
             st.info("Ainda não há lançamentos suficientes neste mês para montar o fechamento da frota.")
@@ -9653,11 +9762,8 @@ if modulo_principal == "🚗 Frota e custos":
                 r1, r2 = st.columns(2)
                 with r1:
                     st.markdown(f"⛽ **Combustível:** {formatar_moeda_br(resumo['combustivel'])}")
-                    st.markdown(f"🧪 **Litros:** {formatar_numero_br(resumo['litros'])} L")
                 with r2:
                     st.markdown(f"🔧 **Manutenção:** {formatar_moeda_br(resumo['manutencao'])}")
-                    media_litro = formatar_moeda_br(resumo['preco_medio_litro']) if resumo['preco_medio_litro'] is not None else "—"
-                    st.markdown(f"🏷️ **Preço médio por litro:** {media_litro}")
 
                 abastec_txt = f"{resumo['abastecimentos']} abastecimento" + ("s" if resumo['abastecimentos'] != 1 else "")
                 manut_txt = (
@@ -9676,12 +9782,12 @@ if modulo_principal == "🚗 Frota e custos":
                 gastos = resumo['gastos_df'].copy()
                 quilometragem = resumo['km_df'].copy()
                 if not gastos.empty:
-                    gastos = gastos[["data", "litros", "valor_litro", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
-                        "data": "Data", "litros": "Litros", "valor_litro": "Valor/L (R$)",
+                    gastos = gastos[["data", "custo_combustivel", "manutencao", "custo_total", "obs"]].rename(columns={
+                        "data": "Data",
                         "custo_combustivel": "Combustível (R$)", "manutencao": "Manutenção (R$)",
                         "custo_total": "Total (R$)", "obs": "Observação",
                     })
-                    for coluna in ["Valor/L (R$)", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
+                    for coluna in ["Combustível (R$)", "Manutenção (R$)", "Total (R$)"]:
                         gastos[coluna] = pd.to_numeric(gastos[coluna], errors="coerce").fillna(0).round(2)
                 if not quilometragem.empty:
                     quilometragem = quilometragem[["data", "km", "obs"]].rename(columns={"data": "Data", "km": "km", "obs": "Observação"})
@@ -9734,8 +9840,6 @@ if modulo_principal == "🚗 Frota e custos":
             {
                 "Veículo": resumo['veiculo'],
                 "Quilometragem (km)": round(resumo['km'], 2),
-                "Litros": round(resumo['litros'], 2),
-                "Preço médio por litro (R$)": round(resumo['preco_medio_litro'], 2) if resumo['preco_medio_litro'] is not None else 0.0,
                 "Combustível (R$)": round(resumo['combustivel'], 2),
                 "Manutenção (R$)": round(resumo['manutencao'], 2),
                 "Custo total (R$)": round(resumo['custo_total'], 2),
@@ -9762,16 +9866,47 @@ if modulo_principal == "🚗 Frota e custos":
         st.markdown("### 🕒 Operação do rastreador")
         st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
         st.markdown("#### 🕒 Horários da operação (rastreador)")
+
+        # Carrega o histórico completo para que o filtro mensal não dependa de um
+        # LIMIT e para que o mesmo conjunto filtrado possa ser exportado.
+        df_inicio_completo = get_df(
+            'SELECT data as Data, placa as Placa, hora_inicio as "Hora de saída" '
+            'FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC'
+        )
+        df_inicio_filtrado = df_inicio_completo.copy()
+        rotulo_periodo_inicio = "Todos os meses"
+        chave_periodo_inicio = "todos"
+
+        if not df_inicio_completo.empty:
+            datas_inicio = pd.to_datetime(df_inicio_completo["Data"], format="%d/%m/%Y", errors="coerce")
+            periodos_validos = sorted(
+                {data.strftime("%m/%Y") for data in datas_inicio.dropna()},
+                key=lambda valor: datetime.strptime(valor, "%m/%Y"),
+                reverse=True,
+            )
+            opcoes_periodo = ["Todos os meses"] + periodos_validos
+            mes_atual_inicio = AGORA_REAL.strftime("%m/%Y")
+            indice_padrao_inicio = opcoes_periodo.index(mes_atual_inicio) if mes_atual_inicio in opcoes_periodo else 0
+            rotulo_periodo_inicio = st.selectbox(
+                "Filtrar inícios de rota por mês",
+                opcoes_periodo,
+                index=indice_padrao_inicio,
+                key="filtro_mes_inicios_rota",
+            )
+            if rotulo_periodo_inicio != "Todos os meses":
+                mascara_periodo = datas_inicio.dt.strftime("%m/%Y") == rotulo_periodo_inicio
+                df_inicio_filtrado = df_inicio_completo.loc[mascara_periodo].copy()
+                chave_periodo_inicio = rotulo_periodo_inicio.replace("/", "_")
+
         c_inicio, c_paradas = st.columns([1, 1.8])
 
         with c_inicio:
             st.markdown("**🏁 Início da rota (saídas do pátio)**")
             st.caption("Marcado quando o veículo se afasta a mais de 500 m do escritório.")
-            df_inicio = get_df("SELECT data as Data, placa as Placa, hora_inicio as \"Hora de saída\" FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC")
-            if not df_inicio.empty:
-                st.dataframe(df_inicio, use_container_width=True, hide_index=True)
+            if not df_inicio_filtrado.empty:
+                st.dataframe(df_inicio_filtrado, use_container_width=True, hide_index=True)
             else:
-                st.info("Nenhum registro de início encontrado.")
+                st.info("Nenhum registro de início encontrado para o período selecionado.")
                 
         with c_paradas:
             st.markdown("**📍 Paradas realizadas nas obras (geocerca)**")
@@ -9781,6 +9916,15 @@ if modulo_principal == "🚗 Frota e custos":
                 st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhum registro de parada do rastreador encontrado.")
+
+        st.markdown("#### 📥 Relatório de inícios de rota")
+        st.caption("O arquivo respeita exatamente o mês selecionado acima.")
+        renderizar_exportador(
+            f"Inícios de rota — {rotulo_periodo_inicio}",
+            {"Inícios de rota": df_inicio_filtrado},
+            f"inicios_de_rota_{chave_periodo_inicio}",
+            f"inicios_rota_{chave_periodo_inicio}",
+        )
 
     if submodulo_frota == "🗂️ Histórico editável":
         st.markdown("### 🗂️ Histórico e correções")
@@ -9796,19 +9940,18 @@ if modulo_principal == "🚗 Frota e custos":
             def editor_abastecimentos():
                 df_abastec_all = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
                 if not df_abastec_all.empty:
-                    # Valor efetivo de cada lançamento:
-                    # combustível = litros x valor do litro; manutenção é somada quando existir.
-                    litros_calc = pd.to_numeric(df_abastec_all.get("litros", 0), errors="coerce").fillna(0)
-                    valor_litro_calc = pd.to_numeric(df_abastec_all.get("valor_litro", 0), errors="coerce").fillna(0)
+                    # A interface trabalha somente com valores financeiros. Para registros
+                    # antigos, converte litros x preço/litro uma única vez em combustível.
+                    df_abastec_all["combustivel"] = calcular_combustivel_registrado(df_abastec_all).round(2)
                     manutencao_calc = pd.to_numeric(df_abastec_all.get("manutencao", 0), errors="coerce").fillna(0)
-                    df_abastec_all["valor_total"] = (litros_calc * valor_litro_calc + manutencao_calc).round(2)
+                    df_abastec_all["valor_total"] = (df_abastec_all["combustivel"] + manutencao_calc).round(2)
 
-                    # Mantém o total ao lado dos valores financeiros para facilitar a conferência.
+                    # Litros e preço/litro deixam de aparecer e também não voltam para o banco
+                    # ao salvar a edição: o histórico é consolidado no valor de combustível.
                     ordem_colunas = [
-                        coluna for coluna in ["id", "data", "litros", "valor_litro", "manutencao", "valor_total", "obs", "veiculo"]
+                        coluna for coluna in ["id", "data", "combustivel", "manutencao", "valor_total", "obs", "veiculo"]
                         if coluna in df_abastec_all.columns
                     ]
-                    ordem_colunas += [coluna for coluna in df_abastec_all.columns if coluna not in ordem_colunas]
                     df_abastec_all = df_abastec_all[ordem_colunas]
 
                     edited_abastec = st.data_editor(
@@ -9819,9 +9962,9 @@ if modulo_principal == "🚗 Frota e custos":
                         key="edit_abastec",
                         disabled=["valor_total"],
                         column_config={
-                            "valor_litro": st.column_config.NumberColumn("valor_litro", format="R$ %.2f"),
-                            "manutencao": st.column_config.NumberColumn("manutencao", format="R$ %.2f"),
-                            "valor_total": st.column_config.NumberColumn("valor_total", format="R$ %.2f"),
+                            "combustivel": st.column_config.NumberColumn("Combustível (R$)", format="R$ %.2f"),
+                            "manutencao": st.column_config.NumberColumn("Manutenção (R$)", format="R$ %.2f"),
+                            "valor_total": st.column_config.NumberColumn("Total (R$)", format="R$ %.2f"),
                         },
                     )
                     if st.button("💾 Salvar alterações (abastecimentos)", type="primary"):
@@ -9856,16 +9999,14 @@ if modulo_principal == "🚗 Frota e custos":
 
         df_abastecimentos_relatorio = carregar_abastecimentos_df().sort_values("id", ascending=False).reset_index(drop=True)
         if not df_abastecimentos_relatorio.empty:
-            litros_rel = pd.to_numeric(df_abastecimentos_relatorio.get("litros", 0), errors="coerce").fillna(0)
-            valor_litro_rel = pd.to_numeric(df_abastecimentos_relatorio.get("valor_litro", 0), errors="coerce").fillna(0)
+            df_abastecimentos_relatorio["combustivel"] = calcular_combustivel_registrado(df_abastecimentos_relatorio).round(2)
             manutencao_rel = pd.to_numeric(df_abastecimentos_relatorio.get("manutencao", 0), errors="coerce").fillna(0)
-            df_abastecimentos_relatorio["valor_total"] = (litros_rel * valor_litro_rel + manutencao_rel).round(2)
+            df_abastecimentos_relatorio["valor_total"] = (df_abastecimentos_relatorio["combustivel"] + manutencao_rel).round(2)
 
         # ---------------------------------------------------------------
         # RESUMO MENSAL DE CUSTOS POR VEÍCULO
         # Visual enxuto: um bloco por mês, com Strada, L200 e Total do mês.
-        # Os detalhes de litros/preço/quantidade continuam disponíveis nos
-        # lançamentos abaixo e na aba "Abastecimentos e manutenção" do Excel.
+        # O combustível é controlado diretamente em reais, sem litros/preço por litro.
         # ---------------------------------------------------------------
         colunas_resumo_mensal = [
             "Mês", "Veículo", "Combustível (R$)", "Manutenção (R$)", "Total (R$)"
@@ -9875,10 +10016,8 @@ if modulo_principal == "🚗 Frota e custos":
         if not df_abastecimentos_relatorio.empty:
             base_mensal = df_abastecimentos_relatorio.copy()
             base_mensal["_data_dt"] = pd.to_datetime(base_mensal.get("data"), format="%d/%m/%Y", errors="coerce")
-            base_mensal["_litros"] = pd.to_numeric(base_mensal.get("litros", 0), errors="coerce").fillna(0.0)
-            base_mensal["_valor_litro"] = pd.to_numeric(base_mensal.get("valor_litro", 0), errors="coerce").fillna(0.0)
             base_mensal["_manutencao"] = pd.to_numeric(base_mensal.get("manutencao", 0), errors="coerce").fillna(0.0)
-            base_mensal["_combustivel"] = base_mensal["_litros"] * base_mensal["_valor_litro"]
+            base_mensal["_combustivel"] = calcular_combustivel_registrado(base_mensal)
             base_mensal["_total"] = base_mensal["_combustivel"] + base_mensal["_manutencao"]
             base_mensal = base_mensal.dropna(subset=["_data_dt"]).copy()
 
@@ -10027,20 +10166,16 @@ if modulo_principal == "🚗 Frota e custos":
         df_lancamentos_custos = pd.DataFrame()
         if not df_abastecimentos_relatorio.empty:
             df_lancamentos_custos = df_abastecimentos_relatorio.copy()
-            litros_lanc = pd.to_numeric(df_lancamentos_custos.get("litros", 0), errors="coerce").fillna(0.0)
-            valor_litro_lanc = pd.to_numeric(df_lancamentos_custos.get("valor_litro", 0), errors="coerce").fillna(0.0)
             manut_lanc = pd.to_numeric(df_lancamentos_custos.get("manutencao", 0), errors="coerce").fillna(0.0)
-            df_lancamentos_custos["Combustível (R$)"] = (litros_lanc * valor_litro_lanc).round(2)
+            df_lancamentos_custos["Combustível (R$)"] = calcular_combustivel_registrado(df_lancamentos_custos).round(2)
             df_lancamentos_custos["Total (R$)"] = (df_lancamentos_custos["Combustível (R$)"] + manut_lanc).round(2)
             colunas_lancamentos = [
-                coluna for coluna in ["data", "veiculo", "litros", "valor_litro", "Combustível (R$)", "manutencao", "Total (R$)", "obs"]
+                coluna for coluna in ["data", "veiculo", "Combustível (R$)", "manutencao", "Total (R$)", "obs"]
                 if coluna in df_lancamentos_custos.columns
             ]
             df_lancamentos_custos = df_lancamentos_custos[colunas_lancamentos].rename(columns={
                 "data": "Data",
                 "veiculo": "Veículo",
-                "litros": "Litros",
-                "valor_litro": "Preço/L (R$)",
                 "manutencao": "Manutenção (R$)",
                 "obs": "Observação",
             })
