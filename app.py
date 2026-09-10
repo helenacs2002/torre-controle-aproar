@@ -5338,7 +5338,7 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("FORTEX", "Rodovia 4º Anel Viário, 1515 - KM 9,5 - Distrito Industrial III, Maracanaú - CE, 61930-220"),
 ]
 
-SCHEMA_APP_VERSION = "2026-09-10-v15"
+SCHEMA_APP_VERSION = "2026-09-10-v16"
 
 @st.cache_resource(show_spinner=False)
 def inicializar_bd():
@@ -9233,11 +9233,44 @@ def _detectar_inicio_rota_historico(registros, data_ref):
     return None, "Veículo não teve saída confirmada do raio de 500 m"
 
 
+def garantir_schema_historico_protege():
+    """Garante somente as estruturas novas do histórico da Protege.
+
+    É propositalmente independente da migração geral: assim uma implantação que já
+    tenha marcado uma versão antiga do schema não quebra a tela ao consultar
+    ``fonte``/``detalhe``.
+    """
+    conn_db = get_conn()
+    with conn_db.session as s:
+        s.execute(text(
+            "CREATE TABLE IF NOT EXISTS inicio_movimento "
+            "(placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))"
+        ))
+        s.execute(text("ALTER TABLE inicio_movimento ADD COLUMN IF NOT EXISTS fonte TEXT DEFAULT 'legado'"))
+        s.execute(text("ALTER TABLE inicio_movimento ADD COLUMN IF NOT EXISTS detalhe TEXT"))
+        s.execute(text(
+            "CREATE TABLE IF NOT EXISTS protege_inicio_sync "
+            "(placa TEXT, data TEXT, status TEXT, detalhe TEXT, "
+            "atualizado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(placa, data))"
+        ))
+        s.commit()
+    return True
+
+
 def _gravar_status_sync_protege(placa, data_str, status, detalhe=""):
     execute_db("""INSERT INTO protege_inicio_sync (placa,data,status,detalhe,atualizado_em) VALUES (:placa,:data,:status,:detalhe,NOW()) ON CONFLICT (placa,data) DO UPDATE SET status=EXCLUDED.status, detalhe=EXCLUDED.detalhe, atualizado_em=NOW()""", {"placa":placa,"data":data_str,"status":status,"detalhe":str(detalhe or "")[:500]})
 
 
 def sincronizar_inicios_historicos_protege(data_inicio, data_fim, forcar=False):
+    # Migração pequena e idempotente: evita UndefinedColumn/ProgrammingError em
+    # bancos que ainda tenham a estrutura antiga de ``inicio_movimento``.
+    try:
+        garantir_schema_historico_protege()
+    except Exception as erro_schema:
+        return {
+            "ok": 0, "sem_saida": 0, "erros": 1, "ignorados": 0,
+            "mensagem": f"Não foi possível preparar o histórico da Protege: {erro_schema}",
+        }
     usuario, senha, ids_csv = carregar_config_protege()
     if not usuario or not senha: return {"ok":0,"sem_saida":0,"erros":0,"ignorados":0,"mensagem":"Credenciais da Protege não configuradas."}
     ids = [v.strip() for v in str(ids_csv or "").split(",") if v.strip()]
@@ -9564,6 +9597,19 @@ def loop_automacoes_background(processar_rastreador=True):
 # =====================================================================
 # INTERFACE STREAMLIT
 # =====================================================================
+# A função de migração existia, mas não era executada antes das consultas.
+# Rodamos uma vez por processo (cache_resource) e garantimos em separado as
+# colunas usadas pelo histórico da Protege.
+try:
+    inicializar_bd()
+except Exception as erro_migracao:
+    # A migração específica abaixo é suficiente para o módulo de histórico e
+    # impede que um detalhe de schema derrube toda a navegação.
+    try:
+        garantir_schema_historico_protege()
+    except Exception:
+        pass
+
 renderizar_cabecalho_torre()
 
 # NAVEGAÇÃO PRIMEIRO: nenhuma consulta de rede/banco deve bloquear a troca de módulo.
