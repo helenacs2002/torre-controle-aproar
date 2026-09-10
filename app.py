@@ -5338,7 +5338,7 @@ ENDERECOS_FORNECEDORES_FALLBACK = [
     ("FORTEX", "Rodovia 4º Anel Viário, 1515 - KM 9,5 - Distrito Industrial III, Maracanaú - CE, 61930-220"),
 ]
 
-SCHEMA_APP_VERSION = "2026-09-10-v14"
+SCHEMA_APP_VERSION = "2026-09-10-v15"
 
 @st.cache_resource(show_spinner=False)
 def inicializar_bd():
@@ -5366,6 +5366,9 @@ def inicializar_bd():
         "CREATE TABLE IF NOT EXISTS historico_concluidos (id TEXT PRIMARY KEY, obra TEXT, origem TEXT, destino TEXT, materiais TEXT, data_conclusao TEXT, hora_conclusao TEXT)",
         "CREATE TABLE IF NOT EXISTS rastreio_paradas (id SERIAL PRIMARY KEY, data TEXT, placa TEXT, local TEXT, hora_chegada TEXT, hora_saida TEXT)",
         "CREATE TABLE IF NOT EXISTS inicio_movimento (placa TEXT, data TEXT, hora_inicio TEXT, PRIMARY KEY(placa, data))",
+        "ALTER TABLE inicio_movimento ADD COLUMN IF NOT EXISTS fonte TEXT DEFAULT 'legado'",
+        "ALTER TABLE inicio_movimento ADD COLUMN IF NOT EXISTS detalhe TEXT",
+        "CREATE TABLE IF NOT EXISTS protege_inicio_sync (placa TEXT, data TEXT, status TEXT, detalhe TEXT, atualizado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(placa, data))",
         "CREATE TABLE IF NOT EXISTS webhooks_teams (setor TEXT PRIMARY KEY, url TEXT)",
         "CREATE TABLE IF NOT EXISTS config_trello (id SERIAL PRIMARY KEY, api_key TEXT, token TEXT, id_lista_concluida TEXT)",
         "CREATE TABLE IF NOT EXISTS trello_cache (id SMALLINT PRIMARY KEY, dados JSONB NOT NULL DEFAULT '{}'::jsonb, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())",
@@ -8816,6 +8819,464 @@ def carregar_config_protege():
         return usuario, senha, ",".join(str(v).strip() for v in veiculos) if isinstance(veiculos, (list, tuple)) else str(veiculos).strip()
     except: return "", "", RASTREADOR_VEICULOS_PADRAO
 
+# =====================================================================
+# HISTÓRICO DIÁRIO DA PROTEGE — INÍCIO REAL DA ROTA
+# =====================================================================
+RAIO_BASE_INICIO_KM = 0.50
+JANELA_CONFIRMACAO_SAIDA_MIN = 45
+
+
+def _config_relatorio_protege():
+    """URL opcional do relatório; se vazia, tenta descobrir pelo menu autenticado."""
+    try:
+        cfg = st.secrets["protege"]
+        for chave in ("relatorio_posicoes_url", "relatorio_url", "historico_url"):
+            valor = str(cfg.get(chave, "") or "").strip()
+            if valor:
+                return valor
+    except Exception:
+        pass
+    return ""
+
+
+def _normalizar_placa_protege(valor):
+    texto = re.sub(r"[^A-Z0-9]", "", str(valor or "").upper())
+    if texto.startswith("TIF"):
+        return "TIF-2123"
+    if texto.startswith("OSC"):
+        return "OSC-3842"
+    if len(texto) == 7:
+        return f"{texto[:3]}-{texto[3:]}"
+    return str(valor or "").strip().upper()
+
+
+def _extrair_urls_aspx_protege(html, base_url):
+    candidatos, vistos = [], set()
+    padroes = [
+        r"(?i)href\s*=\s*[\"']([^\"']+\.aspx(?:\?[^\"']*)?)[\"']",
+        r"(?i)[\"']([^\"']+\.aspx(?:\?[^\"']*)?)[\"']",
+    ]
+    for padrao in padroes:
+        for bruto in re.findall(padrao, html or ""):
+            bruto = str(bruto or "").strip().replace("&amp;", "&")
+            if not bruto or bruto.lower().startswith(("javascript:", "mailto:")):
+                continue
+            absoluto = urllib.parse.urljoin(base_url, bruto)
+            if absoluto not in vistos:
+                vistos.add(absoluto)
+                candidatos.append(absoluto)
+    return candidatos
+
+
+def _texto_html_simples(html):
+    texto = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", html or "")
+    texto = re.sub(r"(?s)<[^>]+>", " ", texto)
+    texto = texto.replace("&nbsp;", " ").replace("&amp;", "&")
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+class _FormularioProtegeParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.forms, self.form = [], None
+        self.select = self.option = self.button = None
+
+    def handle_starttag(self, tag, attrs):
+        a = {str(k).lower(): (v or "") for k, v in attrs}
+        tag = tag.lower()
+        if tag == "form":
+            self.form = {"action": a.get("action", ""), "method": a.get("method", "post").lower(), "inputs": [], "selects": [], "buttons": []}
+        elif self.form is not None and tag == "input":
+            self.form["inputs"].append({**a, "tag": "input"})
+        elif self.form is not None and tag == "select":
+            self.select = {**a, "tag": "select", "options": []}
+            self.form["selects"].append(self.select)
+        elif self.select is not None and tag == "option":
+            self.option = {**a, "text": ""}
+            self.select["options"].append(self.option)
+        elif self.form is not None and tag == "button":
+            self.button = {**a, "tag": "button", "text": ""}
+            self.form["buttons"].append(self.button)
+
+    def handle_data(self, data):
+        if self.option is not None:
+            self.option["text"] += data
+        if self.button is not None:
+            self.button["text"] += data
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "option":
+            self.option = None
+        elif tag == "select":
+            self.select = None
+        elif tag == "button":
+            self.button = None
+        elif tag == "form" and self.form is not None:
+            self.forms.append(self.form)
+            self.form = None
+
+
+def _parsear_formularios_protege(html):
+    parser = _FormularioProtegeParser()
+    try:
+        parser.feed(html or "")
+    except Exception:
+        pass
+    return parser.forms
+
+
+def _nome_controle(controle):
+    return remover_acentos(f"{controle.get('name','')} {controle.get('id','')} {controle.get('text','')}").lower()
+
+
+def _pontuar_form_relatorio(form):
+    controles = list(form.get("inputs", [])) + list(form.get("selects", [])) + list(form.get("buttons", []))
+    nomes = " ".join(_nome_controle(c) for c in controles)
+    pontos = 0
+    if any(k in nomes for k in ("data", "date", "dtinicio", "dtfim")): pontos += 6
+    if any(k in nomes for k in ("veic", "placa", "equip", "rastread", "terminal")): pontos += 6
+    if any(k in nomes for k in ("consult", "pesquis", "gerar", "relatorio", "visualiz")): pontos += 3
+    if "__viewstate" in nomes: pontos += 2
+    return pontos
+
+
+def _descobrir_pagina_relatorio_protege(sessao, pagina_atual):
+    configurada = _config_relatorio_protege()
+    if configurada:
+        url = urllib.parse.urljoin(pagina_atual, configurada)
+        resp = sessao.get(url, timeout=20)
+        resp.raise_for_status()
+        return resp.url, resp.text
+
+    cache = st.session_state.get("_protege_relatorio_url_descoberta")
+    if cache:
+        try:
+            resp = sessao.get(cache, timeout=20)
+            if resp.ok and _parsear_formularios_protege(resp.text):
+                return resp.url, resp.text
+        except Exception:
+            st.session_state.pop("_protege_relatorio_url_descoberta", None)
+
+    inicial = sessao.get(pagina_atual, timeout=20)
+    inicial.raise_for_status()
+    urls = _extrair_urls_aspx_protege(inicial.text, inicial.url)
+    for nome in (
+        "relatorio.aspx", "relatorios.aspx", "relatorioPosicao.aspx", "relatorioPosicoes.aspx",
+        "relatorioposicao.aspx", "relatorioposicoes.aspx", "historico.aspx", "posicoes.aspx",
+        "relatorioPercurso.aspx", "relatoriopercurso.aspx", "Relatorios/relatorioPosicao.aspx",
+        "Relatorios/relatorioPercurso.aspx",
+    ):
+        urls.append(urllib.parse.urljoin(inicial.url, nome))
+
+    def score_url(url):
+        n = remover_acentos(url).lower()
+        return sum(1 for k in ("relat", "posic", "histor", "percur", "trajet") if k in n)
+    urls = sorted(dict.fromkeys(urls), key=score_url, reverse=True)[:35]
+
+    melhor, melhor_score = None, -1
+    for url in urls:
+        try:
+            resp = sessao.get(url, timeout=12, allow_redirects=True)
+            if not resp.ok:
+                continue
+            forms = _parsear_formularios_protege(resp.text)
+            if not forms:
+                continue
+            texto = remover_acentos(_texto_html_simples(resp.text)).upper()
+            score = max((_pontuar_form_relatorio(f) for f in forms), default=0)
+            score += 2 if "RELATOR" in texto else 0
+            score += 2 if "POSIC" in texto or "PERCUR" in texto else 0
+            score += 1 if "VEIC" in texto else 0
+            if score > melhor_score:
+                melhor_score, melhor = score, (resp.url, resp.text)
+            if score >= 13:
+                break
+        except Exception:
+            continue
+    if not melhor or melhor_score < 7:
+        raise RuntimeError("Não consegui localizar automaticamente o relatório de posições no portal da Protege.")
+    st.session_state["_protege_relatorio_url_descoberta"] = melhor[0]
+    return melhor
+
+
+def _valor_option_veiculo(select, veiculo_id, placa):
+    alvo_id = re.sub(r"\D", "", str(veiculo_id or ""))
+    alvo_placa = re.sub(r"[^A-Z0-9]", "", str(placa or "").upper())
+    for opt in select.get("options", []) or []:
+        valor = str(opt.get("value", "") or "")
+        texto = str(opt.get("text", "") or "")
+        combinado_num = re.sub(r"\D", "", valor + " " + texto)
+        combinado_placa = re.sub(r"[^A-Z0-9]", "", (valor + " " + texto).upper())
+        if alvo_id and alvo_id in combinado_num:
+            return valor
+        if alvo_placa and alvo_placa in combinado_placa:
+            return valor
+    return str(veiculo_id or "")
+
+
+def _montar_post_relatorio_protege(form, data_ref, veiculo_id, placa):
+    dados = {}
+    for c in form.get("inputs", []):
+        nome = c.get("name")
+        if not nome:
+            continue
+        tipo = str(c.get("type", "text") or "text").lower()
+        if tipo in ("hidden", "text", "date", "time", "submit", "button"):
+            dados[nome] = c.get("value", "")
+
+    data_br, data_iso = data_ref.strftime("%d/%m/%Y"), data_ref.strftime("%Y-%m-%d")
+    componentes_data = componentes_veiculo = 0
+    controles = list(form.get("inputs", [])) + list(form.get("selects", []))
+    for c in controles:
+        nome = c.get("name")
+        if not nome:
+            continue
+        ident = _nome_controle(c)
+        tipo = str(c.get("type", "") or "").lower()
+        if any(k in ident for k in ("veic", "placa", "equip", "rastread", "terminal")):
+            componentes_veiculo += 1
+            dados[nome] = _valor_option_veiculo(c, veiculo_id, placa) if c.get("tag") == "select" else str(veiculo_id or placa or "")
+            continue
+        if (
+            ("data" in ident or "date" in ident or any(k in ident for k in ("dtini", "dtfim", "dtinicio", "dtfinal")))
+            and "validation" not in ident and "eventvalidation" not in ident
+        ):
+            componentes_data += 1
+            dados[nome] = data_iso if tipo == "date" else data_br
+            continue
+        if any(k in ident for k in ("horain", "horaini", "iniciohora", "timeinicio")):
+            dados[nome] = "00:00"
+        elif any(k in ident for k in ("horafim", "horafinal", "fimhora", "timefim")):
+            dados[nome] = "23:59"
+        if c.get("tag") == "select":
+            if re.search(r"(^|[^a-z])dia([^a-z]|$)", ident):
+                dados[nome] = str(data_ref.day); componentes_data += 1
+            elif re.search(r"(^|[^a-z])mes([^a-z]|$)", ident):
+                dados[nome] = str(data_ref.month); componentes_data += 1
+            elif re.search(r"(^|[^a-z])ano([^a-z]|$)", ident):
+                dados[nome] = str(data_ref.year); componentes_data += 1
+
+    candidatos_botao = []
+    for b in list(form.get("inputs", [])) + list(form.get("buttons", [])):
+        nome = b.get("name")
+        if not nome:
+            continue
+        tipo = str(b.get("type", "") or "").lower()
+        ident = _nome_controle(b)
+        if tipo in ("submit", "button", "image") or any(k in ident for k in ("consult", "pesquis", "gerar", "visualiz", "relat")):
+            score = sum(1 for k in ("consult", "pesquis", "gerar", "visualiz", "relat") if k in ident)
+            candidatos_botao.append((score, b))
+    if candidatos_botao:
+        _, b = max(candidatos_botao, key=lambda x: x[0])
+        nome = b.get("name")
+        valor = b.get("value") or b.get("text") or "Consultar"
+        if str(b.get("type", "")).lower() == "image":
+            dados[f"{nome}.x"], dados[f"{nome}.y"] = "10", "10"
+        else:
+            dados[nome] = str(valor).strip()
+    return dados, componentes_data, componentes_veiculo
+
+
+class _TabelaHistoricoProtegeParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.rows, self.row, self.cell = [], None, None
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        atributos = {str(k).lower(): (v or "") for k, v in attrs}
+        if tag == "tr":
+            self.row = []
+        elif tag in ("td", "th") and self.row is not None:
+            self.cell = {"text": "", "meta": " ".join(f"{k}={v}" for k, v in atributos.items())}
+        elif tag == "br" and self.cell is not None:
+            self.cell["text"] += " "
+        elif tag == "img" and self.cell is not None:
+            self.cell["meta"] += " " + " ".join(f"{k}={v}" for k, v in atributos.items())
+
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell["text"] += data
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in ("td", "th") and self.cell is not None and self.row is not None:
+            self.cell["text"] = re.sub(r"\s+", " ", self.cell["text"]).strip()
+            self.row.append(self.cell); self.cell = None
+        elif tag == "tr" and self.row is not None:
+            if self.row: self.rows.append(self.row)
+            self.row = None
+
+
+def _estado_ignicao_linha(celulas):
+    texto = " ".join((c.get("text", "") + " " + c.get("meta", "")) for c in celulas)
+    n = remover_acentos(texto).lower()
+    if re.search(r"(chave|igni|key)[^\n]{0,35}(verde|green|ligad|on\b)", n) or re.search(r"(verde|green)[^\n]{0,25}(chave|igni|key)", n): return True
+    if re.search(r"(chave|igni|key)[^\n]{0,35}(vermel|red|deslig|off\b)", n) or re.search(r"(vermel|red)[^\n]{0,25}(chave|igni|key)", n): return False
+    if "ignicao ligada" in n or "chave ligada" in n: return True
+    if "ignicao desligada" in n or "chave desligada" in n: return False
+    return None
+
+
+def _parsear_linhas_relatorio_protege(html, data_ref):
+    parser = _TabelaHistoricoProtegeParser()
+    try: parser.feed(html or "")
+    except Exception: pass
+    registros = []
+    data_alvo = data_ref.date() if isinstance(data_ref, datetime) else data_ref
+    for celulas in parser.rows:
+        linha = " | ".join(c.get("text", "") for c in celulas if c.get("text", ""))
+        if not linha: continue
+        data_match = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2,4})\b", linha)
+        hora_match = re.search(r"\b([0-2]?\d:[0-5]\d(?::[0-5]\d)?)\b", linha)
+        if not hora_match: continue
+        try:
+            if data_match:
+                fmt = "%d/%m/%Y" if len(data_match.group(1).split("/")[-1]) == 4 else "%d/%m/%y"
+                if datetime.strptime(data_match.group(1), fmt).date() != data_alvo: continue
+            hora = hora_match.group(1)[:5].zfill(5)
+        except Exception: continue
+        coords = []
+        for m in re.finditer(r"(?<!\d)(-?\d{1,3}[.,]\d{3,})(?!\d)", linha):
+            try: coords.append(float(m.group(1).replace(",", ".")))
+            except Exception: pass
+        lat = lon = None
+        for i in range(len(coords)-1):
+            a, b = coords[i], coords[i+1]
+            if -90 <= a <= 90 and -180 <= b <= 180 and abs(a) > .1 and abs(b) > .1:
+                lat, lon = a, b; break
+        if lat is None or lon is None: continue
+        vel_match = re.search(r"(?i)(\d+(?:[.,]\d+)?)\s*km\s*/?\s*h", linha)
+        velocidade = float(vel_match.group(1).replace(",", ".")) if vel_match else 0.0
+        registros.append({"data": data_alvo.strftime("%d/%m/%Y"), "hora": hora, "lat": float(lat), "lon": float(lon), "velocidade": velocidade, "ignicao": _estado_ignicao_linha(celulas), "linha": linha[:800]})
+    unicos = {}
+    for r in registros:
+        unicos[(r["hora"], round(r["lat"],6), round(r["lon"],6), round(r["velocidade"],1), r["ignicao"])] = r
+    return sorted(unicos.values(), key=lambda r: r["hora"])
+
+
+def _consultar_relatorio_diario_protege(sessao, pagina_atual, data_ref, veiculo_id, placa):
+    url_relatorio, html_base = _descobrir_pagina_relatorio_protege(sessao, pagina_atual)
+    forms = _parsear_formularios_protege(html_base)
+    if not forms: raise RuntimeError("O relatório da Protege não possui formulário identificável.")
+    form = max(forms, key=_pontuar_form_relatorio)
+    dados, qtd_datas, qtd_veiculos = _montar_post_relatorio_protege(form, data_ref, veiculo_id, placa)
+    if qtd_datas == 0: raise RuntimeError("Não encontrei o campo de data no relatório da Protege.")
+    if qtd_veiculos == 0: raise RuntimeError("Não encontrei o campo de veículo no relatório da Protege.")
+    action = urllib.parse.urljoin(url_relatorio, form.get("action") or url_relatorio)
+    method = str(form.get("method", "post") or "post").lower()
+    headers = {"Referer": url_relatorio, "User-Agent": "Mozilla/5.0"}
+    resposta = sessao.get(action, params=dados, headers=headers, timeout=30) if method == "get" else sessao.post(action, data=dados, headers=headers, timeout=30, allow_redirects=True)
+    resposta.raise_for_status()
+    registros = _parsear_linhas_relatorio_protege(resposta.text, data_ref)
+    if not registros:
+        candidatos = []
+        for c in list(form.get("inputs", [])) + list(form.get("buttons", [])):
+            ident, nome = _nome_controle(c), c.get("name")
+            if nome and any(k in ident for k in ("consult", "pesquis", "gerar", "visualiz", "relat")): candidatos.append(nome)
+        if candidatos:
+            dados2 = dict(dados); dados2["__EVENTTARGET"], dados2["__EVENTARGUMENT"] = candidatos[0], ""
+            resposta2 = sessao.post(action, data=dados2, headers=headers, timeout=30, allow_redirects=True)
+            resposta2.raise_for_status(); registros = _parsear_linhas_relatorio_protege(resposta2.text, data_ref)
+    return registros
+
+
+def _detectar_inicio_rota_historico(registros, data_ref):
+    if not registros: return None, "Sem posições no relatório"
+    lat_base, lon_base = LOCAL_BASE_COORDS
+    linhas = []
+    for r in registros:
+        item = dict(r); item["dist_base"] = calcular_distancia_km(lat_base, lon_base, item["lat"], item["lon"]); item["minuto"] = parse_time_to_mins(item["hora"]); linhas.append(item)
+    linhas.sort(key=lambda r:r["minuto"])
+
+    def confirma_saida(indice):
+        inicio_min = linhas[indice]["minuto"]
+        minuto_anterior = inicio_min
+        for futuro in linhas[indice:]:
+            if futuro["minuto"] - inicio_min > JANELA_CONFIRMACAO_SAIDA_MIN:
+                return False
+            # Se o relatório tem um grande buraco de leituras ou o veículo desliga
+            # novamente dentro da base, aquele movimento não foi o início da rota.
+            if futuro["minuto"] - minuto_anterior > 15:
+                return False
+            if (
+                futuro is not linhas[indice]
+                and futuro["dist_base"] <= RAIO_BASE_INICIO_KM
+                and futuro["velocidade"] <= 0
+                and futuro["ignicao"] is False
+            ):
+                return False
+            if futuro["dist_base"] > RAIO_BASE_INICIO_KM and (futuro["velocidade"] > 0 or futuro["ignicao"] is True):
+                return True
+            minuto_anterior = futuro["minuto"]
+        return False
+
+    for i, atual in enumerate(linhas):
+        anterior = linhas[i-1] if i else None
+        if atual["dist_base"] <= RAIO_BASE_INICIO_KM and atual["ignicao"] is True and anterior is not None and anterior.get("ignicao") is False and confirma_saida(i):
+            return atual["hora"], "Protege: chave ligada na base + saída confirmada >500 m"
+    for i, atual in enumerate(linhas):
+        anterior = linhas[i-1] if i else None
+        if atual["dist_base"] <= RAIO_BASE_INICIO_KM and atual["velocidade"] > 0 and (anterior is None or anterior.get("velocidade",0) <= 0 or anterior.get("ignicao") is False) and confirma_saida(i):
+            return atual["hora"], "Protege: primeiro movimento na base + saída confirmada >500 m"
+    for i, atual in enumerate(linhas):
+        if atual["dist_base"] <= RAIO_BASE_INICIO_KM: continue
+        candidato = atual; j = i-1
+        while j >= 0:
+            anterior = linhas[j]
+            if atual["minuto"]-anterior["minuto"] > JANELA_CONFIRMACAO_SAIDA_MIN: break
+            if anterior["dist_base"] <= RAIO_BASE_INICIO_KM and (anterior["velocidade"] > 0 or anterior["ignicao"] is True): candidato = anterior; j -= 1; continue
+            if anterior["dist_base"] <= RAIO_BASE_INICIO_KM and anterior["velocidade"] <= 0 and anterior["ignicao"] is False: break
+            j -= 1
+        return candidato["hora"], "Protege: início do deslocamento que saiu do raio de 500 m"
+    return None, "Veículo não teve saída confirmada do raio de 500 m"
+
+
+def _gravar_status_sync_protege(placa, data_str, status, detalhe=""):
+    execute_db("""INSERT INTO protege_inicio_sync (placa,data,status,detalhe,atualizado_em) VALUES (:placa,:data,:status,:detalhe,NOW()) ON CONFLICT (placa,data) DO UPDATE SET status=EXCLUDED.status, detalhe=EXCLUDED.detalhe, atualizado_em=NOW()""", {"placa":placa,"data":data_str,"status":status,"detalhe":str(detalhe or "")[:500]})
+
+
+def sincronizar_inicios_historicos_protege(data_inicio, data_fim, forcar=False):
+    usuario, senha, ids_csv = carregar_config_protege()
+    if not usuario or not senha: return {"ok":0,"sem_saida":0,"erros":0,"ignorados":0,"mensagem":"Credenciais da Protege não configuradas."}
+    ids = [v.strip() for v in str(ids_csv or "").split(",") if v.strip()]
+    if not ids: return {"ok":0,"sem_saida":0,"erros":0,"ignorados":0,"mensagem":"Nenhum veículo configurado na Protege."}
+    sessao, pagina = st.session_state.get("protege_sessao"), st.session_state.get("protege_pagina")
+    try:
+        if not sessao or not pagina: sessao, pagina, posicoes = autenticar_protege(usuario, senha, ids_csv)
+        else:
+            try: posicoes = consultar_posicoes_protege(sessao, pagina, ids_csv)
+            except Exception: sessao, pagina, posicoes = autenticar_protege(usuario, senha, ids_csv)
+        st.session_state["protege_sessao"], st.session_state["protege_pagina"] = sessao, pagina
+    except Exception as erro:
+        return {"ok":0,"sem_saida":0,"erros":1,"ignorados":0,"mensagem":f"Falha ao autenticar na Protege: {erro}"}
+    por_id = {str(p.get("ID","")).strip():_normalizar_placa_protege(p.get("Placa","")) for p in (posicoes or [])}
+    por_id_num = {re.sub(r"\D","",k):v for k,v in por_id.items()}
+    resultado = {"ok":0,"sem_saida":0,"erros":0,"ignorados":0,"mensagem":""}
+    atual, hoje = data_inicio, AGORA_REAL.date()
+    while atual <= data_fim and atual <= hoje:
+        data_str = atual.strftime("%d/%m/%Y")
+        for veiculo_id in ids:
+            placa = por_id.get(veiculo_id) or por_id_num.get(re.sub(r"\D","",veiculo_id)) or _normalizar_placa_protege(veiculo_id)
+            existente = fetch_one("SELECT hora_inicio,COALESCE(fonte,'') FROM inicio_movimento WHERE placa=:placa AND data=:data", {"placa":placa,"data":data_str})
+            if existente and str(existente[1] or "").lower() == "manual": resultado["ignorados"] += 1; continue
+            sync = fetch_one("SELECT status FROM protege_inicio_sync WHERE placa=:placa AND data=:data", {"placa":placa,"data":data_str})
+            if not forcar and atual < hoje and sync and str(sync[0]) in {"OK","SEM_SAIDA"}: resultado["ignorados"] += 1; continue
+            try:
+                registros = _consultar_relatorio_diario_protege(sessao, pagina, atual, veiculo_id, placa)
+                hora, detalhe = _detectar_inicio_rota_historico(registros, atual)
+                if hora:
+                    execute_db("""INSERT INTO inicio_movimento (placa,data,hora_inicio,fonte,detalhe) VALUES (:placa,:data,:hora,'protege_relatorio',:detalhe) ON CONFLICT (placa,data) DO UPDATE SET hora_inicio=EXCLUDED.hora_inicio, fonte=EXCLUDED.fonte, detalhe=EXCLUDED.detalhe WHERE COALESCE(inicio_movimento.fonte,'') <> 'manual'""", {"placa":placa,"data":data_str,"hora":hora,"detalhe":detalhe})
+                    _gravar_status_sync_protege(placa,data_str,"OK",detalhe); resultado["ok"] += 1
+                else:
+                    _gravar_status_sync_protege(placa,data_str,"SEM_SAIDA",detalhe); resultado["sem_saida"] += 1
+            except Exception as erro:
+                _gravar_status_sync_protege(placa,data_str,"ERRO",str(erro)); resultado["erros"] += 1
+        atual += timedelta(days=1)
+    resultado["mensagem"] = f"{resultado['ok']} saídas atualizadas • {resultado['sem_saida']} dias sem saída • {resultado['ignorados']} já conferidos • {resultado['erros']} erro(s)"
+    return resultado
+
 
 @st.cache_resource(show_spinner=False)
 def obter_executor_gps_rota():
@@ -8986,7 +9447,10 @@ def loop_automacoes_background(processar_rastreador=True):
                         if not fetch_one("SELECT hora_inicio FROM inicio_movimento WHERE placa=:placa AND data=:data", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR}):
                             match_time = re.search(r'(\d{1,2}:\d{2})', str(p.get('Última atualização', '')))
                             hora_leitura = match_time.group(1).zfill(5) if match_time else agora_loop.strftime("%H:%M")
-                            execute_db("INSERT INTO inicio_movimento (placa, data, hora_inicio) VALUES (:placa, :data, :hora) ON CONFLICT (placa, data) DO NOTHING", {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR, "hora": hora_leitura})
+                            execute_db(
+                                "INSERT INTO inicio_movimento (placa, data, hora_inicio, fonte, detalhe) VALUES (:placa, :data, :hora, 'rastreador_tempo_real', 'Fallback ao vivo: primeira leitura em movimento fora de 500 m') ON CONFLICT (placa, data) DO NOTHING",
+                                {"placa": p["Placa"], "data": DATA_HOJE_REAL_STR, "hora": hora_leitura},
+                            )
 
             # 2. GEOFENCE ROBUSTA — chegada/saída com histerese e confirmação.
             # Entrada: <=250m + baixa velocidade por 2 leituras (~1 min).
@@ -9327,10 +9791,10 @@ if modulo_principal == "📡 Rastreador ao vivo":
                     hora_manual_str = hora_manual.strftime("%H:%M")
                     execute_db(
                         """
-                        INSERT INTO inicio_movimento (placa, data, hora_inicio)
-                        VALUES (:placa, :data, :hora)
+                        INSERT INTO inicio_movimento (placa, data, hora_inicio, fonte, detalhe)
+                        VALUES (:placa, :data, :hora, 'manual', 'Horário corrigido manualmente na Torre')
                         ON CONFLICT (placa, data)
-                        DO UPDATE SET hora_inicio=EXCLUDED.hora_inicio
+                        DO UPDATE SET hora_inicio=EXCLUDED.hora_inicio, fonte='manual', detalhe='Horário corrigido manualmente na Torre'
                         """,
                         {"placa": placa_manual, "data": DATA_HOJE_REAL_STR, "hora": hora_manual_str},
                     )
@@ -9867,123 +10331,168 @@ if modulo_principal == "🚗 Frota e custos":
         st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
         st.markdown("#### 🕒 Horários da operação (rastreador)")
 
-        # Carrega o histórico completo para que o filtro mensal não dependa de um
-        # LIMIT e para que o mesmo conjunto filtrado possa ser exportado.
+        # Backfill automático do mês atual: o histórico diário da Protege permite
+        # recuperar dias em que ninguém estava com a Torre aberta no momento da saída.
+        chave_auto_historico = f"_protege_historico_auto_{AGORA_REAL.strftime('%Y%m%d')}"
+        if not st.session_state.get(chave_auto_historico):
+            primeiro_dia_mes = AGORA_REAL.date().replace(day=1)
+            with st.spinner("Conferindo os relatórios diários da Protege..."):
+                st.session_state[chave_auto_historico] = sincronizar_inicios_historicos_protege(
+                    primeiro_dia_mes, AGORA_REAL.date(), forcar=False
+                )
+
+        resumo_auto_hist = st.session_state.get(chave_auto_historico) or {}
+        if resumo_auto_hist.get("mensagem"):
+            icone_hist = "⚠️" if resumo_auto_hist.get("erros") else "✅"
+            st.caption(f"{icone_hist} Histórico Protege: {resumo_auto_hist['mensagem']}")
+            if resumo_auto_hist.get("erros"):
+                with st.expander("Diagnóstico da leitura histórica", expanded=False):
+                    df_erros_hist = get_df(
+                        "SELECT data AS \"Data\", placa AS \"Placa\", detalhe AS \"Erro\" FROM protege_inicio_sync WHERE status='ERRO' ORDER BY atualizado_em DESC LIMIT 8"
+                    )
+                    if not df_erros_hist.empty:
+                        st.dataframe(df_erros_hist, use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("Nenhum detalhe adicional disponível.")
+
+        def _converter_data_inicio(valor):
+            if valor is None or (isinstance(valor, float) and math.isnan(valor)):
+                return pd.NaT
+            if not isinstance(valor, str):
+                return pd.to_datetime(valor, errors="coerce")
+            texto_data = valor.strip()
+            if not texto_data:
+                return pd.NaT
+            if re.match(r"^\d{4}-\d{2}-\d{2}", texto_data):
+                return pd.to_datetime(texto_data, errors="coerce", yearfirst=True)
+            return pd.to_datetime(texto_data, errors="coerce", dayfirst=True)
+
         df_inicio_completo = get_df(
             'SELECT data AS "Data", placa AS "Placa", hora_inicio AS "Hora de saída" '
             'FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC'
         )
-        df_inicio_filtrado = df_inicio_completo.copy()
-        rotulo_periodo_inicio = "Todos os meses"
-        chave_periodo_inicio = "todos"
+        coluna_data_inicio = next(
+            (c for c in df_inicio_completo.columns if remover_acentos(str(c)).strip().lower() == "data"),
+            None,
+        ) if not df_inicio_completo.empty else None
+        datas_inicio = (
+            df_inicio_completo[coluna_data_inicio].map(_converter_data_inicio)
+            if coluna_data_inicio is not None else pd.Series(dtype="datetime64[ns]")
+        )
 
-        if not df_inicio_completo.empty:
-            # PostgreSQL transforma aliases sem aspas em minúsculas. Mesmo com os
-            # aliases SQL já protegidos acima, localizamos a coluna de forma
-            # tolerante para não derrubar a tela caso o driver retorne outro casing.
-            coluna_data_inicio = next(
-                (coluna for coluna in df_inicio_completo.columns
-                 if remover_acentos(str(coluna)).strip().lower() == "data"),
-                None,
+        # Disponibiliza os últimos 18 meses mesmo quando o banco ainda não tem linhas
+        # para o mês: ao selecionar e atualizar, o próprio relatório da Protege faz o backfill.
+        meses_calendario = []
+        cursor_mes = AGORA_REAL.date().replace(day=1)
+        for _ in range(18):
+            meses_calendario.append(cursor_mes.strftime("%m/%Y"))
+            cursor_mes = (cursor_mes - timedelta(days=1)).replace(day=1)
+        meses_banco = sorted(
+            {d.strftime("%m/%Y") for d in datas_inicio.dropna()},
+            key=lambda v: datetime.strptime(v, "%m/%Y"), reverse=True,
+        ) if len(datas_inicio) else []
+        opcoes_periodo = list(dict.fromkeys(meses_calendario + meses_banco))
+        rotulo_periodo_inicio = st.selectbox(
+            "Filtrar inícios de rota por mês",
+            opcoes_periodo,
+            index=0,
+            key="filtro_mes_inicios_rota",
+        )
+        chave_periodo_inicio = rotulo_periodo_inicio.replace("/", "_")
+        mes_sel, ano_sel = map(int, rotulo_periodo_inicio.split("/"))
+        inicio_periodo = datetime(ano_sel, mes_sel, 1).date()
+        fim_periodo = (
+            datetime(ano_sel + 1, 1, 1).date() - timedelta(days=1)
+            if mes_sel == 12 else
+            datetime(ano_sel, mes_sel + 1, 1).date() - timedelta(days=1)
+        )
+        fim_consulta = min(fim_periodo, AGORA_REAL.date())
+
+        col_sync, col_explicacao = st.columns([1.15, 2.85])
+        with col_sync:
+            if st.button("🔄 Atualizar mês pela Protege", use_container_width=True, key="atualizar_mes_protege"):
+                with st.spinner(f"Lendo os relatórios diários de {rotulo_periodo_inicio}..."):
+                    st.session_state["_resultado_sync_protege_manual"] = sincronizar_inicios_historicos_protege(
+                        inicio_periodo, fim_consulta, forcar=True
+                    )
+                st.rerun()
+        with col_explicacao:
+            st.caption(
+                "A hora é o início real da saída: mudança da chave/primeiro movimento na base. "
+                "O afastamento de 500 m serve apenas para confirmar que o veículo realmente saiu."
             )
-            if coluna_data_inicio is not None:
-                # Aceita DATE/Timestamp do PostgreSQL e também históricos em texto
-                # (dd/mm/aaaa ou ISO). ISO precisa ser tratado separadamente porque
-                # ``dayfirst=True`` pode interpretar 2026-09-10 como 09/10/2026.
-                def _converter_data_inicio(valor):
-                    if valor is None or (isinstance(valor, float) and math.isnan(valor)):
-                        return pd.NaT
-                    if not isinstance(valor, str):
-                        return pd.to_datetime(valor, errors="coerce")
-                    texto_data = valor.strip()
-                    if not texto_data:
-                        return pd.NaT
-                    if re.match(r"^\d{4}-\d{2}-\d{2}", texto_data):
-                        return pd.to_datetime(texto_data, errors="coerce", yearfirst=True)
-                    return pd.to_datetime(texto_data, errors="coerce", dayfirst=True)
 
-                datas_inicio = df_inicio_completo[coluna_data_inicio].map(_converter_data_inicio)
-                periodos_validos = sorted(
-                    {data.strftime("%m/%Y") for data in datas_inicio.dropna()},
-                    key=lambda valor: datetime.strptime(valor, "%m/%Y"),
-                    reverse=True,
-                )
-                opcoes_periodo = ["Todos os meses"] + periodos_validos
-                mes_atual_inicio = AGORA_REAL.strftime("%m/%Y")
-                indice_padrao_inicio = opcoes_periodo.index(mes_atual_inicio) if mes_atual_inicio in opcoes_periodo else 0
-                rotulo_periodo_inicio = st.selectbox(
-                    "Filtrar inícios de rota por mês",
-                    opcoes_periodo,
-                    index=indice_padrao_inicio,
-                    key="filtro_mes_inicios_rota",
-                )
-                if rotulo_periodo_inicio != "Todos os meses":
-                    mascara_periodo = datas_inicio.dt.strftime("%m/%Y") == rotulo_periodo_inicio
-                    df_inicio_filtrado = df_inicio_completo.loc[mascara_periodo].copy()
-                    chave_periodo_inicio = rotulo_periodo_inicio.replace("/", "_")
+        resultado_sync_manual = st.session_state.pop("_resultado_sync_protege_manual", None)
+        if resultado_sync_manual:
+            if resultado_sync_manual.get("erros"):
+                st.warning(f"Histórico Protege: {resultado_sync_manual.get('mensagem','')}")
             else:
-                # Em vez de KeyError, mantém os registros visíveis e deixa o
-                # relatório disponível sem filtro até que o schema seja corrigido.
-                st.warning("Não foi possível identificar a coluna de data dos inícios de rota.")
+                st.success(f"Histórico Protege atualizado: {resultado_sync_manual.get('mensagem','')}")
+
+        # Recarrega o banco depois da sincronização e aplica o mês escolhido.
+        df_inicio_completo = get_df(
+            'SELECT data AS "Data", placa AS "Placa", hora_inicio AS "Hora de saída" '
+            'FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC'
+        )
+        coluna_data_inicio = next(
+            (c for c in df_inicio_completo.columns if remover_acentos(str(c)).strip().lower() == "data"),
+            None,
+        ) if not df_inicio_completo.empty else None
+        if coluna_data_inicio is not None:
+            datas_inicio = df_inicio_completo[coluna_data_inicio].map(_converter_data_inicio)
+            df_inicio_filtrado = df_inicio_completo.loc[
+                datas_inicio.dt.strftime("%m/%Y") == rotulo_periodo_inicio
+            ].copy()
+        else:
+            df_inicio_filtrado = df_inicio_completo.copy()
 
         c_inicio, c_paradas = st.columns([1, 1.8])
-
         with c_inicio:
             st.markdown("**🏁 Início da rota (saídas do pátio)**")
-            st.caption("Marcado quando o veículo se afasta a mais de 500 m do escritório.")
+            st.caption("Hora em que o veículo começou a sair da base; 500 m é apenas a confirmação da saída.")
             if not df_inicio_filtrado.empty:
                 st.dataframe(df_inicio_filtrado, use_container_width=True, hide_index=True)
             else:
-                st.info("Nenhum registro de início encontrado para o período selecionado.")
-                
+                st.info("Nenhuma saída identificada para o período selecionado.")
+
         with c_paradas:
             st.markdown("**📍 Paradas realizadas nas obras (geocerca)**")
             st.caption("Registra o tempo de permanência dentro de um raio de 250 m do destino.")
-            df_paradas_tbl = get_df('SELECT data AS "Data", placa AS "Placa", local AS "Local", hora_chegada AS "Chegada", hora_saida AS "Saída" FROM rastreio_paradas ORDER BY id DESC LIMIT 150')
+            df_paradas_tbl = get_df(
+                'SELECT data AS "Data", placa AS "Placa", local AS "Local", hora_chegada AS "Chegada", hora_saida AS "Saída" '
+                'FROM rastreio_paradas ORDER BY id DESC LIMIT 150'
+            )
             if not df_paradas_tbl.empty:
                 st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhum registro de parada do rastreador encontrado.")
 
         st.markdown("#### 📥 Relatório de inícios de rota")
-        st.caption("Um único relatório para o período selecionado, organizado em seções separadas por veículo.")
-
-        # O download é único, mas cada veículo recebe sua própria seção/aba no
-        # relatório. Isso deixa Excel/PDF fáceis de conferir sem misturar as saídas.
+        st.caption("Um único relatório do mês, separado internamente por veículo.")
         tabelas_inicios_por_veiculo = {}
         if not df_inicio_filtrado.empty:
             coluna_placa_inicio = next(
-                (coluna for coluna in df_inicio_filtrado.columns
-                 if remover_acentos(str(coluna)).strip().lower() == "placa"),
+                (c for c in df_inicio_filtrado.columns if remover_acentos(str(c)).strip().lower() == "placa"),
                 None,
             )
-
             if coluna_placa_inicio is not None:
                 df_relatorio_inicio = df_inicio_filtrado.copy()
                 df_relatorio_inicio[coluna_placa_inicio] = (
-                    df_relatorio_inicio[coluna_placa_inicio]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .replace("", "Não informado")
+                    df_relatorio_inicio[coluna_placa_inicio].fillna("").astype(str).str.strip().replace("", "Não informado")
                 )
-
-                placas_relatorio = sorted(
-                    df_relatorio_inicio[coluna_placa_inicio].dropna().astype(str).unique(),
-                    key=lambda valor: remover_acentos(str(valor)).upper(),
-                )
-                for placa_relatorio in placas_relatorio:
+                for placa_relatorio in sorted(
+                    df_relatorio_inicio[coluna_placa_inicio].unique(),
+                    key=lambda v: remover_acentos(str(v)).upper(),
+                ):
                     df_veiculo = df_relatorio_inicio[
                         df_relatorio_inicio[coluna_placa_inicio].astype(str) == str(placa_relatorio)
                     ].copy()
-                    # A placa já está identificada no título da seção; removê-la da
-                    # tabela evita repetição em todas as linhas do mesmo veículo.
                     df_veiculo = df_veiculo.drop(columns=[coluna_placa_inicio], errors="ignore")
                     tabelas_inicios_por_veiculo[f"Veículo {placa_relatorio}"] = df_veiculo.reset_index(drop=True)
             else:
                 tabelas_inicios_por_veiculo["Inícios de rota"] = df_inicio_filtrado.copy()
         else:
-            tabelas_inicios_por_veiculo["Inícios de rota"] = df_inicio_filtrado.copy()
+            tabelas_inicios_por_veiculo["Inícios de rota"] = pd.DataFrame(columns=["Data", "Hora de saída"])
 
         renderizar_exportador(
             f"Inícios de rota — {rotulo_periodo_inicio}",
