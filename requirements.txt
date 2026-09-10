@@ -7,3 +7,4 @@ sqlalchemy>=2.0
 psycopg2-binary
 openpyxl
 tzdata
+PyMuPDF>=1.24,<2
