@@ -18,6 +18,7 @@ from html import escape as html_escape
 from html.parser import HTMLParser
 from xml.sax.saxutils import escape as xml_escape
 from zoneinfo import ZoneInfo
+from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
@@ -786,6 +787,18 @@ def _criar_resumo_analitico_relatorio(titulo, tabelas):
                 adicionar("Mês de maior gasto", f"{comparativo.loc[indice_maior, mes_col]} • {moeda_br(total.loc[indice_maior])}")
             adicionar("Meses analisados", len(comparativo))
 
+    elif "inicios de rota" in titulo_norm:
+        detalhe = next((df for nome, df in tabelas if "inicios de rota" in normalizar(nome)), principal)
+        veiculo_col = localizar_coluna(detalhe, "Veículo", "Veiculo") if not detalhe.empty else None
+        hora_col = localizar_coluna(detalhe, "Hora de saída", "Hora de saida") if not detalhe.empty else None
+        adicionar("Saídas registradas", len(detalhe), "Total de inícios de rota no período selecionado.")
+        if veiculo_col and hora_col:
+            for veiculo in ["STRADA - TIF", "L200 - OSC"]:
+                grupo = detalhe[detalhe[veiculo_col].astype(str) == veiculo]
+                if len(grupo):
+                    adicionar(f"Média {veiculo}", _media_horarios_saida(grupo[hora_col]), f"Média de {len(grupo)} saída(s) no período.")
+        adicionar("Veículos com registro", int(detalhe[veiculo_col].astype(str).nunique()) if veiculo_col else None)
+
     elif "registros e historico da frota" in titulo_norm:
         inicios = next((df for nome, df in tabelas if "inicios de rota" in normalizar(nome)), pd.DataFrame())
         paradas = next((df for nome, df in tabelas if "paradas rastreadas" in normalizar(nome)), pd.DataFrame())
@@ -1532,9 +1545,12 @@ def _criar_pdf_textual(titulo, tabelas):
             altura_linha = max(20.0, min(68.0, 8.3 * max(len(linhas) for linhas in linhas_celulas) + 7))
             if y - altura_linha < limite_inferior:
                 nova_pagina()
-                retangulo(comandos, margem_x, y - 21, largura_util, 21, cores["teal"])
-                escrever(comandos, f"{limpo(nome).upper()} - CONTINUAÇÃO", margem_x + 7, y - 14, 9, True, cores["branco"])
-                y -= 21
+                # Em inícios de rota, continua a mesma tabela na página seguinte,
+                # sem criar outro bloco azul que pareça um relatório separado.
+                if "inicios de rota" not in remover_acentos(str(titulo)).lower():
+                    retangulo(comandos, margem_x, y - 21, largura_util, 21, cores["teal"])
+                    escrever(comandos, f"{limpo(nome).upper()} - CONTINUAÇÃO", margem_x + 7, y - 14, 9, True, cores["branco"])
+                    y -= 21
                 y = desenhar_cabecalho_tabela(list(df.columns), larguras, y)
             x = margem_x
             fundo_linha = cores["fundo"] if indice_registro % 2 == 0 else cores["branco"]
@@ -1582,7 +1598,7 @@ def _criar_pdf_textual(titulo, tabelas):
     for nome, df in secoes_dados:
         desenhar_secao(nome, df)
 
-    if not resumo_analitico.empty:
+    if not resumo_analitico.empty and "inicios de rota" not in remover_acentos(str(titulo)).lower():
         leituras = resumo_analitico[resumo_analitico["Leitura para análise"].astype(str).str.strip() != ""]
         complementares = resumo_analitico.iloc[6:]
         analises = pd.concat([leituras, complementares], ignore_index=True).drop_duplicates(subset=["Indicador"])
@@ -1667,6 +1683,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
     estilo_titulo = ParagraphStyle("TituloModelo", parent=estilos["Title"], fontName="Helvetica-Bold", fontSize=13, leading=16, textColor=colors.white, alignment=TA_CENTER)
     estilo_meta = ParagraphStyle("MetaModelo", parent=estilos["Normal"], fontName="Helvetica", fontSize=8, leading=10, textColor=cinza_texto, alignment=TA_LEFT)
     estilo_secao = ParagraphStyle("SecaoModelo", parent=estilos["Heading2"], fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=colors.white, backColor=teal, borderPadding=(5, 7, 5, 7), spaceBefore=7, spaceAfter=0, keepWithNext=1)
+    estilo_secao_fluxo = ParagraphStyle("SecaoModeloFluxo", parent=estilo_secao, keepWithNext=0)
     estilo_cabecalho = ParagraphStyle("CabecalhoModelo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.5, textColor=colors.white, alignment=TA_CENTER)
     estilo_celula = ParagraphStyle("CelulaModelo", parent=estilos["Normal"], fontName="Helvetica", fontSize=6.8, leading=8.4, textColor=colors.HexColor("#334155"))
     estilo_kpi_rotulo = ParagraphStyle("RotuloKPIModelo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.5, textColor=colors.white, alignment=TA_CENTER)
@@ -1801,7 +1818,8 @@ def _criar_pdf_relatorio(titulo, tabelas):
             chave in nome_secao_norm for chave in ("paradas e demandas", "detalhamento da rota", "detalhamento")
         ):
             elementos.append(PageBreak())
-        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome).upper())} &nbsp; - &nbsp; {len(df_original)} {plural_pt(len(df_original), 'registro', 'registros')}", estilo_secao))
+        estilo_secao_atual = estilo_secao_fluxo if "inicios de rota" in remover_acentos(titulo_limpo).lower() else estilo_secao
+        elementos.append(Paragraph(f"{html_escape(texto_pdf_limpo(nome).upper())} &nbsp; - &nbsp; {len(df_original)} {plural_pt(len(df_original), 'registro', 'registros')}", estilo_secao_atual))
         if df_original.empty or not len(df_original.columns):
             elementos.append(Paragraph("Nenhum registro disponível nesta seção.", estilo_vazio))
             continue
@@ -1829,6 +1847,13 @@ def _criar_pdf_relatorio(titulo, tabelas):
         ]
         for indice_linha in range(1, len(dados_tabela)):
             comandos.append(("BACKGROUND", (0, indice_linha), (-1, indice_linha), cinza_fundo if indice_linha % 2 == 0 else colors.white))
+        if "inicios de rota" in remover_acentos(titulo_limpo).lower() and "Veículo" in df.columns:
+            anterior_veiculo = None
+            for indice_df, veiculo_atual in enumerate(df["Veículo"].astype(str).tolist(), start=1):
+                if anterior_veiculo is None or veiculo_atual != anterior_veiculo:
+                    comandos.append(("LINEABOVE", (0, indice_df), (-1, indice_df), 1.25, teal))
+                    comandos.append(("BACKGROUND", (0, indice_df), (-1, indice_df), azul_claro))
+                anterior_veiculo = veiculo_atual
         for indice_coluna, coluna in enumerate(df.columns):
             nome_coluna = remover_acentos(str(coluna)).lower()
             if "status" not in nome_coluna and "situacao" not in nome_coluna:
@@ -1841,7 +1866,7 @@ def _criar_pdf_relatorio(titulo, tabelas):
         tabela.setStyle(TableStyle(comandos))
         elementos.extend([tabela, Spacer(1, 7)])
 
-    if not resumo_analitico.empty:
+    if not resumo_analitico.empty and "inicios de rota" not in remover_acentos(str(titulo_limpo)).lower():
         leituras = resumo_analitico[resumo_analitico["Leitura para análise"].astype(str).str.strip() != ""]
         complementares = resumo_analitico.iloc[6:]
         analises = pd.concat([leituras, complementares], ignore_index=True).drop_duplicates(subset=["Indicador"])
@@ -9372,7 +9397,7 @@ def _pdf_identificar_veiculo(words):
     # a forma solta ABC-1D23 / ABC1234 para relatórios com impressão diferente.
     placa_match = re.search(r"\(([A-Z]{3}-?[A-Z0-9]{4})\)", texto_total, flags=re.I)
     if not placa_match:
-        placa_match = re.search(r"\b([A-Z]{3}-?[A-Z0-9]{4})\b", texto_total, flags=re.I)
+        placa_match = re.search(r"\b([A-Z]{3}-?(?:\d[A-Z]\d{2}|\d{4}))\b", texto_total, flags=re.I)
     placa = placa_match.group(1).upper() if placa_match else ""
 
     id_match = re.search(r"\b(\d{6,})\s*-", texto_total)
@@ -9591,6 +9616,224 @@ def _pdf_ler_posicoes_protege(conteudo_pdf, nome_arquivo="relatorio.pdf"):
         ),
     }
 
+
+def _rotulo_veiculo_inicio(placa, nome=""):
+    """Nome operacional curto usado na tela e nos relatórios de início de rota."""
+    placa_txt = remover_acentos(str(placa or "")).upper().strip()
+    nome_txt = remover_acentos(str(nome or "")).upper().strip()
+    if placa_txt.startswith("TIF") or "TIF" in placa_txt or "STRADA" in nome_txt:
+        return "STRADA - TIF"
+    if placa_txt.startswith("OSC") or "OSC" in placa_txt or "L200" in nome_txt or "L 200" in nome_txt:
+        return "L200 - OSC"
+    prefixo = re.sub(r"[^A-Z0-9]", "", placa_txt)[:3]
+    if prefixo:
+        return prefixo
+    return str(nome or placa or "Veículo").strip() or "Veículo"
+
+
+def _media_horarios_saida(valores):
+    minutos = []
+    for valor in valores:
+        achado = re.search(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)", str(valor or ""))
+        if not achado:
+            continue
+        h, m = map(int, achado.groups())
+        minutos.append(h * 60 + m)
+    if not minutos:
+        return "-"
+    media = int(round(sum(minutos) / len(minutos)))
+    return f"{media // 60:02d}:{media % 60:02d}"
+
+
+def _excel_numero_pt(valor):
+    if valor is None or (isinstance(valor, float) and math.isnan(valor)):
+        return None
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return float(valor)
+    texto = str(valor).strip().lower().replace("km/h", "").replace("kmh", "")
+    texto = re.sub(r"[^0-9,.-]", "", texto)
+    if not texto or texto in {"-", ".", ","}:
+        return None
+    try:
+        if "," in texto:
+            texto = texto.replace(".", "").replace(",", ".")
+        return float(texto)
+    except Exception:
+        return None
+
+
+def _excel_estado_ignicao(valor):
+    if isinstance(valor, bool):
+        return bool(valor)
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        if float(valor) == 1:
+            return True
+        if float(valor) == 0:
+            return False
+    texto = remover_acentos(str(valor or "")).strip().upper()
+    if not texto:
+        return None
+    if any(chave in texto for chave in ("VERDE", "LIGAD", "IGN ON", "ON", "TRUE")):
+        return True
+    if any(chave in texto for chave in ("VERMELH", "DESLIG", "IGN OFF", "OFF", "FALSE")):
+        return False
+    return None
+
+
+def _excel_identificar_veiculo(df_bruto, nome_arquivo="relatorio.xlsx"):
+    amostra = []
+    if isinstance(df_bruto, pd.DataFrame) and not df_bruto.empty:
+        for valor in df_bruto.iloc[:30, :20].astype(str).values.ravel().tolist():
+            valor = str(valor).strip()
+            if valor and valor.lower() != "nan":
+                amostra.append(valor)
+    texto_total = " ".join(amostra)
+    placa_match = re.search(r"\b([A-Z]{3}-?(?:\d[A-Z]\d{2}|\d{4}))\b", texto_total, flags=re.I)
+    if not placa_match:
+        placa_match = re.search(r"\b(TIF|OSC)[-_ ]?([A-Z0-9]{4})\b", str(nome_arquivo), flags=re.I)
+    placa = ""
+    if placa_match:
+        if len(placa_match.groups()) >= 2 and placa_match.group(1).upper() in {"TIF", "OSC"}:
+            placa = f"{placa_match.group(1).upper()}-{placa_match.group(2).upper()}"
+        else:
+            placa = placa_match.group(1).upper()
+    id_match = re.search(r"\b(\d{6,})\s*-", texto_total)
+    unidade_id = id_match.group(1) if id_match else ""
+    nome = ""
+    if unidade_id:
+        padrao = rf"{re.escape(unidade_id)}\s*-\s*(.+?)(?:\s*\({re.escape(placa)}\)|$)" if placa else rf"{re.escape(unidade_id)}\s*-\s*(.+?)$"
+        achado = re.search(padrao, texto_total, flags=re.I)
+        if achado:
+            nome = re.sub(r"\s+", " ", achado.group(1)).strip()
+    return unidade_id, nome, placa
+
+
+def _excel_ler_posicoes_protege(conteudo_excel, nome_arquivo="relatorio.xlsx"):
+    """Lê exportações Excel da Protege procurando o cabeçalho em cada planilha.
+
+    O campo Ign pode vir como texto/0/1 ou como imagem. Quando a ignição não estiver
+    disponível como valor de célula, a detecção de saída usa o fallback de movimento
+    + afastamento de 500 m, que é a mesma confirmação operacional usada no PDF.
+    """
+    extensao = Path(str(nome_arquivo)).suffix.lower()
+    try:
+        buffer = io.BytesIO(conteudo_excel)
+        excel = pd.ExcelFile(buffer)
+    except ImportError as erro:
+        pacote = "openpyxl" if extensao in {".xlsx", ".xlsm"} else "xlrd"
+        raise RuntimeError(f"Para importar {extensao or 'Excel'}, adicione '{pacote}' ao requirements.txt do app.") from erro
+    except Exception as erro:
+        raise RuntimeError(f"Não foi possível abrir o Excel da Protege: {erro}") from erro
+
+    todas_linhas = []
+    placa_final = nome_final = unidade_final = ""
+    abas_lidas = 0
+
+    def norm(valor):
+        return re.sub(r"[^A-Z0-9]+", "", remover_acentos(str(valor or "")).upper())
+
+    for aba in excel.sheet_names:
+        try:
+            df = pd.read_excel(excel, sheet_name=aba, header=None, dtype=object)
+        except Exception:
+            continue
+        if df.empty:
+            continue
+        unidade_id, nome_veiculo, placa = _excel_identificar_veiculo(df, nome_arquivo)
+        unidade_final = unidade_final or unidade_id
+        nome_final = nome_final or nome_veiculo
+        placa_final = placa_final or placa
+
+        cabecalho_idx = None
+        mapa = {}
+        limite_scan = min(len(df), 80)
+        for i in range(limite_scan):
+            valores = {j: norm(df.iat[i, j]) for j in range(df.shape[1])}
+            candidatos = {}
+            for j, texto in valores.items():
+                if texto in {"HORARIO", "DATAHORA", "DATAHORARIO"}: candidatos["horario"] = j
+                elif texto in {"DATA", "DIA"}: candidatos["data"] = j
+                elif texto in {"LAT", "LATITUDE"}: candidatos["lat"] = j
+                elif texto in {"LONG", "LON", "LONGITUDE"}: candidatos["long"] = j
+                elif texto.startswith("VELOC"): candidatos["veloc"] = j
+                elif texto in {"IGN", "IGNICAO", "IGNITION"}: candidatos["ign"] = j
+            if "horario" in candidatos and "lat" in candidatos and "long" in candidatos and "veloc" in candidatos:
+                cabecalho_idx, mapa = i, candidatos
+                break
+        if cabecalho_idx is None:
+            continue
+        abas_lidas += 1
+
+        data_corrente = None
+        for i in range(cabecalho_idx + 1, len(df)):
+            vals = [df.iat[i, j] if j < df.shape[1] else None for j in range(df.shape[1])]
+            horario_val = vals[mapa["horario"]]
+            data_val = vals[mapa["data"]] if "data" in mapa else None
+            lat_num = _excel_numero_pt(vals[mapa["lat"]])
+            lon_num = _excel_numero_pt(vals[mapa["long"]])
+            vel_num = _excel_numero_pt(vals[mapa["veloc"]])
+            if lat_num is None or lon_num is None or not (-90 <= lat_num <= 90) or not (-180 <= lon_num <= 180):
+                continue
+
+            # Descobre data/hora em células datetime, em uma coluna Data separada ou
+            # em texto como "09/09/26 10:04" / "09/09/26\\n10:04".
+            momento = None
+            for candidato in (horario_val, data_val):
+                if isinstance(candidato, (datetime, pd.Timestamp)) and not pd.isna(candidato):
+                    dt = pd.Timestamp(candidato).to_pydatetime().replace(tzinfo=None)
+                    if candidato is horario_val and dt.year > 1900:
+                        momento = dt
+                        break
+                    if candidato is data_val:
+                        data_corrente = dt.date()
+            texto_linha = " ".join(str(v) for v in vals if v is not None and str(v).lower() != "nan")
+            data_match = re.search(r"(\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))(?!\d)", texto_linha)
+            hora_match = re.search(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)", str(horario_val))
+            if data_match:
+                try:
+                    txt = data_match.group(1)
+                    data_corrente = datetime.strptime(txt, "%d/%m/%Y" if len(txt.split("/")[-1]) == 4 else "%d/%m/%y").date()
+                except Exception:
+                    pass
+            if momento is None and data_corrente is not None and hora_match:
+                h, m = map(int, hora_match.groups())
+                momento = datetime.combine(data_corrente, datetime.min.time()).replace(hour=h, minute=m)
+            if momento is None:
+                # Último fallback: pandas tenta interpretar a célula Horário inteira.
+                convertido = pd.to_datetime(horario_val, errors="coerce", dayfirst=True)
+                if not pd.isna(convertido) and convertido.year > 1900:
+                    momento = convertido.to_pydatetime().replace(tzinfo=None)
+                    data_corrente = momento.date()
+            if momento is None:
+                continue
+
+            ignicao = _excel_estado_ignicao(vals[mapa["ign"]]) if "ign" in mapa else None
+            todas_linhas.append({
+                "momento": momento,
+                "data": momento.date(),
+                "hora": momento.strftime("%H:%M"),
+                "lat": float(lat_num),
+                "lon": float(lon_num),
+                "velocidade": float(vel_num or 0.0),
+                "ignicao": ignicao,
+                "pagina": f"Excel/{aba}",
+            })
+
+    unicas = {}
+    for item in todas_linhas:
+        chave = (item["momento"], round(item["lat"], 6), round(item["lon"], 6), round(item["velocidade"], 2), item.get("ignicao"))
+        unicas[chave] = item
+    linhas = sorted(unicas.values(), key=lambda item: item["momento"])
+    return {
+        "arquivo": nome_arquivo,
+        "placa": placa_final,
+        "nome": nome_final,
+        "unidade_id": unidade_final,
+        "linhas": linhas,
+        "diagnostico_layout": f"Excel • {abas_lidas} aba(s) reconhecida(s) • {len(linhas)} posições",
+    }
+
+
 def _pdf_detectar_inicio_dia(linhas_dia):
     """Detecta a saída pela garagem real daquele dia, mesmo se ela mudar de endereço.
 
@@ -9687,17 +9930,28 @@ def _pdf_detectar_inicio_dia(linhas_dia):
     return None
 
 
-def analisar_pdfs_inicio_rota_protege(arquivos):
+def analisar_arquivos_inicio_rota_protege(arquivos):
     resultados = []
     diagnosticos = []
     for arquivo in arquivos or []:
-        nome_arquivo = getattr(arquivo, "name", "relatorio.pdf")
+        nome_arquivo = getattr(arquivo, "name", "relatorio")
         try:
             conteudo = arquivo.getvalue() if hasattr(arquivo, "getvalue") else bytes(arquivo)
-            relatorio = _pdf_ler_posicoes_protege(conteudo, nome_arquivo)
+            extensao = Path(str(nome_arquivo)).suffix.lower()
+            if extensao == ".pdf":
+                relatorio = _pdf_ler_posicoes_protege(conteudo, nome_arquivo)
+                tipo_fonte = "PDF"
+            elif extensao in {".xlsx", ".xls", ".xlsm"}:
+                relatorio = _excel_ler_posicoes_protege(conteudo, nome_arquivo)
+                tipo_fonte = "Excel"
+            else:
+                diagnosticos.append(f"{nome_arquivo}: formato não suportado")
+                continue
+
             linhas = relatorio.get("linhas", [])
             placa = relatorio.get("placa") or relatorio.get("unidade_id") or "Não identificada"
             nome = relatorio.get("nome") or "Veículo Protege"
+            rotulo_veiculo = _rotulo_veiculo_inicio(placa, nome)
             dias = sorted({linha["data"] for linha in linhas})
             encontrados = 0
             for dia in dias:
@@ -9705,26 +9959,31 @@ def analisar_pdfs_inicio_rota_protege(arquivos):
                 if not achado:
                     resultados.append({
                         "Importar": False, "Data": dia.strftime("%d/%m/%Y"),
-                        "Veículo": nome, "Placa": placa, "Hora de saída": "",
+                        "Veículo": rotulo_veiculo, "Placa": placa, "Hora de saída": "",
                         "Confiança": "-", "Critério": "Nenhuma saída confirmada",
-                        "PDF": nome_arquivo,
+                        "Arquivo": nome_arquivo, "Formato": tipo_fonte,
                     })
                     continue
                 encontrados += 1
                 resultados.append({
                     "Importar": True, "Data": dia.strftime("%d/%m/%Y"),
-                    "Veículo": nome, "Placa": placa, "Hora de saída": achado["hora"],
+                    "Veículo": rotulo_veiculo, "Placa": placa, "Hora de saída": achado["hora"],
                     "Confiança": achado["confianca"], "Critério": achado["criterio"],
-                    "PDF": nome_arquivo,
+                    "Arquivo": nome_arquivo, "Formato": tipo_fonte,
                 })
             detalhe_layout = str(relatorio.get("diagnostico_layout", "") or "")
-            diagnostico_base = f"{nome_arquivo}: {placa} • {len(linhas)} posições • {len(dias)} dias • {encontrados} saídas identificadas"
+            diagnostico_base = f"{nome_arquivo}: {rotulo_veiculo} • {len(linhas)} posições • {len(dias)} dias • {encontrados} saídas identificadas"
             if not linhas and detalhe_layout:
                 diagnostico_base += f" • diagnóstico: {detalhe_layout}"
             diagnosticos.append(diagnostico_base)
         except Exception as erro:
             diagnosticos.append(f"{nome_arquivo}: ERRO — {erro}")
     return pd.DataFrame(resultados), diagnosticos
+
+
+def analisar_pdfs_inicio_rota_protege(arquivos):
+    """Compatibilidade com versões anteriores: agora também aceita Excel."""
+    return analisar_arquivos_inicio_rota_protege(arquivos)
 
 
 def salvar_inicios_pdf_protege(df_resultados):
@@ -9747,13 +10006,13 @@ def salvar_inicios_pdf_protege(df_resultados):
             ignorados_manuais += 1
             continue
         detalhe = (
-            f"Importado de PDF Protege: {linha.get('PDF','')} • "
+            f"Importado de {linha.get('Formato','arquivo')} Protege: {linha.get('Arquivo', linha.get('PDF',''))} • "
             f"{linha.get('Critério','')} • confiança {linha.get('Confiança','')}"
         )[:500]
         execute_db(
             """
             INSERT INTO inicio_movimento (placa, data, hora_inicio, fonte, detalhe)
-            VALUES (:placa, :data, :hora, 'protege_pdf', :detalhe)
+            VALUES (:placa, :data, :hora, 'protege_arquivo', :detalhe)
             ON CONFLICT (placa, data) DO UPDATE SET
                 hora_inicio=EXCLUDED.hora_inicio, fonte=EXCLUDED.fonte, detalhe=EXCLUDED.detalhe
             WHERE COALESCE(inicio_movimento.fonte,'') <> 'manual'
@@ -10831,30 +11090,30 @@ if modulo_principal == "🚗 Frota e custos":
         st.markdown("#### 🕒 Horários da operação (rastreador)")
 
         st.caption(
-            "📄 O histórico pode ser completado pelo relatório PDF da Protege. "
-            "A Torre identifica automaticamente a chave vermelha/verde, o primeiro movimento e confirma a saída pelo afastamento real do estacionamento."
+            "📄 O histórico pode ser completado pelo relatório PDF ou Excel da Protege. "
+            "A Torre identifica o primeiro movimento e confirma a saída pelo afastamento real do estacionamento."
         )
 
-        with st.expander("📤 Importar relatório PDF da Protege", expanded=False):
+        with st.expander("📤 Importar relatório da Protege (PDF ou Excel)", expanded=False):
             st.caption(
-                "Você pode enviar um ou vários PDFs de uma vez — por exemplo, um relatório da Strada e outro da L200. "
-                "O PDF pode conter vários dias no mesmo arquivo."
+                "Você pode enviar um ou vários arquivos de uma vez — por exemplo, um da STRADA (TIF) e outro da L200 (OSC). "
+                "Cada arquivo pode conter vários dias."
             )
-            arquivos_pdf_protege = st.file_uploader(
+            arquivos_protege = st.file_uploader(
                 "Relatório(s) por período da Protege",
-                type=["pdf"],
+                type=["pdf", "xlsx", "xls", "xlsm"],
                 accept_multiple_files=True,
                 key="pdf_protege_inicio_rota",
-                help="Exporte na Protege o relatório por período. A análise é feita somente quando você clicar em Analisar PDFs.",
+                help="Aceita PDF e Excel exportados pela Protege. A análise só acontece quando você clicar em Analisar arquivos.",
             )
             if st.button(
-                "🔎 Analisar PDFs",
+                "🔎 Analisar arquivos",
                 use_container_width=True,
-                disabled=not bool(arquivos_pdf_protege),
+                disabled=not bool(arquivos_protege),
                 key="analisar_pdf_protege_inicio",
             ):
-                with st.spinner("Lendo chave, posições e deslocamentos dos relatórios..."):
-                    df_pdf, diagnosticos_pdf = analisar_pdfs_inicio_rota_protege(arquivos_pdf_protege)
+                with st.spinner("Lendo posições, movimento e deslocamentos dos relatórios..."):
+                    df_pdf, diagnosticos_pdf = analisar_arquivos_inicio_rota_protege(arquivos_protege)
                 st.session_state["_pdf_protege_resultados"] = df_pdf
                 st.session_state["_pdf_protege_diagnosticos"] = diagnosticos_pdf
 
@@ -10867,13 +11126,18 @@ if modulo_principal == "🚗 Frota e custos":
                 st.caption(
                     "A hora pode ser corrigida diretamente na tabela. Desmarque Importar em qualquer dia que você não queira gravar."
                 )
+                colunas_preview = [
+                    coluna for coluna in ["Importar", "Data", "Veículo", "Hora de saída", "Confiança", "Critério", "Arquivo"]
+                    if coluna in df_pdf_preview.columns
+                ]
                 df_pdf_editado = st.data_editor(
                     df_pdf_preview,
                     use_container_width=True,
                     hide_index=True,
                     num_rows="fixed",
                     key="editor_pdf_protege_inicio",
-                    disabled=["Data", "Veículo", "Placa", "Confiança", "Critério", "PDF"],
+                    disabled=[c for c in ["Data", "Veículo", "Placa", "Confiança", "Critério", "Arquivo", "Formato"] if c in df_pdf_preview.columns],
+                    column_order=colunas_preview,
                     column_config={
                         "Importar": st.column_config.CheckboxColumn("Importar", default=True),
                         "Hora de saída": st.column_config.TextColumn("Hora de saída", help="HH:MM"),
@@ -10893,11 +11157,11 @@ if modulo_principal == "🚗 Frota e custos":
                     except Exception as erro_pdf_salvar:
                         st.error(f"Não foi possível salvar os horários: {erro_pdf_salvar}")
             elif isinstance(df_pdf_preview, pd.DataFrame):
-                st.info("Nenhuma saída de rota foi identificada nos PDFs enviados.")
+                st.info("Nenhuma saída de rota foi identificada nos arquivos enviados.")
 
         mensagem_pdf_protege = st.session_state.pop("_mensagem_pdf_protege", "")
         if mensagem_pdf_protege:
-            st.success(f"PDF Protege importado: {mensagem_pdf_protege}")
+            st.success(f"Relatório Protege importado: {mensagem_pdf_protege}")
 
         def _converter_data_inicio(valor):
             if valor is None or (isinstance(valor, float) and math.isnan(valor)):
@@ -10973,12 +11237,46 @@ if modulo_principal == "🚗 Frota e custos":
         else:
             df_inicio_filtrado = df_inicio_completo.copy()
 
+        # Apresentação operacional: usa o nome dos veículos, não a placa completa.
+        df_inicio_exibicao = df_inicio_filtrado.copy()
+        coluna_placa_exibicao = next(
+            (c for c in df_inicio_exibicao.columns if remover_acentos(str(c)).strip().lower() == "placa"),
+            None,
+        ) if not df_inicio_exibicao.empty else None
+        if coluna_placa_exibicao is not None:
+            df_inicio_exibicao["Veículo"] = df_inicio_exibicao[coluna_placa_exibicao].map(_rotulo_veiculo_inicio)
+            df_inicio_exibicao = df_inicio_exibicao.drop(columns=[coluna_placa_exibicao], errors="ignore")
+            ordem_exibicao = [c for c in ["Veículo", "Data", "Hora de saída"] if c in df_inicio_exibicao.columns]
+            df_inicio_exibicao = df_inicio_exibicao[ordem_exibicao + [c for c in df_inicio_exibicao.columns if c not in ordem_exibicao]]
+
+        resumo_medias_inicio = pd.DataFrame(columns=["Veículo", "Registros", "Média de saída"])
+        if not df_inicio_exibicao.empty and "Veículo" in df_inicio_exibicao.columns and "Hora de saída" in df_inicio_exibicao.columns:
+            linhas_resumo = []
+            ordem_veiculos = {"STRADA - TIF": 0, "L200 - OSC": 1}
+            for veiculo, grupo in df_inicio_exibicao.groupby("Veículo", sort=False):
+                linhas_resumo.append({
+                    "Veículo": veiculo,
+                    "Registros": int(len(grupo)),
+                    "Média de saída": _media_horarios_saida(grupo["Hora de saída"]),
+                    "_ordem": ordem_veiculos.get(str(veiculo), 99),
+                })
+            resumo_medias_inicio = pd.DataFrame(linhas_resumo).sort_values(["_ordem", "Veículo"]).drop(columns=["_ordem"]).reset_index(drop=True)
+
+        if not resumo_medias_inicio.empty:
+            colunas_media = st.columns(len(resumo_medias_inicio))
+            for coluna_media, (_, linha_media) in zip(colunas_media, resumo_medias_inicio.iterrows()):
+                coluna_media.metric(
+                    f"Média de saída • {linha_media['Veículo']}",
+                    linha_media["Média de saída"],
+                    f"{int(linha_media['Registros'])} saída(s) no período",
+                )
+
         c_inicio, c_paradas = st.columns([1, 1.8])
         with c_inicio:
             st.markdown("**🏁 Início da rota (saídas do pátio)**")
             st.caption("Hora em que o veículo começou a sair da base; 500 m é apenas a confirmação da saída.")
-            if not df_inicio_filtrado.empty:
-                st.dataframe(df_inicio_filtrado, use_container_width=True, hide_index=True)
+            if not df_inicio_exibicao.empty:
+                st.dataframe(df_inicio_exibicao, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhuma saída identificada para o período selecionado.")
 
@@ -10995,38 +11293,35 @@ if modulo_principal == "🚗 Frota e custos":
                 st.info("Nenhum registro de parada do rastreador encontrado.")
 
         st.markdown("#### 📥 Relatório de inícios de rota")
-        st.caption("Um único relatório do mês, separado internamente por veículo.")
-        tabelas_inicios_por_veiculo = {}
-        if not df_inicio_filtrado.empty:
-            coluna_placa_inicio = next(
-                (c for c in df_inicio_filtrado.columns if remover_acentos(str(c)).strip().lower() == "placa"),
-                None,
-            )
-            if coluna_placa_inicio is not None:
-                df_relatorio_inicio = df_inicio_filtrado.copy()
-                df_relatorio_inicio[coluna_placa_inicio] = (
-                    df_relatorio_inicio[coluna_placa_inicio].fillna("").astype(str).str.strip().replace("", "Não informado")
+        st.caption("Um único relatório mensal, com STRADA - TIF e L200 - OSC organizados na mesma tabela.")
+
+        if not df_inicio_exibicao.empty:
+            df_detalhe_inicio = df_inicio_exibicao.copy()
+            ordem_veiculos_rel = {"STRADA - TIF": 0, "L200 - OSC": 1}
+            df_detalhe_inicio["_ordem_veiculo"] = df_detalhe_inicio["Veículo"].map(ordem_veiculos_rel).fillna(99)
+            if "Data" in df_detalhe_inicio.columns:
+                df_detalhe_inicio["_data_ordem"] = df_detalhe_inicio["Data"].map(_converter_data_inicio)
+                df_detalhe_inicio = df_detalhe_inicio.sort_values(
+                    ["_ordem_veiculo", "Veículo", "_data_ordem"], ascending=[True, True, False]
                 )
-                for placa_relatorio in sorted(
-                    df_relatorio_inicio[coluna_placa_inicio].unique(),
-                    key=lambda v: remover_acentos(str(v)).upper(),
-                ):
-                    df_veiculo = df_relatorio_inicio[
-                        df_relatorio_inicio[coluna_placa_inicio].astype(str) == str(placa_relatorio)
-                    ].copy()
-                    df_veiculo = df_veiculo.drop(columns=[coluna_placa_inicio], errors="ignore")
-                    tabelas_inicios_por_veiculo[f"Veículo {placa_relatorio}"] = df_veiculo.reset_index(drop=True)
+                df_detalhe_inicio = df_detalhe_inicio.drop(columns=["_data_ordem"], errors="ignore")
             else:
-                tabelas_inicios_por_veiculo["Inícios de rota"] = df_inicio_filtrado.copy()
+                df_detalhe_inicio = df_detalhe_inicio.sort_values(["_ordem_veiculo", "Veículo"])
+            df_detalhe_inicio = df_detalhe_inicio.drop(columns=["_ordem_veiculo"], errors="ignore").reset_index(drop=True)
         else:
-            tabelas_inicios_por_veiculo["Inícios de rota"] = pd.DataFrame(columns=["Data", "Hora de saída"])
+            df_detalhe_inicio = pd.DataFrame(columns=["Veículo", "Data", "Hora de saída"])
+
+        tabelas_inicios_relatorio = {
+            "Inícios de rota": df_detalhe_inicio,
+        }
 
         renderizar_exportador(
             f"Inícios de rota — {rotulo_periodo_inicio}",
-            tabelas_inicios_por_veiculo,
+            tabelas_inicios_relatorio,
             f"inicios_de_rota_{chave_periodo_inicio}",
             f"inicios_rota_{chave_periodo_inicio}",
         )
+
 
     if submodulo_frota == "🗂️ Histórico editável":
         st.markdown("### 🗂️ Histórico e correções")
