@@ -10377,29 +10377,15 @@ if modulo_principal == "🚗 Frota e custos":
         st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
         st.markdown("#### 🕒 Horários da operação (rastreador)")
 
-        # Backfill automático do mês atual: o histórico diário da Protege permite
-        # recuperar dias em que ninguém estava com a Torre aberta no momento da saída.
-        chave_auto_historico = f"_protege_historico_auto_{AGORA_REAL.strftime('%Y%m%d')}"
-        if not st.session_state.get(chave_auto_historico):
-            primeiro_dia_mes = AGORA_REAL.date().replace(day=1)
-            with st.spinner("Conferindo os relatórios diários da Protege..."):
-                st.session_state[chave_auto_historico] = sincronizar_inicios_historicos_protege(
-                    primeiro_dia_mes, AGORA_REAL.date(), forcar=False
-                )
-
-        resumo_auto_hist = st.session_state.get(chave_auto_historico) or {}
-        if resumo_auto_hist.get("mensagem"):
-            icone_hist = "⚠️" if resumo_auto_hist.get("erros") else "✅"
-            st.caption(f"{icone_hist} Histórico Protege: {resumo_auto_hist['mensagem']}")
-            if resumo_auto_hist.get("erros"):
-                with st.expander("Diagnóstico da leitura histórica", expanded=False):
-                    df_erros_hist = get_df(
-                        "SELECT data AS \"Data\", placa AS \"Placa\", detalhe AS \"Erro\" FROM protege_inicio_sync WHERE status='ERRO' ORDER BY atualizado_em DESC LIMIT 8"
-                    )
-                    if not df_erros_hist.empty:
-                        st.dataframe(df_erros_hist, use_container_width=True, hide_index=True)
-                    else:
-                        st.caption("Nenhum detalhe adicional disponível.")
+        # IMPORTANTE: nunca consulta o relatório histórico da Protege durante o
+        # carregamento desta página. Uma varredura de vários dias x dois veículos pode
+        # levar muitos segundos e fazia o Streamlit parecer travado. A tela sempre abre
+        # usando somente o que já está salvo no Supabase; a consulta histórica é iniciada
+        # explicitamente pelo botão abaixo e pula os dias já conferidos.
+        st.caption(
+            "⚡ Carregamento rápido: os horários já salvos aparecem imediatamente. "
+            "Use ‘Buscar dias faltantes’ somente quando quiser completar o histórico pela Protege."
+        )
 
         def _converter_data_inicio(valor):
             if valor is None or (isinstance(valor, float) and math.isnan(valor)):
@@ -10456,16 +10442,18 @@ if modulo_principal == "🚗 Frota e custos":
 
         col_sync, col_explicacao = st.columns([1.15, 2.85])
         with col_sync:
-            if st.button("🔄 Atualizar mês pela Protege", use_container_width=True, key="atualizar_mes_protege"):
-                with st.spinner(f"Lendo os relatórios diários de {rotulo_periodo_inicio}..."):
+            if st.button("🔄 Buscar dias faltantes", use_container_width=True, key="atualizar_mes_protege"):
+                # forcar=False é essencial: consulta a Protege apenas nos dias ainda não
+                # conferidos. Assim uma segunda atualização do mês é muito mais rápida.
+                with st.spinner(f"Buscando somente os dias faltantes de {rotulo_periodo_inicio}..."):
                     st.session_state["_resultado_sync_protege_manual"] = sincronizar_inicios_historicos_protege(
-                        inicio_periodo, fim_consulta, forcar=True
+                        inicio_periodo, fim_consulta, forcar=False
                     )
-                st.rerun()
         with col_explicacao:
             st.caption(
                 "A hora é o início real da saída: mudança da chave/primeiro movimento na base. "
-                "O afastamento de 500 m serve apenas para confirmar que o veículo realmente saiu."
+                "O afastamento de 500 m serve apenas para confirmar que o veículo realmente saiu. "
+                "A consulta histórica não bloqueia mais a abertura desta tela."
             )
 
         resultado_sync_manual = st.session_state.pop("_resultado_sync_protege_manual", None)
