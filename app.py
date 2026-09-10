@@ -9870,7 +9870,7 @@ if modulo_principal == "🚗 Frota e custos":
         # Carrega o histórico completo para que o filtro mensal não dependa de um
         # LIMIT e para que o mesmo conjunto filtrado possa ser exportado.
         df_inicio_completo = get_df(
-            'SELECT data as Data, placa as Placa, hora_inicio as "Hora de saída" '
+            'SELECT data AS "Data", placa AS "Placa", hora_inicio AS "Hora de saída" '
             'FROM inicio_movimento ORDER BY data DESC, hora_inicio DESC'
         )
         df_inicio_filtrado = df_inicio_completo.copy()
@@ -9878,25 +9878,53 @@ if modulo_principal == "🚗 Frota e custos":
         chave_periodo_inicio = "todos"
 
         if not df_inicio_completo.empty:
-            datas_inicio = pd.to_datetime(df_inicio_completo["Data"], format="%d/%m/%Y", errors="coerce")
-            periodos_validos = sorted(
-                {data.strftime("%m/%Y") for data in datas_inicio.dropna()},
-                key=lambda valor: datetime.strptime(valor, "%m/%Y"),
-                reverse=True,
+            # PostgreSQL transforma aliases sem aspas em minúsculas. Mesmo com os
+            # aliases SQL já protegidos acima, localizamos a coluna de forma
+            # tolerante para não derrubar a tela caso o driver retorne outro casing.
+            coluna_data_inicio = next(
+                (coluna for coluna in df_inicio_completo.columns
+                 if remover_acentos(str(coluna)).strip().lower() == "data"),
+                None,
             )
-            opcoes_periodo = ["Todos os meses"] + periodos_validos
-            mes_atual_inicio = AGORA_REAL.strftime("%m/%Y")
-            indice_padrao_inicio = opcoes_periodo.index(mes_atual_inicio) if mes_atual_inicio in opcoes_periodo else 0
-            rotulo_periodo_inicio = st.selectbox(
-                "Filtrar inícios de rota por mês",
-                opcoes_periodo,
-                index=indice_padrao_inicio,
-                key="filtro_mes_inicios_rota",
-            )
-            if rotulo_periodo_inicio != "Todos os meses":
-                mascara_periodo = datas_inicio.dt.strftime("%m/%Y") == rotulo_periodo_inicio
-                df_inicio_filtrado = df_inicio_completo.loc[mascara_periodo].copy()
-                chave_periodo_inicio = rotulo_periodo_inicio.replace("/", "_")
+            if coluna_data_inicio is not None:
+                # Aceita DATE/Timestamp do PostgreSQL e também históricos em texto
+                # (dd/mm/aaaa ou ISO). ISO precisa ser tratado separadamente porque
+                # ``dayfirst=True`` pode interpretar 2026-09-10 como 09/10/2026.
+                def _converter_data_inicio(valor):
+                    if valor is None or (isinstance(valor, float) and math.isnan(valor)):
+                        return pd.NaT
+                    if not isinstance(valor, str):
+                        return pd.to_datetime(valor, errors="coerce")
+                    texto_data = valor.strip()
+                    if not texto_data:
+                        return pd.NaT
+                    if re.match(r"^\d{4}-\d{2}-\d{2}", texto_data):
+                        return pd.to_datetime(texto_data, errors="coerce", yearfirst=True)
+                    return pd.to_datetime(texto_data, errors="coerce", dayfirst=True)
+
+                datas_inicio = df_inicio_completo[coluna_data_inicio].map(_converter_data_inicio)
+                periodos_validos = sorted(
+                    {data.strftime("%m/%Y") for data in datas_inicio.dropna()},
+                    key=lambda valor: datetime.strptime(valor, "%m/%Y"),
+                    reverse=True,
+                )
+                opcoes_periodo = ["Todos os meses"] + periodos_validos
+                mes_atual_inicio = AGORA_REAL.strftime("%m/%Y")
+                indice_padrao_inicio = opcoes_periodo.index(mes_atual_inicio) if mes_atual_inicio in opcoes_periodo else 0
+                rotulo_periodo_inicio = st.selectbox(
+                    "Filtrar inícios de rota por mês",
+                    opcoes_periodo,
+                    index=indice_padrao_inicio,
+                    key="filtro_mes_inicios_rota",
+                )
+                if rotulo_periodo_inicio != "Todos os meses":
+                    mascara_periodo = datas_inicio.dt.strftime("%m/%Y") == rotulo_periodo_inicio
+                    df_inicio_filtrado = df_inicio_completo.loc[mascara_periodo].copy()
+                    chave_periodo_inicio = rotulo_periodo_inicio.replace("/", "_")
+            else:
+                # Em vez de KeyError, mantém os registros visíveis e deixa o
+                # relatório disponível sem filtro até que o schema seja corrigido.
+                st.warning("Não foi possível identificar a coluna de data dos inícios de rota.")
 
         c_inicio, c_paradas = st.columns([1, 1.8])
 
@@ -9911,7 +9939,7 @@ if modulo_principal == "🚗 Frota e custos":
         with c_paradas:
             st.markdown("**📍 Paradas realizadas nas obras (geocerca)**")
             st.caption("Registra o tempo de permanência dentro de um raio de 250 m do destino.")
-            df_paradas_tbl = get_df("SELECT data as Data, placa as Placa, local as Local, hora_chegada as Chegada, hora_saida as Saída FROM rastreio_paradas ORDER BY id DESC LIMIT 150")
+            df_paradas_tbl = get_df('SELECT data AS "Data", placa AS "Placa", local AS "Local", hora_chegada AS "Chegada", hora_saida AS "Saída" FROM rastreio_paradas ORDER BY id DESC LIMIT 150')
             if not df_paradas_tbl.empty:
                 st.dataframe(df_paradas_tbl, use_container_width=True, hide_index=True)
             else:
