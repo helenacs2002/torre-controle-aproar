@@ -9311,6 +9311,364 @@ def sincronizar_inicios_historicos_protege(data_inicio, data_fim, forcar=False):
     return resultado
 
 
+# =====================================================================
+# IMPORTAÇÃO DE RELATÓRIO PDF DA PROTEGE — INÍCIO DE ROTA
+# =====================================================================
+def _pdf_classificar_icone_ignicao(doc, xref, cache):
+    """Classifica o ícone da coluna Ign do relatório como chave verde/vermelha."""
+    if xref in cache:
+        return cache[xref]
+    try:
+        fitz = __import__("fitz")
+        pix = fitz.Pixmap(doc, int(xref))
+        if pix.colorspace is None:
+            cache[xref] = None
+            return None
+        if pix.alpha or pix.colorspace.n != 3:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        amostras = pix.samples
+        canais = pix.n
+        vermelho = verde = total = 0
+        # Amostragem esparsa: suficiente para distinguir a chave verde da vermelha
+        # sem transformar/renderizar cada página do relatório.
+        passo = max(canais, canais * 3)
+        for i in range(0, len(amostras) - canais + 1, passo):
+            r, g, b = amostras[i], amostras[i + 1], amostras[i + 2]
+            if max(r, g, b) < 75 or max(r, g, b) - min(r, g, b) < 35:
+                continue
+            total += 1
+            if g > r * 1.10 and g > b * 1.10:
+                verde += 1
+            elif r > g * 1.10 and r > b * 1.02:
+                vermelho += 1
+        estado = True if verde > max(3, vermelho * 1.20) else False if vermelho > max(3, verde * 1.20) else None
+        cache[xref] = estado
+        return estado
+    except Exception:
+        cache[xref] = None
+        return None
+
+
+def _pdf_numero_pt(valor):
+    try:
+        return float(str(valor).strip().replace(".", "").replace(",", "."))
+    except Exception:
+        return None
+
+
+def _pdf_distancia_km(lat1, lon1, lat2, lon2):
+    try:
+        return calcular_distancia_km(float(lat1), float(lon1), float(lat2), float(lon2))
+    except Exception:
+        return 9999.0
+
+
+def _pdf_identificar_veiculo(words):
+    cabecalho = " ".join(
+        str(w[4]) for w in words
+        if 88 <= float(w[1]) <= 122
+    )
+    placa_match = re.search(r"\(([A-Z0-9-]{5,14})\)", cabecalho, flags=re.I)
+    placa = placa_match.group(1).upper() if placa_match else ""
+    id_match = re.search(r"\b(\d{6,})\s*-", cabecalho)
+    unidade_id = id_match.group(1) if id_match else ""
+    nome = cabecalho
+    if unidade_id:
+        nome = re.sub(rf"^.*?{re.escape(unidade_id)}\s*-\s*", "", nome).strip()
+    if placa:
+        nome = re.sub(rf"\s*\({re.escape(placa)}\).*?$", "", nome, flags=re.I).strip()
+    return unidade_id, nome, placa
+
+
+def _pdf_ler_posicoes_protege(conteudo_pdf, nome_arquivo="relatorio.pdf"):
+    """Extrai data/hora, coordenadas, velocidade e estado da chave do PDF da Protege.
+
+    A coluna Ign não é texto no PDF: é uma imagem de uma chave verde/vermelha.
+    Por isso o parser usa a posição da imagem na própria tabela, sem OCR.
+    """
+    try:
+        import fitz
+    except ImportError as erro:
+        raise RuntimeError(
+            "Para importar o PDF da Protege, adicione 'PyMuPDF>=1.24' ao requirements.txt do app."
+        ) from erro
+
+    doc = fitz.open(stream=conteudo_pdf, filetype="pdf")
+    if len(doc) == 0:
+        return {"arquivo": nome_arquivo, "placa": "", "nome": "", "unidade_id": "", "linhas": []}
+
+    words_primeira = doc[0].get_text("words")
+    unidade_id, nome_veiculo, placa = _pdf_identificar_veiculo(words_primeira)
+    cache_icone = {}
+    linhas = []
+
+    for numero_pagina, pagina in enumerate(doc, start=1):
+        words = pagina.get_text("words")
+        if not words:
+            continue
+
+        datas = [
+            w for w in words
+            if 72 <= float(w[0]) <= 126
+            and re.fullmatch(r"\d{2}/\d{2}/\d{2}", str(w[4]).strip())
+        ]
+        if not datas:
+            continue
+
+        # Início de rota é um evento matinal. Evita ler milhares de ícones nas
+        # páginas que contêm somente tarde/noite, acelerando PDFs grandes.
+        horarios_pagina = [
+            str(w[4]).strip() for w in words
+            if 78 <= float(w[0]) <= 126
+            and re.fullmatch(r"\d{1,2}:\d{2}", str(w[4]).strip())
+        ]
+        if horarios_pagina and not any(int(h.split(":")[0]) < 14 for h in horarios_pagina):
+            continue
+
+        instancias_ign = []
+        try:
+            imagens = pagina.get_image_info(xrefs=True)
+        except Exception:
+            imagens = []
+        for info in imagens:
+            bbox = info.get("bbox") or ()
+            if len(bbox) != 4:
+                continue
+            x0, y0, x1, y1 = map(float, bbox)
+            # A coluna Ign fica imediatamente depois de Bateria (x≈284 no PDF A4).
+            if not (272 <= x0 <= 302):
+                continue
+            estado = _pdf_classificar_icone_ignicao(doc, info.get("xref", 0), cache_icone)
+            if estado is not None:
+                instancias_ign.append(((y0 + y1) / 2.0, estado))
+
+        def _proximos(x0, x1, yref, padrao=None):
+            encontrados = []
+            for w in words:
+                if not (x0 <= float(w[0]) < x1):
+                    continue
+                yc = (float(w[1]) + float(w[3])) / 2.0
+                if abs(yc - yref) > 16:
+                    continue
+                valor = str(w[4]).strip()
+                if padrao is not None and not re.fullmatch(padrao, valor):
+                    continue
+                encontrados.append((abs(yc - yref), valor))
+            encontrados.sort(key=lambda item: item[0])
+            return encontrados
+
+        for data_word in datas:
+            yref = (float(data_word[1]) + float(data_word[3])) / 2.0
+            horario = _proximos(78, 126, yref, r"\d{1,2}:\d{2}")
+            lat = _proximos(118, 158, yref, r"-?\d+[,.]\d+")
+            lon = _proximos(154, 193, yref, r"-?\d+[,.]\d+")
+            velocidade = _proximos(188, 221, yref, r"\d+(?:[,.]\d+)?")
+            if not horario or not lat or not lon:
+                continue
+            try:
+                momento = datetime.strptime(
+                    f"{str(data_word[4]).strip()} {horario[0][1]}", "%d/%m/%y %H:%M"
+                )
+                latitude = float(lat[0][1].replace(",", "."))
+                longitude = float(lon[0][1].replace(",", "."))
+                vel = float(velocidade[0][1].replace(",", ".")) if velocidade else 0.0
+            except Exception:
+                continue
+            ignicao = None
+            if instancias_ign:
+                melhor_y, melhor_estado = min(instancias_ign, key=lambda item: abs(item[0] - yref))
+                if abs(melhor_y - yref) <= 20:
+                    ignicao = melhor_estado
+            linhas.append({
+                "momento": momento,
+                "data": momento.date(),
+                "hora": momento.strftime("%H:%M"),
+                "lat": latitude,
+                "lon": longitude,
+                "velocidade": vel,
+                "ignicao": ignicao,
+                "pagina": numero_pagina,
+            })
+
+    doc.close()
+    linhas.sort(key=lambda item: item["momento"])
+    return {
+        "arquivo": nome_arquivo, "placa": placa, "nome": nome_veiculo,
+        "unidade_id": unidade_id, "linhas": linhas,
+    }
+
+
+def _pdf_detectar_inicio_dia(linhas_dia):
+    """Detecta a saída pela garagem real daquele dia, mesmo se ela mudar de endereço.
+
+    Regra: encontra uma chave vermelha/parada, depois a primeira chave verde no mesmo
+    ponto e só aceita o evento se, nos 45 minutos seguintes, o veículo realmente se
+    afastar pelo menos 500 m daquele estacionamento.
+    """
+    linhas = sorted(linhas_dia or [], key=lambda item: item["momento"])
+    if not linhas:
+        return None
+
+    LIMITE_BASE_KM = 0.20
+    CONFIRMACAO_KM = 0.50
+    JANELA_ANTERIOR_MIN = 6 * 60
+    JANELA_FUTURA_MIN = 45
+
+    def _minutos(a, b):
+        return (a["momento"] - b["momento"]).total_seconds() / 60.0
+
+    def _saida_confirmada(indice, ancora):
+        inicio = linhas[indice]["momento"]
+        teve_movimento = False
+        maior_distancia = 0.0
+        for futuro in linhas[indice:]:
+            delta = (futuro["momento"] - inicio).total_seconds() / 60.0
+            if delta < 0:
+                continue
+            if delta > JANELA_FUTURA_MIN:
+                break
+            distancia = _pdf_distancia_km(ancora["lat"], ancora["lon"], futuro["lat"], futuro["lon"])
+            maior_distancia = max(maior_distancia, distancia)
+            teve_movimento = teve_movimento or float(futuro.get("velocidade", 0) or 0) > 0
+            if distancia >= CONFIRMACAO_KM and (teve_movimento or futuro.get("ignicao") is True):
+                return True, maior_distancia
+        return False, maior_distancia
+
+    # Preferência máxima: transição chave vermelha -> verde no estacionamento matinal.
+    for i, atual in enumerate(linhas):
+        if atual["momento"].hour < 4 or atual["momento"].hour >= 14:
+            continue
+        if atual.get("ignicao") is not True:
+            continue
+        anteriores = []
+        for anterior in linhas[:i]:
+            delta = _minutos(atual, anterior)
+            if delta < 0 or delta > JANELA_ANTERIOR_MIN:
+                continue
+            if anterior.get("ignicao") is False and float(anterior.get("velocidade", 0) or 0) <= 1:
+                anteriores.append(anterior)
+        if not anteriores:
+            continue
+        ancora = anteriores[-1]
+        if _pdf_distancia_km(ancora["lat"], ancora["lon"], atual["lat"], atual["lon"]) > LIMITE_BASE_KM:
+            continue
+        confirmou, maior = _saida_confirmada(i, ancora)
+        if confirmou:
+            return {
+                "hora": atual["hora"],
+                "momento": atual["momento"],
+                "lat_base": ancora["lat"], "lon_base": ancora["lon"],
+                "pagina": atual.get("pagina"),
+                "criterio": "chave vermelha → verde + saída confirmada >500 m",
+                "confianca": "Alta",
+                "distancia_confirmada_km": maior,
+            }
+
+    # Fallback: se o PDF não trouxer uma leitura vermelha imediatamente antes, usa
+    # o primeiro movimento a partir de um ponto em que o veículo permaneceu parado.
+    for i, atual in enumerate(linhas):
+        if atual["momento"].hour < 4 or atual["momento"].hour >= 14:
+            continue
+        if float(atual.get("velocidade", 0) or 0) <= 0 and atual.get("ignicao") is not True:
+            continue
+        anteriores = [
+            a for a in linhas[:i]
+            if 0 <= _minutos(atual, a) <= JANELA_ANTERIOR_MIN
+            and float(a.get("velocidade", 0) or 0) <= 1
+        ]
+        if not anteriores:
+            continue
+        ancora = anteriores[-1]
+        if _pdf_distancia_km(ancora["lat"], ancora["lon"], atual["lat"], atual["lon"]) > LIMITE_BASE_KM:
+            continue
+        confirmou, maior = _saida_confirmada(i, ancora)
+        if confirmou:
+            return {
+                "hora": atual["hora"], "momento": atual["momento"],
+                "lat_base": ancora["lat"], "lon_base": ancora["lon"],
+                "pagina": atual.get("pagina"),
+                "criterio": "primeiro movimento + saída confirmada >500 m",
+                "confianca": "Média",
+                "distancia_confirmada_km": maior,
+            }
+    return None
+
+
+def analisar_pdfs_inicio_rota_protege(arquivos):
+    resultados = []
+    diagnosticos = []
+    for arquivo in arquivos or []:
+        nome_arquivo = getattr(arquivo, "name", "relatorio.pdf")
+        try:
+            conteudo = arquivo.getvalue() if hasattr(arquivo, "getvalue") else bytes(arquivo)
+            relatorio = _pdf_ler_posicoes_protege(conteudo, nome_arquivo)
+            linhas = relatorio.get("linhas", [])
+            placa = relatorio.get("placa") or relatorio.get("unidade_id") or "Não identificada"
+            nome = relatorio.get("nome") or "Veículo Protege"
+            dias = sorted({linha["data"] for linha in linhas})
+            encontrados = 0
+            for dia in dias:
+                achado = _pdf_detectar_inicio_dia([linha for linha in linhas if linha["data"] == dia])
+                if not achado:
+                    resultados.append({
+                        "Importar": False, "Data": dia.strftime("%d/%m/%Y"),
+                        "Veículo": nome, "Placa": placa, "Hora de saída": "",
+                        "Confiança": "-", "Critério": "Nenhuma saída confirmada",
+                        "PDF": nome_arquivo,
+                    })
+                    continue
+                encontrados += 1
+                resultados.append({
+                    "Importar": True, "Data": dia.strftime("%d/%m/%Y"),
+                    "Veículo": nome, "Placa": placa, "Hora de saída": achado["hora"],
+                    "Confiança": achado["confianca"], "Critério": achado["criterio"],
+                    "PDF": nome_arquivo,
+                })
+            diagnosticos.append(
+                f"{nome_arquivo}: {placa} • {len(linhas)} posições • {len(dias)} dias • {encontrados} saídas identificadas"
+            )
+        except Exception as erro:
+            diagnosticos.append(f"{nome_arquivo}: ERRO — {erro}")
+    return pd.DataFrame(resultados), diagnosticos
+
+
+def salvar_inicios_pdf_protege(df_resultados):
+    garantir_schema_historico_protege()
+    salvos = ignorados_manuais = invalidos = 0
+    for _, linha in (df_resultados if isinstance(df_resultados, pd.DataFrame) else pd.DataFrame()).iterrows():
+        if not bool(linha.get("Importar", True)):
+            continue
+        data_str = str(linha.get("Data", "") or "").strip()
+        placa = str(linha.get("Placa", "") or "").strip().upper()
+        hora = str(linha.get("Hora de saída", "") or "").strip()
+        if not placa or not re.fullmatch(r"\d{2}/\d{2}/\d{4}", data_str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", hora):
+            invalidos += 1
+            continue
+        existente = fetch_one(
+            "SELECT COALESCE(fonte,'') FROM inicio_movimento WHERE placa=:placa AND data=:data",
+            {"placa": placa, "data": data_str},
+        )
+        if existente and str(existente[0] or "").lower() == "manual":
+            ignorados_manuais += 1
+            continue
+        detalhe = (
+            f"Importado de PDF Protege: {linha.get('PDF','')} • "
+            f"{linha.get('Critério','')} • confiança {linha.get('Confiança','')}"
+        )[:500]
+        execute_db(
+            """
+            INSERT INTO inicio_movimento (placa, data, hora_inicio, fonte, detalhe)
+            VALUES (:placa, :data, :hora, 'protege_pdf', :detalhe)
+            ON CONFLICT (placa, data) DO UPDATE SET
+                hora_inicio=EXCLUDED.hora_inicio, fonte=EXCLUDED.fonte, detalhe=EXCLUDED.detalhe
+            WHERE COALESCE(inicio_movimento.fonte,'') <> 'manual'
+            """,
+            {"placa": placa, "data": data_str, "hora": hora, "detalhe": detalhe},
+        )
+        salvos += 1
+    return {"salvos": salvos, "manuais": ignorados_manuais, "invalidos": invalidos}
+
+
 @st.cache_resource(show_spinner=False)
 def obter_executor_gps_rota():
     """Um único trabalhador consulta o GPS sem bloquear a renderização da Torre."""
@@ -10377,15 +10735,74 @@ if modulo_principal == "🚗 Frota e custos":
         st.caption("Saídas do pátio e permanência nas obras registradas automaticamente pelo rastreador.")
         st.markdown("#### 🕒 Horários da operação (rastreador)")
 
-        # IMPORTANTE: nunca consulta o relatório histórico da Protege durante o
-        # carregamento desta página. Uma varredura de vários dias x dois veículos pode
-        # levar muitos segundos e fazia o Streamlit parecer travado. A tela sempre abre
-        # usando somente o que já está salvo no Supabase; a consulta histórica é iniciada
-        # explicitamente pelo botão abaixo e pula os dias já conferidos.
         st.caption(
-            "⚡ Carregamento rápido: os horários já salvos aparecem imediatamente. "
-            "Use ‘Buscar dias faltantes’ somente quando quiser completar o histórico pela Protege."
+            "📄 O histórico pode ser completado pelo relatório PDF da Protege. "
+            "A Torre identifica automaticamente a chave vermelha/verde, o primeiro movimento e confirma a saída pelo afastamento real do estacionamento."
         )
+
+        with st.expander("📤 Importar relatório PDF da Protege", expanded=False):
+            st.caption(
+                "Você pode enviar um ou vários PDFs de uma vez — por exemplo, um relatório da Strada e outro da L200. "
+                "O PDF pode conter vários dias no mesmo arquivo."
+            )
+            arquivos_pdf_protege = st.file_uploader(
+                "Relatório(s) por período da Protege",
+                type=["pdf"],
+                accept_multiple_files=True,
+                key="pdf_protege_inicio_rota",
+                help="Exporte na Protege o relatório por período. A análise é feita somente quando você clicar em Analisar PDFs.",
+            )
+            if st.button(
+                "🔎 Analisar PDFs",
+                use_container_width=True,
+                disabled=not bool(arquivos_pdf_protege),
+                key="analisar_pdf_protege_inicio",
+            ):
+                with st.spinner("Lendo chave, posições e deslocamentos dos relatórios..."):
+                    df_pdf, diagnosticos_pdf = analisar_pdfs_inicio_rota_protege(arquivos_pdf_protege)
+                st.session_state["_pdf_protege_resultados"] = df_pdf
+                st.session_state["_pdf_protege_diagnosticos"] = diagnosticos_pdf
+
+            for diagnostico in st.session_state.get("_pdf_protege_diagnosticos", []):
+                st.caption(diagnostico)
+
+            df_pdf_preview = st.session_state.get("_pdf_protege_resultados")
+            if isinstance(df_pdf_preview, pd.DataFrame) and not df_pdf_preview.empty:
+                st.markdown("**Confira antes de salvar**")
+                st.caption(
+                    "A hora pode ser corrigida diretamente na tabela. Desmarque Importar em qualquer dia que você não queira gravar."
+                )
+                df_pdf_editado = st.data_editor(
+                    df_pdf_preview,
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    key="editor_pdf_protege_inicio",
+                    disabled=["Data", "Veículo", "Placa", "Confiança", "Critério", "PDF"],
+                    column_config={
+                        "Importar": st.column_config.CheckboxColumn("Importar", default=True),
+                        "Hora de saída": st.column_config.TextColumn("Hora de saída", help="HH:MM"),
+                    },
+                )
+                if st.button("✅ Salvar horários identificados", type="primary", use_container_width=True, key="salvar_pdf_protege_inicio"):
+                    try:
+                        resumo_pdf = salvar_inicios_pdf_protege(df_pdf_editado)
+                        st.session_state["_mensagem_pdf_protege"] = (
+                            f"{resumo_pdf['salvos']} horário(s) salvo(s)"
+                            + (f" • {resumo_pdf['manuais']} correção(ões) manual(is) preservada(s)" if resumo_pdf['manuais'] else "")
+                            + (f" • {resumo_pdf['invalidos']} linha(s) inválida(s)" if resumo_pdf['invalidos'] else "")
+                        )
+                        st.session_state.pop("_pdf_protege_resultados", None)
+                        st.session_state.pop("_pdf_protege_diagnosticos", None)
+                        st.rerun()
+                    except Exception as erro_pdf_salvar:
+                        st.error(f"Não foi possível salvar os horários: {erro_pdf_salvar}")
+            elif isinstance(df_pdf_preview, pd.DataFrame):
+                st.info("Nenhuma saída de rota foi identificada nos PDFs enviados.")
+
+        mensagem_pdf_protege = st.session_state.pop("_mensagem_pdf_protege", "")
+        if mensagem_pdf_protege:
+            st.success(f"PDF Protege importado: {mensagem_pdf_protege}")
 
         def _converter_data_inicio(valor):
             if valor is None or (isinstance(valor, float) and math.isnan(valor)):
@@ -10440,28 +10857,9 @@ if modulo_principal == "🚗 Frota e custos":
         )
         fim_consulta = min(fim_periodo, AGORA_REAL.date())
 
-        col_sync, col_explicacao = st.columns([1.15, 2.85])
-        with col_sync:
-            if st.button("🔄 Buscar dias faltantes", use_container_width=True, key="atualizar_mes_protege"):
-                # forcar=False é essencial: consulta a Protege apenas nos dias ainda não
-                # conferidos. Assim uma segunda atualização do mês é muito mais rápida.
-                with st.spinner(f"Buscando somente os dias faltantes de {rotulo_periodo_inicio}..."):
-                    st.session_state["_resultado_sync_protege_manual"] = sincronizar_inicios_historicos_protege(
-                        inicio_periodo, fim_consulta, forcar=False
-                    )
-        with col_explicacao:
-            st.caption(
-                "A hora é o início real da saída: mudança da chave/primeiro movimento na base. "
-                "O afastamento de 500 m serve apenas para confirmar que o veículo realmente saiu. "
-                "A consulta histórica não bloqueia mais a abertura desta tela."
-            )
-
-        resultado_sync_manual = st.session_state.pop("_resultado_sync_protege_manual", None)
-        if resultado_sync_manual:
-            if resultado_sync_manual.get("erros"):
-                st.warning(f"Histórico Protege: {resultado_sync_manual.get('mensagem','')}")
-            else:
-                st.success(f"Histórico Protege atualizado: {resultado_sync_manual.get('mensagem','')}")
+        st.caption(
+            "O filtro abaixo usa os horários já salvos no banco. Para completar dias antigos, importe o PDF da Protege acima."
+        )
 
         # Recarrega o banco depois da sincronização e aplica o mês escolhido.
         df_inicio_completo = get_df(
