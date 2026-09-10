@@ -9364,27 +9364,85 @@ def _pdf_distancia_km(lat1, lon1, lat2, lon2):
 
 
 def _pdf_identificar_veiculo(words):
-    cabecalho = " ".join(
-        str(w[4]) for w in words
-        if 88 <= float(w[1]) <= 122
-    )
-    placa_match = re.search(r"\(([A-Z0-9-]{5,14})\)", cabecalho, flags=re.I)
+    """Identifica ID, nome e placa sem depender da posição física do cabeçalho."""
+    textos = [str(w[4]).strip() for w in words if str(w[4]).strip()]
+    texto_total = " ".join(textos)
+
+    # Placas Protege aparecem normalmente entre parênteses, mas aceitamos também
+    # a forma solta ABC-1D23 / ABC1234 para relatórios com impressão diferente.
+    placa_match = re.search(r"\(([A-Z]{3}-?[A-Z0-9]{4})\)", texto_total, flags=re.I)
+    if not placa_match:
+        placa_match = re.search(r"\b([A-Z]{3}-?[A-Z0-9]{4})\b", texto_total, flags=re.I)
     placa = placa_match.group(1).upper() if placa_match else ""
-    id_match = re.search(r"\b(\d{6,})\s*-", cabecalho)
+
+    id_match = re.search(r"\b(\d{6,})\s*-", texto_total)
     unidade_id = id_match.group(1) if id_match else ""
-    nome = cabecalho
+
+    nome = ""
     if unidade_id:
-        nome = re.sub(rf"^.*?{re.escape(unidade_id)}\s*-\s*", "", nome).strip()
-    if placa:
-        nome = re.sub(rf"\s*\({re.escape(placa)}\).*?$", "", nome, flags=re.I).strip()
+        # Recorta o trecho entre "ID -" e a placa, independentemente do Y do PDF.
+        padrao_nome = rf"{re.escape(unidade_id)}\s*-\s*(.+?)(?:\s*\({re.escape(placa)}\)|$)" if placa else rf"{re.escape(unidade_id)}\s*-\s*(.+?)$"
+        achado_nome = re.search(padrao_nome, texto_total, flags=re.I)
+        if achado_nome:
+            nome = re.sub(r"\s+", " ", achado_nome.group(1)).strip()
     return unidade_id, nome, placa
 
 
-def _pdf_ler_posicoes_protege(conteudo_pdf, nome_arquivo="relatorio.pdf"):
-    """Extrai data/hora, coordenadas, velocidade e estado da chave do PDF da Protege.
+def _pdf_layout_colunas(words, largura_pagina):
+    """Descobre as colunas da tabela pelo cabeçalho em vez de usar X fixo.
 
-    A coluna Ign não é texto no PDF: é uma imagem de uma chave verde/vermelha.
-    Por isso o parser usa a posição da imagem na própria tabela, sem OCR.
+    Alguns PDFs da Protege são impressos com escala diferente. As posições abaixo
+    são usadas apenas como fallback proporcional quando o cabeçalho não é extraído.
+    """
+    aliases = {
+        "evento": {"EVENTO"},
+        "horario": {"HORARIO", "HORÁRIO"},
+        "lat": {"LAT.", "LAT"},
+        "long": {"LONG.", "LONG", "LON.", "LON"},
+        "veloc": {"VELOC.", "VELOC", "VELOCIDADE"},
+        "km": {"KM"},
+        "bateria": {"BATERIA"},
+        "ign": {"IGN", "IGNICAO", "IGNIÇÃO"},
+        "e3": {"E3"},
+        "e2": {"E2"},
+        "e1": {"E1"},
+    }
+    centros = {}
+    for w in words:
+        texto = remover_acentos(str(w[4]).strip().upper())
+        for chave, opcoes in aliases.items():
+            if texto in {remover_acentos(x) for x in opcoes}:
+                # Prioriza cabeçalhos na metade superior da página.
+                yc = (float(w[1]) + float(w[3])) / 2.0
+                if yc < 260 and chave not in centros:
+                    centros[chave] = (float(w[0]) + float(w[2])) / 2.0
+
+    # Fallback proporcional ao A4 usado no primeiro relatório validado.
+    ref_w = 594.96
+    ref = {
+        "evento": 54.0, "horario": 103.4, "lat": 138.4, "long": 173.0,
+        "veloc": 206.2, "km": 233.6, "bateria": 263.4, "ign": 290.2,
+        "e3": 308.5, "e2": 325.7, "e1": 343.0,
+    }
+    escala = float(largura_pagina or ref_w) / ref_w
+    for chave, x in ref.items():
+        centros.setdefault(chave, x * escala)
+
+    ordem = ["evento", "horario", "lat", "long", "veloc", "km", "bateria", "ign", "e3", "e2", "e1"]
+    ranges = {}
+    for i, chave in enumerate(ordem):
+        centro = centros[chave]
+        esq = 0.0 if i == 0 else (centros[ordem[i - 1]] + centro) / 2.0
+        dir_ = float(largura_pagina) if i == len(ordem) - 1 else (centro + centros[ordem[i + 1]]) / 2.0
+        ranges[chave] = (esq, dir_)
+    return centros, ranges
+
+
+def _pdf_ler_posicoes_protege(conteudo_pdf, nome_arquivo="relatorio.pdf"):
+    """Extrai posições do relatório Protege com layout adaptativo.
+
+    Não depende de coordenadas absolutas: encontra as colunas pelo cabeçalho da
+    primeira página e reaplica proporcionalmente nas páginas seguintes.
     """
     try:
         import fitz
@@ -9395,108 +9453,143 @@ def _pdf_ler_posicoes_protege(conteudo_pdf, nome_arquivo="relatorio.pdf"):
 
     doc = fitz.open(stream=conteudo_pdf, filetype="pdf")
     if len(doc) == 0:
-        return {"arquivo": nome_arquivo, "placa": "", "nome": "", "unidade_id": "", "linhas": []}
+        return {"arquivo": nome_arquivo, "placa": "", "nome": "", "unidade_id": "", "linhas": [], "diagnostico_layout": "PDF vazio"}
 
     words_primeira = doc[0].get_text("words")
     unidade_id, nome_veiculo, placa = _pdf_identificar_veiculo(words_primeira)
+    largura_ref = float(doc[0].rect.width)
+    centros_ref, ranges_ref = _pdf_layout_colunas(words_primeira, largura_ref)
     cache_icone = {}
     linhas = []
+    paginas_com_datas = 0
+
+    def numero_decimal(valor):
+        try:
+            return float(str(valor).strip().replace(".", "").replace(",", "."))
+        except Exception:
+            return None
 
     for numero_pagina, pagina in enumerate(doc, start=1):
         words = pagina.get_text("words")
         if not words:
             continue
+        largura = float(pagina.rect.width)
+        escala = largura / largura_ref if largura_ref else 1.0
+        ranges = {k: (a * escala, b * escala) for k, (a, b) in ranges_ref.items()}
+        centros = {k: x * escala for k, x in centros_ref.items()}
 
+        hx0, hx1 = ranges["horario"]
         datas = [
             w for w in words
-            if 72 <= float(w[0]) <= 126
-            and re.fullmatch(r"\d{2}/\d{2}/\d{2}", str(w[4]).strip())
+            if hx0 <= (float(w[0]) + float(w[2])) / 2.0 <= hx1
+            and re.fullmatch(r"\d{2}/\d{2}/(?:\d{2}|\d{4})", str(w[4]).strip())
         ]
+        # Fallback para PDFs em que o texto do cabeçalho/coluna foi deslocado:
+        # procura datas em toda a metade esquerda e valida a linha pelos campos lat/lon.
+        if not datas:
+            datas = [
+                w for w in words
+                if (float(w[0]) + float(w[2])) / 2.0 < centros["lat"]
+                and re.fullmatch(r"\d{2}/\d{2}/(?:\d{2}|\d{4})", str(w[4]).strip())
+            ]
         if not datas:
             continue
+        paginas_com_datas += 1
 
-        # Início de rota é um evento matinal. Evita ler milhares de ícones nas
-        # páginas que contêm somente tarde/noite, acelerando PDFs grandes.
-        horarios_pagina = [
-            str(w[4]).strip() for w in words
-            if 78 <= float(w[0]) <= 126
-            and re.fullmatch(r"\d{1,2}:\d{2}", str(w[4]).strip())
-        ]
-        if horarios_pagina and not any(int(h.split(":")[0]) < 14 for h in horarios_pagina):
-            continue
-
+        # Não descarta a página inteira pela hora; alguns layouts quebram horário em
+        # linhas diferentes. Filtramos manhã apenas na etapa final de detecção.
         instancias_ign = []
         try:
             imagens = pagina.get_image_info(xrefs=True)
         except Exception:
             imagens = []
+        ix0, ix1 = ranges["ign"]
         for info in imagens:
             bbox = info.get("bbox") or ()
             if len(bbox) != 4:
                 continue
             x0, y0, x1, y1 = map(float, bbox)
-            # A coluna Ign fica imediatamente depois de Bateria (x≈284 no PDF A4).
-            if not (272 <= x0 <= 302):
+            xc = (x0 + x1) / 2.0
+            if not (ix0 <= xc <= ix1):
                 continue
             estado = _pdf_classificar_icone_ignicao(doc, info.get("xref", 0), cache_icone)
             if estado is not None:
                 instancias_ign.append(((y0 + y1) / 2.0, estado))
 
-        def _proximos(x0, x1, yref, padrao=None):
+        def proximos(chave, yref, padrao=None, limite_y=18):
+            x0, x1 = ranges[chave]
             encontrados = []
             for w in words:
-                if not (x0 <= float(w[0]) < x1):
+                xc = (float(w[0]) + float(w[2])) / 2.0
+                if not (x0 <= xc <= x1):
                     continue
                 yc = (float(w[1]) + float(w[3])) / 2.0
-                if abs(yc - yref) > 16:
+                if abs(yc - yref) > limite_y:
                     continue
                 valor = str(w[4]).strip()
                 if padrao is not None and not re.fullmatch(padrao, valor):
                     continue
-                encontrados.append((abs(yc - yref), valor))
-            encontrados.sort(key=lambda item: item[0])
+                encontrados.append((abs(yc - yref), abs(xc - centros[chave]), valor))
+            encontrados.sort(key=lambda item: (item[0], item[1]))
             return encontrados
 
         for data_word in datas:
             yref = (float(data_word[1]) + float(data_word[3])) / 2.0
-            horario = _proximos(78, 126, yref, r"\d{1,2}:\d{2}")
-            lat = _proximos(118, 158, yref, r"-?\d+[,.]\d+")
-            lon = _proximos(154, 193, yref, r"-?\d+[,.]\d+")
-            velocidade = _proximos(188, 221, yref, r"\d+(?:[,.]\d+)?")
+            horario = proximos("horario", yref, r"\d{1,2}:\d{2}", 20)
+            lat = proximos("lat", yref, r"-?\d+[,.]\d+", 20)
+            lon = proximos("long", yref, r"-?\d+[,.]\d+", 20)
+            velocidade = proximos("veloc", yref, r"\d+(?:[,.]\d+)?", 20)
             if not horario or not lat or not lon:
                 continue
+
+            lat_num = numero_decimal(lat[0][2])
+            lon_num = numero_decimal(lon[0][2])
+            vel_num = numero_decimal(velocidade[0][2]) if velocidade else 0.0
+            if lat_num is None or lon_num is None or not (-90 <= lat_num <= 90) or not (-180 <= lon_num <= 180):
+                continue
             try:
-                momento = datetime.strptime(
-                    f"{str(data_word[4]).strip()} {horario[0][1]}", "%d/%m/%y %H:%M"
-                )
-                latitude = float(lat[0][1].replace(",", "."))
-                longitude = float(lon[0][1].replace(",", "."))
-                vel = float(velocidade[0][1].replace(",", ".")) if velocidade else 0.0
+                data_txt = str(data_word[4]).strip()
+                formato_data = "%d/%m/%Y" if len(data_txt.split("/")[-1]) == 4 else "%d/%m/%y"
+                momento = datetime.strptime(f"{data_txt} {horario[0][2]}", f"{formato_data} %H:%M")
             except Exception:
                 continue
+
             ignicao = None
             if instancias_ign:
                 melhor_y, melhor_estado = min(instancias_ign, key=lambda item: abs(item[0] - yref))
-                if abs(melhor_y - yref) <= 20:
+                if abs(melhor_y - yref) <= 22:
                     ignicao = melhor_estado
+
             linhas.append({
                 "momento": momento,
                 "data": momento.date(),
                 "hora": momento.strftime("%H:%M"),
-                "lat": latitude,
-                "lon": longitude,
-                "velocidade": vel,
+                "lat": lat_num,
+                "lon": lon_num,
+                "velocidade": float(vel_num or 0.0),
                 "ignicao": ignicao,
                 "pagina": numero_pagina,
             })
 
     doc.close()
-    linhas.sort(key=lambda item: item["momento"])
+    # Remove duplicações de texto do PDF sem eliminar leituras genuínas do mesmo minuto.
+    unicas = {}
+    for item in linhas:
+        chave = (item["momento"], round(item["lat"], 6), round(item["lon"], 6), round(item["velocidade"], 2), item.get("ignicao"))
+        unicas[chave] = item
+    linhas = sorted(unicas.values(), key=lambda item: item["momento"])
     return {
-        "arquivo": nome_arquivo, "placa": placa, "nome": nome_veiculo,
-        "unidade_id": unidade_id, "linhas": linhas,
+        "arquivo": nome_arquivo,
+        "placa": placa,
+        "nome": nome_veiculo,
+        "unidade_id": unidade_id,
+        "linhas": linhas,
+        "diagnostico_layout": (
+            f"{paginas_com_datas} página(s) com datas • largura {largura_ref:.1f} • "
+            f"Horário x={centros_ref['horario']:.1f} • Lat x={centros_ref['lat']:.1f} • "
+            f"Long x={centros_ref['long']:.1f} • Ign x={centros_ref['ign']:.1f}"
+        ),
     }
-
 
 def _pdf_detectar_inicio_dia(linhas_dia):
     """Detecta a saída pela garagem real daquele dia, mesmo se ela mudar de endereço.
@@ -9624,9 +9717,11 @@ def analisar_pdfs_inicio_rota_protege(arquivos):
                     "Confiança": achado["confianca"], "Critério": achado["criterio"],
                     "PDF": nome_arquivo,
                 })
-            diagnosticos.append(
-                f"{nome_arquivo}: {placa} • {len(linhas)} posições • {len(dias)} dias • {encontrados} saídas identificadas"
-            )
+            detalhe_layout = str(relatorio.get("diagnostico_layout", "") or "")
+            diagnostico_base = f"{nome_arquivo}: {placa} • {len(linhas)} posições • {len(dias)} dias • {encontrados} saídas identificadas"
+            if not linhas and detalhe_layout:
+                diagnostico_base += f" • diagnóstico: {detalhe_layout}"
+            diagnosticos.append(diagnostico_base)
         except Exception as erro:
             diagnosticos.append(f"{nome_arquivo}: ERRO — {erro}")
     return pd.DataFrame(resultados), diagnosticos
