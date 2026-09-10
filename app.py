@@ -12932,14 +12932,66 @@ if modulo_principal == "🗺️ Roteiro do Davi":
         # que aparecia quando as paradas eram muito mais altas que o mapa.
         col_mapa = st.container()
         col_paradas = st.container()
+
+        # Estado visual da rota. O histórico do roteiro pode manter as paradas já
+        # realizadas durante o dia, mas o MAPA deve representar exclusivamente o
+        # que ainda falta. Check-in do Davi e baixa do card são aceitos como
+        # confirmação da parada. Quando não resta nenhuma parada planejada, os
+        # cartões operacionais somem por completo.
+        def _etapa_concluida_visual_torre(indice_etapa, etapa):
+            if etapa.get('type') != 'stop':
+                return False
+            if dict_checkins_torre.get(indice_etapa):
+                return True
+            ids_etapa = {
+                str(tarefa.get('id', '') or '')
+                for _acao, tarefa in (etapa.get('actions', []) or [])
+                if str(tarefa.get('id', '') or '')
+            }
+            return bool(ids_etapa) and all(
+                demanda_id in dict_concluidos_torre for demanda_id in ids_etapa
+            )
+
+        numero_original_parada_torre = {}
+        paradas_operacionais_torre = []
+        _numero_parada_torre = 1
+        for _indice_etapa, _etapa in enumerate(route_steps):
+            if _etapa.get('type') != 'stop':
+                continue
+            if _indice_etapa == 0 and _etapa.get('destino') == p_saida:
+                continue
+            if not (_etapa.get('actions') or []):
+                continue
+            numero_original_parada_torre[_indice_etapa] = _numero_parada_torre
+            paradas_operacionais_torre.append((_indice_etapa, _etapa))
+            _numero_parada_torre += 1
+
+        paradas_pendentes_torre = [
+            (_indice_etapa, _etapa)
+            for _indice_etapa, _etapa in paradas_operacionais_torre
+            if not _etapa_concluida_visual_torre(_indice_etapa, _etapa)
+        ]
+        indices_pendentes_mapa_torre = {
+            _indice_etapa for _indice_etapa, _etapa in paradas_pendentes_torre
+        }
+        todas_paradas_planejadas_concluidas_torre = bool(paradas_operacionais_torre) and not paradas_pendentes_torre
+
         with col_paradas:
+            status_paradas_torre = (
+                "ROTA CONCLUÍDA"
+                if todas_paradas_planejadas_concluidas_torre
+                else f"{len(paradas_pendentes_torre)} PENDENTES"
+            )
             st.markdown(
                 f'<div class="aproar-industrial-heading"><h2>Paradas</h2>'
-                f'<span>{sum(1 for etapa in route_steps if etapa.get("type") == "stop")} NA ROTA</span></div>',
+                f'<span>{status_paradas_torre}</span></div>',
                 unsafe_allow_html=True,
             )
             st.caption(f"🕖 Expediente: das 07:00 às 17:00  •  🚚 Início da rota do Davi: {hora_inicio_real}")
-            st.caption("✅ As demandas concluídas ficam reunidas em uma tabela compacta; abaixo aparecem somente as etapas ainda pendentes.")
+            if todas_paradas_planejadas_concluidas_torre:
+                st.success("✅ Rota do dia concluída. Todas as paradas planejadas foram finalizadas.")
+            else:
+                st.caption("✅ As paradas concluídas continuam marcadas no roteiro; o mapa mostra somente o que ainda falta.")
 
             # A marca invisível colocada dentro de uma etapa concluída pelo Davi
             # acende a borda do próprio cartão, sem criar um painel separado.
@@ -13056,6 +13108,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             
             num_parada = 1
             for i, step in enumerate(route_steps):
+                if todas_paradas_planejadas_concluidas_torre:
+                    break
                 if step['type'] == 'lunch':
                     st.warning(f"🍔 **Pausa para almoço** (previsão: {step['dyn_chegada']} às {step['dyn_saida']})")
                     texto_whatsapp += f"🍔 Almoço: {step['dyn_chegada']} às {step['dyn_saida']}\n\n"
@@ -13349,11 +13403,12 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             horario_dyn_fim = format_mins_to_time(final_dyn_min)
             
             situacao_eta = "🟢 dentro do expediente" if final_dyn_min <= LIMITE_EXPEDIENTE_DAVI_MIN else "⏰ após 17h — sem novas paradas"
-            st.info(
-                f"🕒 **Rota:** planejado **{horario_base_fim}** • previsão atual **{horario_dyn_fim}** "
-                f"({situacao_eta}) • **{total_km:.1f} km**"
-            )
-            if valor_km_veiculo_proprio is not None:
+            if not todas_paradas_planejadas_concluidas_torre:
+                st.info(
+                    f"🕒 **Rota:** planejado **{horario_base_fim}** • previsão atual **{horario_dyn_fim}** "
+                    f"({situacao_eta}) • **{total_km:.1f} km**"
+                )
+            if not todas_paradas_planejadas_concluidas_torre and valor_km_veiculo_proprio is not None:
                 custo_estimado_veiculo_proprio = float(total_km) * valor_km_veiculo_proprio
                 tipo_veiculo_proprio = "Moto" if "Moto Própria/Frete" in veiculo_selecionado else "Carro"
                 custo_estimado_txt = f"R$ {custo_estimado_veiculo_proprio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -13363,7 +13418,7 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     f"{custo_estimado_txt} (**{valor_km_txt}**)."
                 )
 
-            if len(route_steps) > 1:
+            if not todas_paradas_planejadas_concluidas_torre and len(route_steps) > 1:
                 waypts_addr = []
                 for s in route_steps:
                     if s['type'] != 'lunch':
@@ -13406,11 +13461,17 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
                 st.text_area("📋 Texto pronto para WhatsApp", value=texto_whatsapp, height=150)
 
-            compartilhamento_rota()
+            if not todas_paradas_planejadas_concluidas_torre:
+                compartilhamento_rota()
 
         with col_mapa:
+            status_mapa_torre = (
+                "SEM PENDÊNCIAS"
+                if todas_paradas_planejadas_concluidas_torre
+                else f"{len(paradas_pendentes_torre)} PENDENTE{'S' if len(paradas_pendentes_torre) != 1 else ''}"
+            )
             st.markdown(
-                '<div class="aproar-industrial-heading"><h2>Mapa</h2><span>TRAJETO EM TEMPO REAL</span></div>',
+                f'<div class="aproar-industrial-heading"><h2>Mapa</h2><span>{status_mapa_torre}</span></div>',
                 unsafe_allow_html=True,
             )
             # MAPA DA ROTA — OpenStreetMap não exige API key e permanece com as
@@ -13428,10 +13489,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             # O enquadramento usa SEMPRE as posições reais. Os deslocamentos abaixo
             # existem somente para impedir que um número fique escondido por outro.
             pontos_reais_mapa = []
-            if p_saida in locais_dict:
-                pontos_reais_mapa.append([float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])])
-            for i, step in enumerate(route_steps):
-                if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+            for i, step in paradas_pendentes_torre:
+                if step.get('destino') in locais_dict:
                     _lat_real, _lon_real = locais_dict[step['destino']]
                     pontos_reais_mapa.append([float(_lat_real), float(_lon_real)])
 
@@ -13488,34 +13547,58 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                 marcadores_posicionados.append(candidato)
                 return candidato
 
-            p_num = 1
             pos_base_visual = None
-            if p_saida in locais_dict:
-                pos_base_visual = apply_offset(*locais_dict[p_saida])
 
-            # Traçado primeiro: fica por baixo dos marcadores e permanece visível.
-            geometria_rota = st.session_state.get('geometria_rota') or []
-            geometria_viaria = bool(st.session_state.get('geometria_viaria', False))
-            coords_ordem_real = []
-            if p_saida in locais_dict:
-                coords_ordem_real.append(locais_dict[p_saida])
-            coords_ordem_real.extend([
-                locais_dict[s['destino']] for s in route_steps
-                if s.get('destino') in locais_dict and s.get('type') != 'lunch'
-            ])
-            # Repara geometrias antigas gravadas com eixos invertidos pelo OSRM.
-            geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
-            if len(geometria_rota) < 2:
-                geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
-                geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
-            if len(geometria_rota) < 2 and len(coords_ordem_real) > 1:
-                geometria_rota = [list(map(float, p)) for p in coords_ordem_real]
-                geometria_viaria = False
+            # Traçado VISUAL restante. Não reutilizamos a geometria completa salva
+            # no início do dia, pois ela contém também os trechos já concluídos.
+            # A linha começa na última parada efetivamente realizada (ou na base se
+            # nenhuma foi feita) e segue apenas pelas pendências.
+            origem_trajeto_torre = None
+            for _indice_passado, _step_passado in reversed(paradas_operacionais_torre):
+                if not _etapa_concluida_visual_torre(_indice_passado, _step_passado):
+                    continue
+                _destino_passado = str(_step_passado.get('destino', '') or '')
+                if _destino_passado in locais_dict:
+                    origem_trajeto_torre = [
+                        float(locais_dict[_destino_passado][0]),
+                        float(locais_dict[_destino_passado][1]),
+                    ]
+                    break
+            if origem_trajeto_torre is None and p_saida in locais_dict and paradas_pendentes_torre:
+                origem_trajeto_torre = [float(locais_dict[p_saida][0]), float(locais_dict[p_saida][1])]
 
-            # Mantém a versão reparada em memória; ao recalcular a rota ela também
-            # será gravada corretamente no banco.
-            st.session_state['geometria_rota'] = geometria_rota
-            st.session_state['geometria_viaria'] = geometria_viaria
+            coords_ordem_real = ([] if origem_trajeto_torre is None else [origem_trajeto_torre]) + [
+                [float(locais_dict[s['destino']][0]), float(locais_dict[s['destino']][1])]
+                for _indice_s, s in paradas_pendentes_torre
+                if s.get('destino') in locais_dict
+            ]
+            geometria_rota = []
+            geometria_viaria = False
+            if len(coords_ordem_real) > 1:
+                assinatura_geom_mapa = json.dumps(
+                    [[round(float(p[0]), 5), round(float(p[1]), 5)] for p in coords_ordem_real],
+                    separators=(',', ':'),
+                )
+                cache_geom_mapa = st.session_state.get('_geometria_mapa_pendencias_torre') or {}
+                if cache_geom_mapa.get('assinatura') == assinatura_geom_mapa:
+                    geometria_rota = cache_geom_mapa.get('geometria') or []
+                    geometria_viaria = bool(cache_geom_mapa.get('viaria', False))
+                else:
+                    try:
+                        geometria_rota, geometria_viaria = buscar_geometria_rota(coords_ordem_real)
+                        geometria_rota = normalizar_geometria_mapa(geometria_rota, coords_ordem_real)
+                    except Exception:
+                        geometria_rota, geometria_viaria = [], False
+                    if len(geometria_rota) < 2:
+                        geometria_rota = [list(map(float, p)) for p in coords_ordem_real]
+                        geometria_viaria = False
+                    st.session_state['_geometria_mapa_pendencias_torre'] = {
+                        'assinatura': assinatura_geom_mapa,
+                        'geometria': geometria_rota,
+                        'viaria': geometria_viaria,
+                    }
+            else:
+                st.session_state.pop('_geometria_mapa_pendencias_torre', None)
 
             if len(geometria_rota) > 1:
                 # Contorno claro + azul da referência sobre as cores reais do mapa.
@@ -13527,8 +13610,8 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     tooltip="Traçado viário da rota" if geometria_viaria else "Ligação aproximada entre as paradas",
                 ).add_to(m)
 
-            for i, step in enumerate(route_steps):
-                if step.get('destino') in locais_dict and step.get('type') not in ['lunch', 'return'] and not (i == 0 and step.get('destino') == p_saida):
+            for i, step in paradas_pendentes_torre:
+                if step.get('destino') in locais_dict:
                     lat_orig, lon_orig = map(float, locais_dict[step['destino']])
                     lat, lon = apply_offset(lat_orig, lon_orig)
                     deslocado = calcular_distancia_km(lat_orig, lon_orig, lat, lon) > 0.01
@@ -13546,13 +13629,13 @@ if modulo_principal == "🗺️ Roteiro do Davi":
                     acoes = [a[0] for a in step.get('actions', [])]
                     tem_coleta, tem_entrega = "COLETAR" in acoes, "ENTREGAR" in acoes
                     fundo_marcador = "linear-gradient(90deg, #f59e0b 0 50%, #22c55e 50% 100%)" if (tem_coleta and tem_entrega) else "#f59e0b" if tem_coleta else "#22c55e"
-                    popup_html = f"<b>Parada {p_num}: {html_escape(str(step['destino']))}</b><br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
+                    numero_mapa_torre = numero_original_parada_torre.get(i, '•')
+                    popup_html = f"<b>Parada {numero_mapa_torre}: {html_escape(str(step['destino']))}</b><br>Status: pendente<br>Previsão: {step.get('dyn_chegada', step.get('chegada', ''))}<br>Ação: {html_escape(' e '.join(sorted(set(acoes))).title())}"
                     folium.Marker(
-                        [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {p_num}",
-                        z_index_offset=1200 + p_num,
-                        icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{p_num}</div>''')
+                        [lat, lon], popup=folium.Popup(popup_html, max_width=280), tooltip=f"Parada {numero_mapa_torre} — pendente",
+                        z_index_offset=1200 + int(numero_mapa_torre if isinstance(numero_mapa_torre, int) else 0),
+                        icon=folium.DivIcon(html=f'''<div style="background: {fundo_marcador}; color: white; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: 900; box-shadow: 0 2px 7px rgba(0,0,0,0.65); font-size: 14px;">{numero_mapa_torre}</div>''')
                     ).add_to(m)
-                    p_num += 1
 
             # Última posição real do Davi. Ela é atualizada pela consulta em
             # background acima; desenhar o caminhão nunca bloqueia o mapa.
@@ -13634,22 +13717,11 @@ if modulo_principal == "🗺️ Roteiro do Davi":
 
             if len(pontos_reais_mapa) > 1:
                 m.fit_bounds(pontos_reais_mapa, padding=(45, 45), max_zoom=14)
-            if p_saida in locais_dict and pos_base_visual is not None:
-                folium.Marker(
-                    [pos_base_visual[0], pos_base_visual[1]],
-                    popup=folium.Popup(f"<b>Saída/retorno: {html_escape(str(p_saida))}</b>", max_width=280),
-                    z_index_offset=2500,
-                    icon=folium.DivIcon(html=f'''<div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: 3px solid #dbeafe; border-radius: 50%; width: 34px; height: 34px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.55); font-size: 16px;">🏁</div>''')
-                ).add_to(m)
-
             st_folium(
                 m, height=540, use_container_width=True, returned_objects=[],
                 key=f"mapa_rota_{DATA_REF_ROTA_STR}",
             )
-            total_paradas_industrial = sum(
-                1 for etapa in route_steps
-                if etapa.get('type') == 'stop' and etapa.get('destino') != p_saida
-            )
+            total_paradas_industrial = len(paradas_pendentes_torre)
             distancia_industrial = f"{float(total_km):.1f}".replace('.', ',')
             veiculo_industrial = html_escape(veiculo_selecionado.split('(')[0].strip())
             if valor_km_veiculo_proprio is not None:
@@ -13658,37 +13730,51 @@ if modulo_principal == "🗺️ Roteiro do Davi":
             else:
                 custo_industrial_txt = "Frota da empresa"
 
-            st.markdown(
-                f"""
-                <div class="aproar-industrial-summary">
-                    <section class="aproar-route-panel">
-                        <div class="aproar-summary-title"><strong>Rota 01 — Davi</strong><span>PLANEJADA</span></div>
-                        <div class="aproar-summary-times">
-                            <div><span>Horário atual</span><strong>{hora_atual_str}</strong></div>
-                            <div class="aproar-summary-line"><i></i></div>
-                            <div><span>Término previsto</span><strong>{nova_previsao_str}</strong></div>
-                        </div>
-                        <div class="aproar-summary-data">
-                            <div><span>Início</span><strong>{html_escape(hora_inicio_real)}</strong></div>
-                            <div><span>Expediente</span><strong>07:00–17:00</strong></div>
-                            <div><span>Paradas</span><strong>{total_paradas_industrial}</strong></div>
-                            <div><span>Distância</span><strong>{distancia_industrial} km</strong></div>
-                        </div>
-                    </section>
-                    <section class="aproar-fleet-panel">
-                        <div class="aproar-summary-title"><strong>Frota</strong><span>EM ROTA</span></div>
-                        <div class="aproar-fleet-body">
-                            <span>Motorista</span><strong>Davi · {veiculo_industrial}</strong>
-                            <small>Rota sincronizada com a central</small>
-                            <div class="aproar-fleet-cost"><span>Custeio estimado</span><b>{custo_industrial_txt}</b></div>
-                        </div>
-                    </section>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
-            st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta | 🟢 Entrega | 🏁 Início/Retorno | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Linha cinza pontilhada = marcador afastado da posição real para não esconder outro número.</span></div>", unsafe_allow_html=True)
+            if todas_paradas_planejadas_concluidas_torre:
+                st.markdown(
+                    """
+                    <div class="aproar-industrial-summary">
+                        <section class="aproar-route-panel" style="grid-column:1/-1;">
+                            <div class="aproar-summary-title"><strong>Rota 01 — Davi</strong><span style="color:#86efac;">CONCLUÍDA</span></div>
+                            <div style="padding:20px 0 4px;color:#dcfce7;font-size:18px;font-weight:800;">✅ Todas as paradas planejadas foram finalizadas.</div>
+                            <div style="color:#94a3b8;font-size:12px;">O mapa não exibe mais nenhuma demanda concluída.</div>
+                        </section>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"""
+                    <div class="aproar-industrial-summary">
+                        <section class="aproar-route-panel">
+                            <div class="aproar-summary-title"><strong>Rota 01 — Davi</strong><span>EM EXECUÇÃO</span></div>
+                            <div class="aproar-summary-times">
+                                <div><span>Horário atual</span><strong>{hora_atual_str}</strong></div>
+                                <div class="aproar-summary-line"><i></i></div>
+                                <div><span>Término previsto</span><strong>{nova_previsao_str}</strong></div>
+                            </div>
+                            <div class="aproar-summary-data">
+                                <div><span>Início</span><strong>{html_escape(hora_inicio_real)}</strong></div>
+                                <div><span>Expediente</span><strong>07:00–17:00</strong></div>
+                                <div><span>Pendentes</span><strong>{total_paradas_industrial}</strong></div>
+                                <div><span>Distância planejada</span><strong>{distancia_industrial} km</strong></div>
+                            </div>
+                        </section>
+                        <section class="aproar-fleet-panel">
+                            <div class="aproar-summary-title"><strong>Frota</strong><span>EM ROTA</span></div>
+                            <div class="aproar-fleet-body">
+                                <span>Motorista</span><strong>Davi · {veiculo_industrial}</strong>
+                                <small>Rota sincronizada com a central</small>
+                                <div class="aproar-fleet-cost"><span>Custeio estimado</span><b>{custo_industrial_txt}</b></div>
+                            </div>
+                        </section>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                legenda_tracado = "trajeto viário" if geometria_viaria else "ligação de contingência entre as paradas"
+                st.markdown(f"<div style='text-align: center; font-size: 14px; margin-top: 10px; color: #8da0b8;'><b>Legenda:</b> 🟡 Coleta pendente | 🟢 Entrega pendente | 🟡🟢 Ambos<br><span style='font-size:12px;'>Azul = {legenda_tracado}. Paradas concluídas são removidas automaticamente do mapa.</span></div>", unsafe_allow_html=True)
 
         df_relatorio_rota = montar_relatorio_rota(route_steps, dict_concluidos_torre)
         df_resumo_rota = pd.DataFrame([{
