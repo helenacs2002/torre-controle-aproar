@@ -9946,10 +9946,48 @@ if modulo_principal == "🚗 Frota e custos":
                 st.info("Nenhum registro de parada do rastreador encontrado.")
 
         st.markdown("#### 📥 Relatório de inícios de rota")
-        st.caption("O arquivo respeita exatamente o mês selecionado acima.")
+        st.caption("Um único relatório para o período selecionado, organizado em seções separadas por veículo.")
+
+        # O download é único, mas cada veículo recebe sua própria seção/aba no
+        # relatório. Isso deixa Excel/PDF fáceis de conferir sem misturar as saídas.
+        tabelas_inicios_por_veiculo = {}
+        if not df_inicio_filtrado.empty:
+            coluna_placa_inicio = next(
+                (coluna for coluna in df_inicio_filtrado.columns
+                 if remover_acentos(str(coluna)).strip().lower() == "placa"),
+                None,
+            )
+
+            if coluna_placa_inicio is not None:
+                df_relatorio_inicio = df_inicio_filtrado.copy()
+                df_relatorio_inicio[coluna_placa_inicio] = (
+                    df_relatorio_inicio[coluna_placa_inicio]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .replace("", "Não informado")
+                )
+
+                placas_relatorio = sorted(
+                    df_relatorio_inicio[coluna_placa_inicio].dropna().astype(str).unique(),
+                    key=lambda valor: remover_acentos(str(valor)).upper(),
+                )
+                for placa_relatorio in placas_relatorio:
+                    df_veiculo = df_relatorio_inicio[
+                        df_relatorio_inicio[coluna_placa_inicio].astype(str) == str(placa_relatorio)
+                    ].copy()
+                    # A placa já está identificada no título da seção; removê-la da
+                    # tabela evita repetição em todas as linhas do mesmo veículo.
+                    df_veiculo = df_veiculo.drop(columns=[coluna_placa_inicio], errors="ignore")
+                    tabelas_inicios_por_veiculo[f"Veículo {placa_relatorio}"] = df_veiculo.reset_index(drop=True)
+            else:
+                tabelas_inicios_por_veiculo["Inícios de rota"] = df_inicio_filtrado.copy()
+        else:
+            tabelas_inicios_por_veiculo["Inícios de rota"] = df_inicio_filtrado.copy()
+
         renderizar_exportador(
             f"Inícios de rota — {rotulo_periodo_inicio}",
-            {"Inícios de rota": df_inicio_filtrado},
+            tabelas_inicios_por_veiculo,
             f"inicios_de_rota_{chave_periodo_inicio}",
             f"inicios_rota_{chave_periodo_inicio}",
         )
