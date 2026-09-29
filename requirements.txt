@@ -4,7 +4,8 @@ requests
 folium
 streamlit-folium
 sqlalchemy>=2.0
-psycopg2-binary
+psycopg[binary]
 openpyxl
 tzdata
 PyMuPDF>=1.24,<2
+
