@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 import sqlalchemy
 import os
 
@@ -9,18 +10,20 @@ app = FastAPI()
 DATABASE_URL = os.getenv("SUPABASE_URL_POOLING")
 engine = sqlalchemy.create_engine(DATABASE_URL)
 
+# ==========================================
+# PARTE 1: A página visual do motorista (GET)
+# ==========================================
 @app.get("/davi", response_class=HTMLResponse)
 def interface_motorista():
-    # 1. Buscar as paragens do motorista diretamente ao Supabase
+    # Vai buscar as paragens do motorista ao Supabase
     try:
         with engine.connect() as conexao:
             query = sqlalchemy.text("SELECT * FROM rastreio_paradas WHERE motorista = 'Davi'")
             resultado = conexao.execute(query).fetchall()
     except Exception as e:
-        return f"<h1>Erro ao ligar à base de dados: {str(e)}</h1>"
+        resultado = []
 
-    # 2. O teu HTML/CSS/JS otimizado para telemóvel
-    # Podes colar aqui a estrutura do carrossel que tinhas no Streamlit
+    # HTML que o telemóvel do Davi vai abrir instantaneamente
     html_content = f"""
     <!DOCTYPE html>
     <html lang="pt">
@@ -44,12 +47,43 @@ def interface_motorista():
         </div>
 
         <script>
-            function enviarCheckin() {
+            async function enviarCheckin() {{
                 alert('A registar check-in...');
-                // Aqui podes adicionar um fetch para uma rota POST do FastAPI que atualiza o Supabase
-            }
+                
+                // Isto envia o aviso para a PARTE 2 deste mesmo código em Python
+                const resposta = await fetch('/api/checkin', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ paragem_id: 1, status: 'Concluído' }})
+                }});
+                
+                const dados = await resposta.json();
+                alert(dados.mensagem);
+            }}
         </script>
     </body>
     </html>
     """
     return HTMLResponse(content=html_content)
+
+
+# ==========================================
+# PARTE 2: O recetor do clique do botão (POST)
+# ==========================================
+class CheckinPayload(BaseModel):
+    paragem_id: int
+    status: str
+
+@app.post("/api/checkin")
+def registar_checkin(dados: CheckinPayload):
+    try:
+        with engine.connect() as conexao:
+            # Atualiza direto no Supabase quando o botão é premido
+            query = sqlalchemy.text(
+                "UPDATE rastreio_paradas SET status = :status WHERE id = :id"
+            )
+            conexao.execute(query, {"status": dados.status, "id": dados.paragem_id})
+            conexao.commit()
+        return {"sucesso": True, "mensagem": "Atualizado com sucesso na Torre!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
